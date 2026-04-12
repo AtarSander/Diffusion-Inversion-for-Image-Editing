@@ -4,7 +4,13 @@
 
 PROJECT_NAME = diffusion_inversion_for_image_editing
 PYTHON_VERSION = 3.11
-PYTHON_INTERPRETER = python
+UV = uv
+UV_CACHE_DIR = $(CURDIR)/.uv-cache
+PYTHON_INTERPRETER = $(UV) run python
+YEAR ?= 2014
+SPLIT ?= train
+
+export UV_CACHE_DIR
 
 #################################################################################
 # COMMANDS                                                                      #
@@ -29,14 +35,29 @@ clean:
 ## Lint using ruff (use `make format` to do formatting)
 .PHONY: lint
 lint:
-	ruff format --check
-	ruff check
+	$(UV) run ruff format --check
+	$(UV) run ruff check
 
 ## Format source code with ruff
 .PHONY: format
 format:
-	ruff check --fix
-	ruff format
+	$(UV) run ruff check --fix
+	$(UV) run ruff format
+
+
+## Download raw COCO captions for YEAR and SPLIT
+.PHONY: data-download-coco
+data-download-coco:
+	$(UV) run python -m diff_inversion.data.download_coco_captions --year $(YEAR) --split $(SPLIT)
+
+## Prepare processed COCO prompt splits for YEAR and SPLIT
+.PHONY: data-prepare-coco
+data-prepare-coco:
+	$(UV) run python -m diff_inversion.data.prepare_coco_prompts --year $(YEAR) --split $(SPLIT) --deduplicate
+
+## Run the full COCO caption preparation pipeline for YEAR and SPLIT
+.PHONY: data-coco
+data-coco: data-download-coco data-prepare-coco
 
 
 
