@@ -7,8 +7,6 @@ PYTHON_VERSION = 3.11
 UV = uv
 UV_CACHE_DIR = $(CURDIR)/.uv-cache
 PYTHON_INTERPRETER = $(UV) run python
-YEAR ?= 2014
-SPLIT ?= train
 
 export UV_CACHE_DIR
 
@@ -45,19 +43,23 @@ format:
 	$(UV) run ruff format
 
 
-## Download raw COCO captions for YEAR and SPLIT
-.PHONY: data-download-coco
-data-download-coco:
-	$(UV) run python -m diff_inversion.data.download_coco_captions --year $(YEAR) --split $(SPLIT)
+## Download Recap-COCO from Hugging Face using config/data/recap_coco.yaml
+.PHONY: data-download-recap-coco
+data-download-recap-coco:
+	$(UV) run python -m diff_inversion.data.download_recap_coco
 
-## Prepare processed COCO prompt splits for YEAR and SPLIT
-.PHONY: data-prepare-coco
-data-prepare-coco:
-	$(UV) run python -m diff_inversion.data.prepare_coco_prompts --year $(YEAR) --split $(SPLIT) --deduplicate
+## Prepare processed Recap-COCO prompt splits
+.PHONY: data-prepare-recap-coco
+data-prepare-recap-coco:
+	$(UV) run python -m diff_inversion.data.prepare_recap_coco_prompts
 
-## Run the full COCO caption preparation pipeline for YEAR and SPLIT
-.PHONY: data-coco
-data-coco: data-download-coco data-prepare-coco
+## Run the full Recap-COCO preparation pipeline
+.PHONY: data-recap-coco
+data-recap-coco: data-download-recap-coco data-prepare-recap-coco
+
+.PHONY: generate_trajectories
+generate_trajectories:
+	$(UV) run python -m diff_inversion.data.generate_sdxl_samples
 
 
 
