@@ -1,36 +1,34 @@
 """Generate SDXL samples and latent trajectories from prepared prompt files."""
 
-import argparse
-from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional, Tuple
 
 from diffusers import DDIMScheduler, StableDiffusionXLPipeline
+import hydra
+from hydra.utils import to_absolute_path
+from loguru import logger
+from omegaconf import DictConfig, OmegaConf
 from PIL import Image
 import torch
+from tqdm import tqdm
 
 
-@dataclass
-class SampleConfig:
-    """Configuration for generating SDXL samples from a prompt dataset."""
+def resolve_torch_dtype(dtype_name: Optional[str]) -> Optional[torch.dtype]:
+    """Resolve a torch dtype name from Hydra config."""
+    if dtype_name is None:
+        return None
 
-    model_id: str = "stabilityai/stable-diffusion-xl-base-1.0"
-    output_dir: str = "sdxl_samples"
-    prompts_jsonl: str = "train.jsonl"
-    num_samples: int = 4
-    num_inference_steps: int = 30
-    guidance_scale: float = 7.5
-    height: int = 1024
-    width: int = 1024
-    seed: int = 1234
-    save_latents: bool = True
-    overwrite: bool = False
+    dtype = getattr(torch, dtype_name, None)
+    if not isinstance(dtype, torch.dtype):
+        raise ValueError(f"Unsupported torch dtype: {dtype_name}")
+
+    return dtype
 
 
-def load_prompts(jsonl_path: Path) -> list[dict[str, Any]]:
-    """Load prompt records from a JSONL file."""
-    records: list[dict[str, Any]] = []
+def load_recap_prompt_records(jsonl_path: Path) -> List[Dict[str, Any]]:
+    """Load prepared Recap-COCO prompt records from a JSON Lines file."""
+    records: List[Dict[str, Any]] = []
     with jsonl_path.open("r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -40,16 +38,22 @@ def load_prompts(jsonl_path: Path) -> list[dict[str, Any]]:
     return records
 
 
-def make_pipe(cfg: SampleConfig, device: str) -> StableDiffusionXLPipeline:
+def make_pipe(cfg: DictConfig, device: str) -> StableDiffusionXLPipeline:
     """Create an SDXL pipeline configured for DDIM sampling."""
+    logger.info("Loading SDXL pipeline: {}", cfg.model_id)
     pipe = StableDiffusionXLPipeline.from_pretrained(
         cfg.model_id,
-        torch_dtype=torch.float16,
-        variant="fp16",
-        use_safetensors=True,
+        torch_dtype=resolve_torch_dtype(cfg.torch_dtype),
+        variant=cfg.variant,
+        use_safetensors=bool(cfg.use_safetensors),
     )
-    pipe.scheduler = DDIMScheduler.from_config(pipe.scheduler.config)
+    if cfg.scheduler == "ddim":
+        pipe.scheduler = DDIMScheduler.from_config(pipe.scheduler.config)
+    else:
+        raise ValueError(f"Unsupported scheduler: {cfg.scheduler}")
+
     pipe.to(device)
+    logger.success("SDXL pipeline loaded on {}", device)
     return pipe
 
 
@@ -75,7 +79,7 @@ def encode_prompt_sdxl(
     negative_prompt: str,
     height: int,
     width: int,
-) -> dict[str, torch.Tensor]:
+) -> Dict[str, torch.Tensor]:
     """Encode prompt text and auxiliary conditioning tensors for SDXL."""
     (
         prompt_embeds,
@@ -119,9 +123,12 @@ def sample_with_trajectory(
     height: int,
     width: int,
     seed: int,
-) -> tuple[torch.Tensor, list[torch.Tensor], list[int]]:
+) -> Tuple[torch.Tensor, List[torch.Tensor], List[int]]:
     """Run DDIM sampling and keep the full latent trajectory."""
     device = pipe.device
+
+    # Keep batch size at 1 so each prompt produces an independent latent trajectory
+    # with its own sample directory and per-step tensors.
     batch_size = 1
 
     cond = encode_prompt_sdxl(pipe, prompt, negative_prompt, height, width)
@@ -140,8 +147,8 @@ def sample_with_trajectory(
         generator=torch.Generator(device=device).manual_seed(seed),
     )
 
-    trajectory: list[torch.Tensor] = [latents.detach().cpu()]
-    timestep_values: list[int] = [
+    trajectory: List[torch.Tensor] = [latents.detach().cpu()]
+    timestep_values: List[int] = [
         int(timesteps[0].item()) if hasattr(timesteps[0], "item") else int(timesteps[0])
     ]
 
@@ -155,7 +162,7 @@ def sample_with_trajectory(
     )
     time_ids = cond["add_time_ids"].repeat(2, 1)
 
-    for t in timesteps:
+    for t in tqdm(timesteps, desc="Denoising", leave=False):
         latent_model_input = torch.cat([latents, latents], dim=0)
         latent_model_input = pipe.scheduler.scale_model_input(latent_model_input, t)
 
@@ -188,112 +195,121 @@ def sample_with_trajectory(
 
 def save_sample(
     pipe: StableDiffusionXLPipeline,
-    record: dict[str, Any],
+    record: Dict[str, Any],
     sample_idx: int,
-    cfg: SampleConfig,
+    model_cfg: DictConfig,
+    gather_cfg: DictConfig,
     out_dir: Path,
 ) -> None:
     """Generate and persist one sample directory with images, latents, and metadata."""
-    sample_dir = out_dir / f"sample_{sample_idx:06d}"
-    latents_dir = sample_dir / "latents"
+    sample_dir = out_dir / gather_cfg.sample_dir_template.format(sample_idx=sample_idx)
+    latents_dir = sample_dir / str(gather_cfg.latents_dir_name)
 
-    if sample_dir.exists() and not cfg.overwrite:
-        print(f"Skipping existing sample: {sample_dir}")
+    if sample_dir.exists() and not gather_cfg.overwrite:
+        logger.info("Skipping existing sample: {}", sample_dir)
         return
 
     sample_dir.mkdir(parents=True, exist_ok=True)
-    latents_dir.mkdir(parents=True, exist_ok=True)
+    if gather_cfg.save_latents:
+        latents_dir.mkdir(parents=True, exist_ok=True)
 
     prompt = record["prompt"]
-    seed = cfg.seed + sample_idx
+    seed = gather_cfg.seed + sample_idx
 
     final_latent, trajectory, timestep_values = sample_with_trajectory(
         pipe=pipe,
         prompt=prompt,
-        negative_prompt="",
-        num_inference_steps=cfg.num_inference_steps,
-        guidance_scale=cfg.guidance_scale,
-        height=cfg.height,
-        width=cfg.width,
+        negative_prompt=gather_cfg.negative_prompt,
+        num_inference_steps=model_cfg.num_inference_steps,
+        guidance_scale=model_cfg.guidance_scale,
+        height=model_cfg.height,
+        width=model_cfg.width,
         seed=seed,
     )
 
-    final_image = decode_latent_to_pil(pipe, final_latent)
-    final_image.save(sample_dir / "final.png")
+    if gather_cfg.save_final_image:
+        final_image = decode_latent_to_pil(pipe, final_latent)
+        final_image.save(sample_dir / str(gather_cfg.final_image_name))
 
-    if cfg.save_latents:
+    if gather_cfg.save_latents:
         for i, latent in enumerate(trajectory):
             torch.save(latent, latents_dir / f"x_{i:03d}.pt")
 
-    with (sample_dir / "prompt.json").open("w", encoding="utf-8") as f:
-        json.dump(record, f, indent=2, ensure_ascii=False)
+    if gather_cfg.save_prompt:
+        with (sample_dir / "prompt.json").open("w", encoding="utf-8") as f:
+            json.dump(record, f, indent=2, ensure_ascii=False)
 
     meta = {
         "sample_idx": sample_idx,
         "seed": seed,
-        "model_id": cfg.model_id,
-        "num_inference_steps": cfg.num_inference_steps,
-        "guidance_scale": cfg.guidance_scale,
-        "height": cfg.height,
-        "width": cfg.width,
+        "model_id": model_cfg.model_id,
+        "num_inference_steps": model_cfg.num_inference_steps,
+        "guidance_scale": model_cfg.guidance_scale,
+        "height": model_cfg.height,
+        "width": model_cfg.width,
+        "negative_prompt": gather_cfg.negative_prompt,
         "trajectory_length": len(trajectory),
     }
-    with (sample_dir / "meta.json").open("w", encoding="utf-8") as f:
-        json.dump(meta, f, indent=2, ensure_ascii=False)
+    if gather_cfg.save_meta:
+        with (sample_dir / "meta.json").open("w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=2, ensure_ascii=False)
 
-    with (sample_dir / "timesteps.json").open("w", encoding="utf-8") as f:
-        json.dump(timestep_values, f, indent=2)
+    if gather_cfg.save_timesteps:
+        with (sample_dir / "timesteps.json").open("w", encoding="utf-8") as f:
+            json.dump(timestep_values, f, indent=2)
 
-    print(f"Saved sample {sample_idx}: {sample_dir}")
+    logger.success("Saved sample {}: {}", sample_idx, sample_dir)
 
 
-def main() -> None:
+@hydra.main(config_path="../../config", config_name="sample_gather", version_base=None)
+def main(cfg: DictConfig) -> None:
     """CLI entrypoint for generating SDXL samples from prepared prompts."""
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--prompts_jsonl", type=str, required=True)
-    parser.add_argument("--output_dir", type=str, default="sdxl_samples")
-    parser.add_argument("--num_samples", type=int, default=4)
-    parser.add_argument("--num_inference_steps", type=int, default=30)
-    parser.add_argument("--guidance_scale", type=float, default=7.5)
-    parser.add_argument("--height", type=int, default=1024)
-    parser.add_argument("--width", type=int, default=1024)
-    parser.add_argument("--seed", type=int, default=1234)
-    parser.add_argument("--model_id", type=str, default="stabilityai/stable-diffusion-xl-base-1.0")
-    parser.add_argument("--overwrite", action="store_true")
-    args = parser.parse_args()
-
-    cfg = SampleConfig(
-        model_id=args.model_id,
-        output_dir=args.output_dir,
-        prompts_jsonl=args.prompts_jsonl,
-        num_samples=args.num_samples,
-        num_inference_steps=args.num_inference_steps,
-        guidance_scale=args.guidance_scale,
-        height=args.height,
-        width=args.width,
-        seed=args.seed,
-        overwrite=args.overwrite,
-    )
+    model_cfg = cfg.model
+    gather_cfg = cfg
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    if device != "cuda":
+    if model_cfg.require_cuda and device != "cuda":
         raise RuntimeError("This script is intended to run on CUDA.")
 
-    prompts = load_prompts(Path(cfg.prompts_jsonl))
+    prompts_jsonl = Path(to_absolute_path(str(cfg.data.prompts_jsonl)))
+    if not prompts_jsonl.exists():
+        raise FileNotFoundError(
+            f"Prompt JSONL not found: {prompts_jsonl}\n"
+            "Run `make data-prepare-recap-coco` first or override data.prompts_jsonl."
+        )
+
+    logger.info("Loading Recap-COCO prompt records from {}", prompts_jsonl)
+    prompts = load_recap_prompt_records(prompts_jsonl)
     if not prompts:
-        raise ValueError("No prompts found in the provided JSONL file.")
+        raise ValueError("No prompts found in the configured dataset.")
 
-    prompts = prompts[: cfg.num_samples]
-    out_dir = Path(cfg.output_dir)
+    start_index = int(gather_cfg.start_index)
+    end_index = start_index + int(gather_cfg.num_samples)
+    prompts = prompts[start_index:end_index]
+    out_dir = Path(to_absolute_path(str(gather_cfg.output_dir)))
     out_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(
+        "Generating {} samples from records [{}:{}) into {}",
+        len(prompts),
+        start_index,
+        end_index,
+        out_dir,
+    )
 
-    pipe = make_pipe(cfg, device)
+    pipe = make_pipe(model_cfg, device)
 
-    with (out_dir / "run_config.json").open("w", encoding="utf-8") as f:
-        json.dump(asdict(cfg), f, indent=2, ensure_ascii=False)
+    with (out_dir / str(gather_cfg.run_config_name)).open("w", encoding="utf-8") as f:
+        json.dump(OmegaConf.to_container(cfg, resolve=True), f, indent=2, ensure_ascii=False)
+    logger.info("Saved run config: {}", out_dir / str(gather_cfg.run_config_name))
 
-    for sample_idx, record in enumerate(prompts):
-        save_sample(pipe, record, sample_idx, cfg, out_dir)
+    for sample_idx, record in tqdm(
+        enumerate(prompts, start=start_index),
+        total=len(prompts),
+        desc="Generating samples",
+    ):
+        save_sample(pipe, record, sample_idx, model_cfg, gather_cfg, out_dir)
+
+    logger.success("Finished generating {} samples", len(prompts))
 
 
 if __name__ == "__main__":
