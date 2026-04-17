@@ -1,0 +1,32 @@
+repo_id: UCSC-VLAA/Recap-COCO-30K
+repo_type: dataset
+revision: main
+name: recap_coco
+split: train
+parquet_path: data/raw/recap_coco/new_data.parquet
+prompts_jsonl: data/processed/recap_coco/train.jsonl
+prompt_column: recaption
+keep_columns:
+  - image_id
+  - coco_url
+  - caption
+  - recaption
+drop_columns:
+  - image
+
+output_dir: data/raw/recap_coco
+processed_dir: data/processed/recap_coco
+prepare_input_parquet: null
+prepare_output_dir: null
+deduplicate: true
+seed: 42
+train_ratio: 0.9
+val_ratio: 0.05
+test_ratio: 0.05
+
+allow_patterns: null
+ignore_patterns: null
+token: null
+force_download: false
+local_files_only: false
+max_workers: 8

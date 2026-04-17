@@ -1,0 +1,22 @@
+defaults:
+  - data: recap_coco
+  - model: sdxl
+  - _self_
+
+output_dir: data/processed/sdxl_trajectories
+num_samples: 4
+start_index: 0
+seed: 1234
+negative_prompt: ""
+overwrite: false
+
+save_final_image: true
+save_latents: true
+save_prompt: true
+save_meta: true
+save_timesteps: true
+
+sample_dir_template: sample_{sample_idx:06d}
+latents_dir_name: latents
+final_image_name: final.png
+run_config_name: run_config.json
