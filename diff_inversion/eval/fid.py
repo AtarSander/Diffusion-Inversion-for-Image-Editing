@@ -1,4 +1,3 @@
-import argparse
 import json
 import os
 from pathlib import Path
@@ -6,7 +5,11 @@ import random
 import shutil
 
 from cleanfid import fid as cleanfid_fid
+import hydra
+from hydra.utils import to_absolute_path
+from loguru import logger
 import numpy as np
+from omegaconf import DictConfig, OmegaConf
 import PIL
 import torch
 from torchvision import transforms
@@ -35,7 +38,7 @@ def tens_to_imagedir(tens_path: Path, ds_idx: int):
     dir_name = tens_path.name[:-3]
     save_dir = (tens_path.parent / dir_name).resolve()
     if save_dir.exists():
-        print(f"Directory {save_dir} already exists")
+        logger.info("Directory {} already exists", save_dir)
     else:
         os.makedirs(save_dir, exist_ok=True)
         tensor = torch.load(tens_path, weights_only=False, map_location="cpu")
@@ -57,7 +60,7 @@ def check_is_dir_with_images(path: Path):
     if not path.exists():
         raise ValueError(f"Directory/file {path} does not exist")
     if any(path.glob("*.png")) or any(path.glob("*.jpg")) or any(path.glob("*.jpeg")):
-        print(f"Directory {path} exists with images")
+        logger.info("Directory {} exists with images", path)
         return True
     elif path.name.endswith(".pt"):
         return False
@@ -72,12 +75,19 @@ def ldm_tensor_to_images(ldm_out):
     return [PIL.Image.fromarray(img_processed) for img_processed in image_processed]
 
 
-def run_fid_paths(path1: str, path2: str, seed: int = 42):
+def run_fid_paths(
+    path1: str,
+    path2: str,
+    seed: int = 42,
+    mode: str = "legacy_tensorflow",
+    num_workers: int = 16,
+    batch_size: int = 64,
+    device: str | torch.device = "cuda",
+):
     seed_everywhere(seed)
-    device = torch.device("cuda")
-    print(f"Using device: {device}")
+    device = torch.device(device)
+    logger.info("Using device: {}", device)
 
-    mode = "legacy_tensorflow"
     feat_model = cleanfid_fid.build_feature_extractor(mode, device)
 
     ppath1, ppath2 = Path(path1).resolve(), Path(path2).resolve()
@@ -94,8 +104,8 @@ def run_fid_paths(path1: str, path2: str, seed: int = 42):
         ppath1.as_posix(),
         ppath2.as_posix(),
         feat_model,
-        num_workers=16,
-        batch_size=64,
+        num_workers=num_workers,
+        batch_size=batch_size,
         device=device,
         mode=mode,
     )
@@ -173,13 +183,21 @@ def fid_folder_ours(
 
 
 def run_fid_path_ds(
-    path: str, dataset_name: str, dataset_res: int, dataset_split: str, seed: int = 42
+    path: str,
+    dataset_name: str,
+    dataset_res: int,
+    dataset_split: str,
+    seed: int = 42,
+    mode: str = "legacy_tensorflow",
+    model_name: str = "inception_v3",
+    num_workers: int = 16,
+    batch_size: int = 64,
+    device: str | torch.device = "cuda",
 ):
     seed_everywhere(seed)
-    device = torch.device("cuda")
-    print(f"Using device: {device}")
+    device = torch.device(device)
+    logger.info("Using device: {}", device)
 
-    mode = "legacy_tensorflow"
     feat_model = cleanfid_fid.build_feature_extractor(mode, device)
 
     ppath = Path(path).resolve()
@@ -194,8 +212,9 @@ def run_fid_path_ds(
         dataset_res=dataset_res,
         dataset_split=dataset_split,
         model=feat_model,
-        num_workers=16,
-        batch_size=64,
+        model_name=model_name,
+        num_workers=num_workers,
+        batch_size=batch_size,
         device=device,
         mode=mode,
     )
@@ -206,64 +225,89 @@ def run_fid_path_ds(
     return float(fid_score)
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--path_outputs", type=str)
-    parser.add_argument("--path_ref", type=str, default=None)
-    parser.add_argument("--ds_name", type=str, default=None)
-    parser.add_argument("--dataset_res", type=int, default=None)
-    parser.add_argument("--dataset_split", type=str, default=None)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--output_dir", type=str, required=True)
-    args = parser.parse_args()
+def _resolve_path(path: str | Path) -> Path:
+    return Path(to_absolute_path(str(path))).resolve()
+
+
+def _validate_fid_config(cfg: DictConfig) -> None:
+    has_path_ref = cfg.path_ref is not None
+    has_ds_name = cfg.ds_name is not None
+
+    if has_path_ref == has_ds_name:
+        raise ValueError("Exactly one of path_ref or ds_name must be provided")
+
+    if has_ds_name and (cfg.dataset_res is None or cfg.dataset_split is None):
+        raise ValueError("dataset_res and dataset_split must be provided if ds_name is provided")
+
+
+@hydra.main(config_path="../../config/eval", config_name="fid", version_base=None)
+def main(cfg: DictConfig) -> None:
+    logger.info("FID config:\n{}", OmegaConf.to_yaml(cfg))
 
     # pass path like experiments/noise_latent_interpolate/latent/celeba_ldm_256/T_100/alpha_0.0/samples_decoded.pt
     # script will go through all dirs in T_100, find all alphas, and run fid for each alpha, alphas should be sorted to avoid confusion
     # path_ref stays unchanged
+    _validate_fid_config(cfg)
 
-    assert args.path_ref is not None or args.ds_name is not None, (
-        "Either path_ref or ds_name must be provided"
-    )
-    assert not (args.path_ref is not None and args.ds_name is not None), (
-        "Only one of path_ref or ds_name can be provided"
-    )
-
-    if args.ds_name is not None:
-        assert args.dataset_res is not None and args.dataset_split is not None, (
-            "dataset_res and dataset_split must be provided if ds_name is provided"
-        )
-
-    output_dir = Path(args.output_dir)
+    output_dir = _resolve_path(cfg.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    path_outputs = Path(args.path_outputs)
+    path_outputs = _resolve_path(cfg.path_outputs)
+    path_ref = _resolve_path(cfg.path_ref) if cfg.path_ref is not None else None
     filename = path_outputs.name
     parent_T = path_outputs.parent.parent
     alphas = sorted(list(parent_T.glob("alpha_*")))
-    results = {}
-    results["path_ref"] = args.path_ref
-    results["path_outputs"] = args.path_outputs
-    results["ds_name"] = args.ds_name
-    results["seed"] = args.seed
+    results = {
+        "path_ref": path_ref.as_posix() if path_ref is not None else None,
+        "path_outputs": path_outputs.as_posix(),
+        "ds_name": cfg.ds_name,
+        "dataset_res": cfg.dataset_res,
+        "dataset_split": cfg.dataset_split,
+        "seed": cfg.seed,
+        "mode": cfg.mode,
+        "model_name": cfg.model_name,
+        "num_workers": cfg.num_workers,
+        "batch_size": cfg.batch_size,
+        "device": cfg.device,
+    }
     outputs = {}
-    for alpha in alphas:
+    logger.info("Running FID sweep over {} alpha directories", len(alphas))
+    for alpha in tqdm(alphas, desc="Running FID"):
         alpha_str = str(alpha).split("_")[-1]
         path_outputs_alpha = alpha / filename
-        print(f"Running FID for {path_outputs_alpha} and {args.path_ref}")
-        if args.path_ref is not None:
+        logger.info("Running FID for {} and {}", path_outputs_alpha, path_ref)
+        if path_ref is not None:
             fid_score = run_fid_paths(
-                path1=path_outputs_alpha, path2=args.path_ref, seed=args.seed
+                path1=path_outputs_alpha,
+                path2=path_ref,
+                seed=cfg.seed,
+                mode=cfg.mode,
+                num_workers=cfg.num_workers,
+                batch_size=cfg.batch_size,
+                device=cfg.device,
             )
         else:
             fid_score = run_fid_path_ds(
                 path=path_outputs_alpha,
-                dataset_name=args.ds_name,
-                dataset_res=args.dataset_res,
-                dataset_split=args.dataset_split,
-                seed=args.seed,
+                dataset_name=cfg.ds_name,
+                dataset_res=cfg.dataset_res,
+                dataset_split=cfg.dataset_split,
+                seed=cfg.seed,
+                mode=cfg.mode,
+                model_name=cfg.model_name,
+                num_workers=cfg.num_workers,
+                batch_size=cfg.batch_size,
+                device=cfg.device,
             )
         outputs[alpha_str] = fid_score
     results["outputs"] = outputs
 
-    with open(output_dir / "fid_scores.json", "w") as f:
-        json.dump(results, f)
+    output_path = output_dir / cfg.output_filename
+    with output_path.open("w", encoding="utf-8") as f:
+        json.dump(results, f, indent=2)
+
+    logger.success("Saved FID scores to {}", output_path)
+
+
+if __name__ == "__main__":
+    main()
