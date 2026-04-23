@@ -1,0 +1,4 @@
+defaults:
+  - data: recap_coco
+  - model: sdxl
+  - _self_

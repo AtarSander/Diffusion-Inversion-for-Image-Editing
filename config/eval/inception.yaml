@@ -1,0 +1,12 @@
+_target_: diff_inversion.eval.inception.InceptionV3
+
+output_blocks:
+  - 3
+
+resize_input: true
+normalize_input: true
+requires_grad: false
+use_fid_inception: true
+
+fid_weights_url: https://github.com/mseitzer/pytorch-fid/releases/download/fid_weights/pt_inception-2015-12-05-6726825d.pth
+download_progress: true
