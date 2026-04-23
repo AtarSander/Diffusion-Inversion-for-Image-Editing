@@ -4,7 +4,11 @@
 
 PROJECT_NAME = diffusion_inversion_for_image_editing
 PYTHON_VERSION = 3.11
-PYTHON_INTERPRETER = python
+UV = uv
+UV_CACHE_DIR = $(CURDIR)/.uv-cache
+PYTHON_INTERPRETER = $(UV) run python
+
+export UV_CACHE_DIR
 
 #################################################################################
 # COMMANDS                                                                      #
@@ -29,14 +33,33 @@ clean:
 ## Lint using ruff (use `make format` to do formatting)
 .PHONY: lint
 lint:
-	ruff format --check
-	ruff check
+	$(UV) run ruff format --check
+	$(UV) run ruff check
 
 ## Format source code with ruff
 .PHONY: format
 format:
-	ruff check --fix
-	ruff format
+	$(UV) run ruff check --fix
+	$(UV) run ruff format
+
+
+## Download Recap-COCO from Hugging Face using config/data/recap_coco.yaml
+.PHONY: data-download-recap-coco
+data-download-recap-coco:
+	$(UV) run python -m diff_inversion.data.download_recap_coco
+
+## Prepare processed Recap-COCO prompt splits
+.PHONY: data-prepare-recap-coco
+data-prepare-recap-coco:
+	$(UV) run python -m diff_inversion.data.prepare_recap_coco_prompts
+
+## Run the full Recap-COCO preparation pipeline
+.PHONY: data-recap-coco
+data-recap-coco: data-download-recap-coco data-prepare-recap-coco
+
+.PHONY: generate_trajectories
+generate_trajectories:
+	$(UV) run python -m diff_inversion.data.generate_sdxl_samples
 
 
 

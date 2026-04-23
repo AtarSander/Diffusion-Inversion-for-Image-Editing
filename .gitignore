@@ -189,3 +189,9 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+.uv-cache/
+
+.codex
+
+outputs

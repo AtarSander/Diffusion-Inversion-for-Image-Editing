@@ -1,0 +1,11 @@
+model_id: stabilityai/stable-diffusion-xl-base-1.0
+scheduler: ddim
+torch_dtype: float16
+variant: fp16
+use_safetensors: true
+
+num_inference_steps: 50 
+guidance_scale: 1.0
+height: 1024
+width: 1024
+require_cuda: false
