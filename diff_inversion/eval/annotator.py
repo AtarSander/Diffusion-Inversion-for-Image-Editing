@@ -1,9 +1,9 @@
 from dataclasses import dataclass
 from typing import Any
 
-from loguru import logger
 import torch
 import torch.nn.functional as F
+from loguru import logger
 from torch.utils.data import Dataset
 from torchvision import transforms as T
 from torchvision.utils import make_grid

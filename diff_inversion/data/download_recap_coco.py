@@ -3,8 +3,8 @@
 from pathlib import Path
 from typing import List, Optional, Union
 
-from huggingface_hub import snapshot_download
 import hydra
+from huggingface_hub import snapshot_download
 from hydra.utils import to_absolute_path
 from loguru import logger
 from omegaconf import DictConfig, OmegaConf

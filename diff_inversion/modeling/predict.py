@@ -1,8 +1,8 @@
 from pathlib import Path
 
+import typer
 from loguru import logger
 from tqdm import tqdm
-import typer
 
 from diff_inversion.config import MODELS_DIR, PROCESSED_DATA_DIR
 

@@ -1,8 +1,8 @@
 import cv2
 import numpy as np
+import torch
 from skimage.metrics import structural_similarity as ssim
 from sklearn.cross_decomposition import CCA
-import torch
 
 
 def calculate_psnr(img1, img2):

@@ -1,9 +1,9 @@
 from typing import Optional
 
+import torch
 from diffusers import DDIMScheduler, StableDiffusionXLPipeline
 from loguru import logger
 from omegaconf import DictConfig
-import torch
 
 
 def resolve_torch_dtype(dtype_name: Optional[str]) -> Optional[torch.dtype]:

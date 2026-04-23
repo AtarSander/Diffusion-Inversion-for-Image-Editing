@@ -1,9 +1,9 @@
-from pathlib import Path
 import json
+from pathlib import Path
 
-from torch.utils.data import Dataset
-from einops import reduce
 import torch
+from einops import reduce
+from torch.utils.data import Dataset
 
 
 class LatentTrajectoryDataset(Dataset):

@@ -1,20 +1,20 @@
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Dict
 
-from loguru import logger
-from omegaconf import DictConfig, OmegaConf
-from diffusers import StableDiffusionXLPipeline
-from peft import LoraConfig, set_peft_model_state_dict, inject_adapter_in_model
-from peft.utils import get_peft_model_state_dict
-from torch.utils.data import DataLoader
-from torch.optim import Optimizer
-import wandb
 import hydra
 import torch
+import wandb
+from diffusers import StableDiffusionXLPipeline
+from loguru import logger
+from omegaconf import DictConfig, OmegaConf
+from peft import LoraConfig, inject_adapter_in_model, set_peft_model_state_dict
+from peft.utils import get_peft_model_state_dict
+from torch.optim import Optimizer
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from diff_inversion.utils import make_pipe
 from diff_inversion.data.latent_trajectory_dataset import LatentTrajectoryDataset
+from diff_inversion.utils import make_pipe
 
 
 class SDXLInversionTrainer:
@@ -30,7 +30,7 @@ class SDXLInversionTrainer:
         self.pipe = pipe
         self.lora_config = lora_config
         self.model = pipe.unet
-        inject_adapter_in_model(lora_config, self.model, adapter_name="default")
+        inject_adapter_in_model(lora_config, self.model, adapter_name="inversion")
         self.optimizer = optimizer
         self.tracker = tracker
         self.checkpoint_dir = Path(checkpoint_dir)
@@ -94,7 +94,7 @@ class SDXLInversionTrainer:
     def save_checkpoint(self, filename: str):
         save_path = self.checkpoint_dir / filename
         save_path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save(get_peft_model_state_dict(self.model, adapter_name="default"), save_path)
+        torch.save(get_peft_model_state_dict(self.model, adapter_name="inversion"), save_path)
         logger.info("Checkpoint saved to {}", save_path)
 
     def load_checkpoint(self, filename: str):
@@ -103,7 +103,7 @@ class SDXLInversionTrainer:
             logger.warning("Checkpoint path does not exist: {}", checkpoint_path)
             return
         state_dict = torch.load(checkpoint_path, map_location="cpu")
-        set_peft_model_state_dict(self.model, state_dict, adapter_name="default")
+        set_peft_model_state_dict(self.model, state_dict, adapter_name="inversion")
         logger.info("Checkpoint loaded from {}", checkpoint_path)
 
 

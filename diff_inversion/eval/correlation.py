@@ -1,10 +1,10 @@
 from pathlib import Path
 
 import hydra
+import torch
 from hydra.utils import to_absolute_path
 from loguru import logger
 from omegaconf import DictConfig, OmegaConf
-import torch
 
 
 def get_top_k_corr(tensor: torch.Tensor, top_k: int = 10) -> dict:

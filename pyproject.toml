@@ -48,10 +48,12 @@ line-length = 99
 src = ["diff_inversion"]
 include = ["pyproject.toml", "diff_inversion/**/*.py"]
 
+[tool.ruff.lint]
+extend-select = ["I"]  # Add import sorting
+ignore = ["F722"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["diff_inversion"]
-force-sort-within-sections = true
 
 [dependency-groups]
 dev = [
