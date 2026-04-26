@@ -7,6 +7,20 @@ PYTHON_VERSION = 3.11
 UV = uv
 UV_CACHE_DIR = $(CURDIR)/.uv-cache
 PYTHON_INTERPRETER = $(UV) run python
+TRAJ_OUTPUT_DIR ?= data/processed/sdxl_trajectories
+TRAJ_NUM_SAMPLES ?= 4
+TRAJ_START_INDEX ?= 0
+TRAJ_SEED ?= 1234
+TRAJ_GUIDANCE_SCALE ?= 1.0
+TRAJ_NUM_INFERENCE_STEPS ?= 50
+EVAL_INPUT_DIR ?= data/processed/sdxl_trajectories
+EVAL_OUTPUT_DIR ?= reports/eval
+WANDB_MODE ?= disabled
+WANDB_PROJECT ?= diff-inversion
+WANDB_ENTITY ?=
+WANDB_GROUP ?=
+WANDB_RUN_NAME ?=
+WANDB_ARTIFACT_NAME ?=
 
 export UV_CACHE_DIR
 
@@ -57,9 +71,36 @@ data-prepare-recap-coco:
 .PHONY: data-recap-coco
 data-recap-coco: data-download-recap-coco data-prepare-recap-coco
 
-.PHONY: generate_trajectories
+## Generate baseline SDXL trajectories and predicted noises for inversion evaluation
+.PHONY: generate_trajectories generate-baseline-samples
 generate_trajectories:
-	$(UV) run python -m diff_inversion.data.generate_sdxl_samples
+	$(UV) run python -m diff_inversion.data.generate_sdxl_samples \
+		output_dir=$(TRAJ_OUTPUT_DIR) \
+		num_samples=$(TRAJ_NUM_SAMPLES) \
+		start_index=$(TRAJ_START_INDEX) \
+		seed=$(TRAJ_SEED) \
+		model.guidance_scale=$(TRAJ_GUIDANCE_SCALE) \
+		model.num_inference_steps=$(TRAJ_NUM_INFERENCE_STEPS)
+
+generate-baseline-samples: generate_trajectories
+
+
+## Run lightweight evaluation over generated SDXL trajectories
+.PHONY: evaluate evaluate-wandb
+evaluate:
+	$(UV) run python -m diff_inversion.eval.run \
+		--input-dir $(EVAL_INPUT_DIR) \
+		--output-dir $(EVAL_OUTPUT_DIR) \
+		--wandb-mode $(WANDB_MODE) \
+		--wandb-project $(WANDB_PROJECT) \
+		$(if $(WANDB_ENTITY),--wandb-entity $(WANDB_ENTITY)) \
+		$(if $(WANDB_GROUP),--wandb-group $(WANDB_GROUP)) \
+		$(if $(WANDB_RUN_NAME),--wandb-run-name "$(WANDB_RUN_NAME)") \
+		$(if $(WANDB_ARTIFACT_NAME),--wandb-artifact-name "$(WANDB_ARTIFACT_NAME)")
+
+## Run evaluation and log metrics to Weights & Biases
+evaluate-wandb: WANDB_MODE = online
+evaluate-wandb: evaluate
 
 
 

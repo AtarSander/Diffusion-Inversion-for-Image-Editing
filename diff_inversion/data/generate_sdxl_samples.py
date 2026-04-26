@@ -123,7 +123,7 @@ def sample_with_trajectory(
     height: int,
     width: int,
     seed: int,
-) -> Tuple[torch.Tensor, List[torch.Tensor], List[int]]:
+) -> Tuple[torch.Tensor, List[torch.Tensor], List[torch.Tensor], List[int]]:
     """Run DDIM sampling and keep the full latent trajectory."""
     device = pipe.device
 
@@ -148,6 +148,7 @@ def sample_with_trajectory(
     )
 
     trajectory: List[torch.Tensor] = [latents.detach().cpu()]
+    pred_noises: List[torch.Tensor] = []
     timestep_values: List[int] = [
         int(timesteps[0].item()) if hasattr(timesteps[0], "item") else int(timesteps[0])
     ]
@@ -188,9 +189,10 @@ def sample_with_trajectory(
         ).prev_sample
 
         trajectory.append(latents.detach().cpu())
+        pred_noises.append(noise_pred.detach().cpu())
         timestep_values.append(int(t.item()) if hasattr(t, "item") else int(t))
 
-    return latents, trajectory, timestep_values
+    return latents, trajectory, pred_noises, timestep_values
 
 
 def save_sample(
@@ -204,6 +206,7 @@ def save_sample(
     """Generate and persist one sample directory with images, latents, and metadata."""
     sample_dir = out_dir / gather_cfg.sample_dir_template.format(sample_idx=sample_idx)
     latents_dir = sample_dir / str(gather_cfg.latents_dir_name)
+    pred_noises_dir = sample_dir / str(gather_cfg.pred_noises_dir_name)
 
     if sample_dir.exists() and not gather_cfg.overwrite:
         logger.info("Skipping existing sample: {}", sample_dir)
@@ -212,11 +215,13 @@ def save_sample(
     sample_dir.mkdir(parents=True, exist_ok=True)
     if gather_cfg.save_latents:
         latents_dir.mkdir(parents=True, exist_ok=True)
+    if gather_cfg.save_pred_noises:
+        pred_noises_dir.mkdir(parents=True, exist_ok=True)
 
     prompt = record["prompt"]
     seed = gather_cfg.seed + sample_idx
 
-    final_latent, trajectory, timestep_values = sample_with_trajectory(
+    final_latent, trajectory, pred_noises, timestep_values = sample_with_trajectory(
         pipe=pipe,
         prompt=prompt,
         negative_prompt=gather_cfg.negative_prompt,
@@ -234,6 +239,9 @@ def save_sample(
     if gather_cfg.save_latents:
         for i, latent in enumerate(trajectory):
             torch.save(latent, latents_dir / f"x_{i:03d}.pt")
+    if gather_cfg.save_pred_noises:
+        for i, noise in enumerate(pred_noises):
+            torch.save(noise, pred_noises_dir / f"noise_{i:03d}.pt")
 
     if gather_cfg.save_prompt:
         with (sample_dir / "prompt.json").open("w", encoding="utf-8") as f:
@@ -249,6 +257,7 @@ def save_sample(
         "width": model_cfg.width,
         "negative_prompt": gather_cfg.negative_prompt,
         "trajectory_length": len(trajectory),
+        "pred_noises_length": len(pred_noises),
     }
     if gather_cfg.save_meta:
         with (sample_dir / "meta.json").open("w", encoding="utf-8") as f:
