@@ -31,6 +31,12 @@ def _as_sample_tensor(tensor: torch.Tensor) -> torch.Tensor:
     raise ValueError(f"Expected latent tensor with shape [1,C,H,W] or [C,H,W], got {tuple(tensor.shape)}")
 
 
+def _load_optional_sample_tensor(path: Path) -> torch.Tensor | None:
+    if not path.exists():
+        return None
+    return _as_sample_tensor(_load_tensor(path))
+
+
 def _tensor_stats(tensor: torch.Tensor, max_elements: int) -> dict[str, float]:
     flat = tensor.flatten()
     if flat.numel() > max_elements:
@@ -56,6 +62,16 @@ def _safe_cosine(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     a = torch.nn.functional.normalize(a.flatten(), dim=0)
     b = torch.nn.functional.normalize(b.flatten(), dim=0)
     return torch.sum(a * b)
+
+
+def _pair_metrics(reference: torch.Tensor, candidate: torch.Tensor) -> dict[str, float]:
+    delta = candidate - reference
+    return {
+        "mse": float(delta.pow(2).mean().item()),
+        "mae": float(delta.abs().mean().item()),
+        "l2": float(torch.linalg.vector_norm(delta).item()),
+        "cosine": float(_safe_cosine(reference, candidate).item()),
+    }
 
 
 def _trajectory_metrics(steps: list[torch.Tensor]) -> dict[str, Any]:
@@ -121,7 +137,8 @@ def _patch_topk_corr(tensors: torch.Tensor, patch_size: int, top_k: int) -> dict
                 unbiased=False,
                 keepdim=True,
             ).clamp_min(1e-8)
-            corr = patch.T @ patch / max(patch.shape[0] - 1, 1)
+            corr = patch.T @ patch / patch.shape[0]
+            corr = torch.nan_to_num(corr, nan=0.0, posinf=1.0, neginf=-1.0).clamp(-1.0, 1.0)
             triu = torch.triu_indices(corr.shape[0], corr.shape[1], offset=1)
             upper = corr[triu[0], triu[1]].abs()
             if upper.numel() == 0:
@@ -144,7 +161,9 @@ def _load_noise_paths(sample_dir: Path) -> list[Path]:
     return sorted(pred_noises_dir.glob("noise_*.pt"))
 
 
-def _load_sample(sample_dir: Path) -> tuple[list[torch.Tensor], list[torch.Tensor], dict[str, Any]]:
+def _load_sample(
+    sample_dir: Path,
+) -> tuple[list[torch.Tensor], list[torch.Tensor], torch.Tensor | None, dict[str, Any]]:
     latents_dir = sample_dir / "latents"
     latent_paths = sorted(latents_dir.glob("x_*.pt"))
     if not latent_paths:
@@ -153,6 +172,7 @@ def _load_sample(sample_dir: Path) -> tuple[list[torch.Tensor], list[torch.Tenso
     steps = [_as_sample_tensor(_load_tensor(path)) for path in latent_paths]
     pred_noise_paths = _load_noise_paths(sample_dir)
     pred_noises = [_as_sample_tensor(_load_tensor(path)) for path in pred_noise_paths]
+    inverted_noise = _load_optional_sample_tensor(sample_dir / "inverted_noise.pt")
     metadata: dict[str, Any] = {}
     for metadata_name in ("meta.json", "prompt.json", "timesteps.json"):
         metadata_path = sample_dir / metadata_name
@@ -161,7 +181,9 @@ def _load_sample(sample_dir: Path) -> tuple[list[torch.Tensor], list[torch.Tenso
                 metadata[metadata_name.removesuffix(".json")] = json.load(f)
     metadata["has_final_image"] = (sample_dir / "final.png").exists()
     metadata["pred_noises_count"] = len(pred_noises)
-    return steps, pred_noises, metadata
+    metadata["has_initial_noise"] = (sample_dir / "initial_noise.pt").exists()
+    metadata["has_inverted_noise"] = inverted_noise is not None
+    return steps, pred_noises, inverted_noise, metadata
 
 
 def run_evaluation(
@@ -186,9 +208,10 @@ def run_evaluation(
     final_latents = []
     first_pred_noises = []
     last_pred_noises = []
+    inverted_noises = []
 
     for sample_dir in sample_dirs:
-        steps, pred_noises, metadata = _load_sample(sample_dir)
+        steps, pred_noises, inverted_noise, metadata = _load_sample(sample_dir)
         per_sample[sample_dir.name] = {
             "metadata": metadata,
             "trajectory": _trajectory_metrics(steps),
@@ -206,6 +229,13 @@ def run_evaluation(
             )
             first_pred_noises.append(pred_noises[0])
             last_pred_noises.append(pred_noises[-1])
+        if inverted_noise is not None:
+            per_sample[sample_dir.name]["inverted_noise_stats"] = _tensor_stats(
+                inverted_noise,
+                max_elements=max_elements,
+            )
+            per_sample[sample_dir.name]["inversion_error"] = _pair_metrics(steps[0], inverted_noise)
+            inverted_noises.append(inverted_noise)
         initial_latents.append(steps[0])
         final_latents.append(steps[-1])
 
@@ -226,6 +256,13 @@ def run_evaluation(
             torch.stack(last_pred_noises),
             max_elements=max_elements,
         )
+    if inverted_noises and len(inverted_noises) == len(sample_dirs):
+        inverted_batch = torch.stack(inverted_noises)
+        aggregate["inverted_noise_stats"] = _tensor_stats(
+            inverted_batch,
+            max_elements=max_elements,
+        )
+        aggregate["initial_vs_inverted_noise"] = _pair_metrics(initial_batch, inverted_batch)
 
     results = {
         "input_dir": input_dir.as_posix(),
@@ -233,6 +270,7 @@ def run_evaluation(
         "notes": [
             "This runner evaluates saved generation trajectories.",
             "If present, pred_noises are included as forward DDIM reference targets.",
+            "If present, inverted_noise is compared against initial latent noise x_T.",
             "Reconstruction/editing metrics need paired reconstructed or edited images.",
         ],
         "aggregate": aggregate,
@@ -264,6 +302,10 @@ def _build_samples_table_rows(results: dict[str, Any]) -> list[dict[str, float |
             row.update(_flatten_metrics(sample["first_pred_noise_stats"], prefix="first_pred_noise"))
         if "last_pred_noise_stats" in sample:
             row.update(_flatten_metrics(sample["last_pred_noise_stats"], prefix="last_pred_noise"))
+        if "inverted_noise_stats" in sample:
+            row.update(_flatten_metrics(sample["inverted_noise_stats"], prefix="inverted_noise"))
+        if "inversion_error" in sample:
+            row.update(_flatten_metrics(sample["inversion_error"], prefix="inversion_error"))
         rows.append(row)
     return rows
 

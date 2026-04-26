@@ -13,6 +13,8 @@ TRAJ_START_INDEX ?= 0
 TRAJ_SEED ?= 1234
 TRAJ_GUIDANCE_SCALE ?= 1.0
 TRAJ_NUM_INFERENCE_STEPS ?= 50
+INVERT_INPUT_DIR ?= data/processed/sdxl_trajectories
+INVERT_OVERWRITE ?=
 EVAL_INPUT_DIR ?= data/processed/sdxl_trajectories
 EVAL_OUTPUT_DIR ?= reports/eval
 WANDB_MODE ?= disabled
@@ -71,7 +73,7 @@ data-prepare-recap-coco:
 .PHONY: data-recap-coco
 data-recap-coco: data-download-recap-coco data-prepare-recap-coco
 
-## Generate baseline SDXL trajectories and predicted noises for inversion evaluation
+## Generate baseline SDXL forward trajectories and predicted noises
 .PHONY: generate_trajectories generate-baseline-samples
 generate_trajectories:
 	$(UV) run python -m diff_inversion.data.generate_sdxl_samples \
@@ -85,7 +87,15 @@ generate_trajectories:
 generate-baseline-samples: generate_trajectories
 
 
-## Run lightweight evaluation over generated SDXL trajectories
+## Run optional baseline DDIM inversion over generated SDXL trajectory samples
+.PHONY: invert-baseline-samples
+invert-baseline-samples:
+	$(UV) run python -m diff_inversion.eval.invert_sdxl \
+		--input-dir $(INVERT_INPUT_DIR) \
+		$(if $(INVERT_OVERWRITE),--overwrite)
+
+
+## Run lightweight evaluation over generated SDXL trajectory artifacts
 .PHONY: evaluate evaluate-wandb
 evaluate:
 	$(UV) run python -m diff_inversion.eval.run \
