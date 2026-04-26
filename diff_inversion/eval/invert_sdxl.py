@@ -141,7 +141,9 @@ def invert_sample(
             else int(inverse_scheduler.timesteps[0])
         ]
 
-        for timestep in tqdm(inverse_scheduler.timesteps, desc=f"Inverting {sample_dir.name}", leave=False):
+        for timestep in tqdm(
+            inverse_scheduler.timesteps, desc=f"Inverting {sample_dir.name}", leave=False
+        ):
             noise_pred = predict_noise_sdxl(
                 pipe=pipe,
                 latents=latents,
@@ -157,7 +159,9 @@ def invert_sample(
             ).prev_sample
             inversion_trajectory.append(latents.detach().cpu())
             inversion_pred_noises.append(noise_pred.detach().cpu())
-            inversion_timesteps.append(int(timestep.item()) if hasattr(timestep, "item") else int(timestep))
+            inversion_timesteps.append(
+                int(timestep.item()) if hasattr(timestep, "item") else int(timestep)
+            )
     finally:
         pipe.scheduler = original_scheduler
 

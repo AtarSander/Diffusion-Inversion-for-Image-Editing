@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 from pathlib import Path
@@ -10,6 +11,7 @@ import re
 from typing import Any
 
 from loguru import logger
+from PIL import Image, ImageDraw
 import torch
 
 
@@ -28,7 +30,9 @@ def _as_sample_tensor(tensor: torch.Tensor) -> torch.Tensor:
         return tensor[0]
     if tensor.ndim == 3:
         return tensor
-    raise ValueError(f"Expected latent tensor with shape [1,C,H,W] or [C,H,W], got {tuple(tensor.shape)}")
+    raise ValueError(
+        f"Expected latent tensor with shape [1,C,H,W] or [C,H,W], got {tuple(tensor.shape)}"
+    )
 
 
 def _load_optional_sample_tensor(path: Path) -> torch.Tensor | None:
@@ -71,6 +75,81 @@ def _pair_metrics(reference: torch.Tensor, candidate: torch.Tensor) -> dict[str,
         "mae": float(delta.abs().mean().item()),
         "l2": float(torch.linalg.vector_norm(delta).item()),
         "cosine": float(_safe_cosine(reference, candidate).item()),
+    }
+
+
+def _normalize_to_uint8(tensor: torch.Tensor, vmin: float, vmax: float) -> torch.Tensor:
+    if vmax <= vmin:
+        return torch.zeros_like(tensor, dtype=torch.uint8)
+    normalized = (tensor - vmin) / (vmax - vmin)
+    return normalized.clamp(0, 1).mul(255).round().to(torch.uint8)
+
+
+def _channel_grid_image(tensor: torch.Tensor, vmin: float, vmax: float) -> Image.Image:
+    tensor = tensor.detach().float().cpu()
+    if tensor.ndim != 3:
+        raise ValueError(f"Expected [C,H,W] tensor for preview, got {tuple(tensor.shape)}")
+
+    channels = min(int(tensor.shape[0]), 4)
+    height = int(tensor.shape[1])
+    width = int(tensor.shape[2])
+    canvas = Image.new("L", (width * 2, height * 2), color=0)
+
+    for channel_idx in range(channels):
+        channel = _normalize_to_uint8(tensor[channel_idx], vmin, vmax)
+        image = Image.fromarray(channel.numpy(), mode="L")
+        canvas.paste(image, ((channel_idx % 2) * width, (channel_idx // 2) * height))
+
+    return canvas.convert("RGB")
+
+
+def _write_noise_images(
+    output_path: Path,
+    initial_noise: torch.Tensor,
+    inverted_noise: torch.Tensor,
+) -> dict[str, str]:
+    combined = torch.cat([initial_noise.flatten(), inverted_noise.flatten()])
+    vmin = float(combined.quantile(0.01).item())
+    vmax = float(combined.quantile(0.99).item())
+    error = (inverted_noise - initial_noise).abs()
+    error_vmax = float(error.quantile(0.99).item())
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    input_path = output_path.with_name(f"{output_path.stem}_input_noise.png")
+    inverted_path = output_path.with_name(f"{output_path.stem}_inverted_noise.png")
+    error_path = output_path.with_name(f"{output_path.stem}_abs_error.png")
+
+    input_image = _channel_grid_image(initial_noise, vmin, vmax)
+    inverted_image = _channel_grid_image(inverted_noise, vmin, vmax)
+    error_image = _channel_grid_image(error, 0.0, max(error_vmax, 1e-8))
+
+    input_image.save(input_path)
+    inverted_image.save(inverted_path)
+    error_image.save(error_path)
+
+    panels = [
+        ("input: latents/x_000.pt", input_image),
+        ("inverted: inverted_noise.pt", inverted_image),
+        ("abs error", error_image),
+    ]
+
+    label_height = 18
+    panel_width, panel_height = panels[0][1].size
+    canvas = Image.new(
+        "RGB", (panel_width * len(panels), panel_height + label_height), color="white"
+    )
+    draw = ImageDraw.Draw(canvas)
+    for idx, (label, image) in enumerate(panels):
+        x = idx * panel_width
+        draw.text((x + 4, 3), label, fill="black")
+        canvas.paste(image, (x, label_height))
+
+    canvas.save(output_path)
+    return {
+        "preview_path": output_path.as_posix(),
+        "input_noise_image_path": input_path.as_posix(),
+        "inverted_noise_image_path": inverted_path.as_posix(),
+        "abs_error_image_path": error_path.as_posix(),
     }
 
 
@@ -192,6 +271,7 @@ def run_evaluation(
     patch_size: int,
     top_k: int,
     max_elements: int,
+    save_noise_previews: bool,
 ) -> dict[str, Any]:
     sample_dirs = sorted(path for path in input_dir.glob("sample_*") if path.is_dir())
     if not sample_dirs:
@@ -209,6 +289,8 @@ def run_evaluation(
     first_pred_noises = []
     last_pred_noises = []
     inverted_noises = []
+    noise_comparisons = []
+    noise_comparison_dir = output_dir / "noise_comparisons"
 
     for sample_dir in sample_dirs:
         steps, pred_noises, inverted_noise, metadata = _load_sample(sample_dir)
@@ -230,12 +312,23 @@ def run_evaluation(
             first_pred_noises.append(pred_noises[0])
             last_pred_noises.append(pred_noises[-1])
         if inverted_noise is not None:
+            inversion_error = _pair_metrics(steps[0], inverted_noise)
             per_sample[sample_dir.name]["inverted_noise_stats"] = _tensor_stats(
                 inverted_noise,
                 max_elements=max_elements,
             )
-            per_sample[sample_dir.name]["inversion_error"] = _pair_metrics(steps[0], inverted_noise)
+            per_sample[sample_dir.name]["inversion_error"] = inversion_error
             inverted_noises.append(inverted_noise)
+            comparison = {
+                "sample": sample_dir.name,
+                "input_noise_path": (sample_dir / "latents" / "x_000.pt").as_posix(),
+                "inverted_noise_path": (sample_dir / "inverted_noise.pt").as_posix(),
+                **inversion_error,
+            }
+            if save_noise_previews:
+                preview_path = noise_comparison_dir / f"{sample_dir.name}.png"
+                comparison.update(_write_noise_images(preview_path, steps[0], inverted_noise))
+            noise_comparisons.append(comparison)
         initial_latents.append(steps[0])
         final_latents.append(steps[-1])
 
@@ -275,11 +368,14 @@ def run_evaluation(
         ],
         "aggregate": aggregate,
         "samples": per_sample,
+        "noise_comparisons": noise_comparisons,
     }
     return results
 
 
-def _flatten_metrics(data: dict[str, Any], prefix: str = "") -> dict[str, float | int | str | bool]:
+def _flatten_metrics(
+    data: dict[str, Any], prefix: str = ""
+) -> dict[str, float | int | str | bool]:
     flat: dict[str, float | int | str | bool] = {}
     for key, value in data.items():
         full_key = f"{prefix}/{key}" if prefix else key
@@ -290,7 +386,9 @@ def _flatten_metrics(data: dict[str, Any], prefix: str = "") -> dict[str, float 
     return flat
 
 
-def _build_samples_table_rows(results: dict[str, Any]) -> list[dict[str, float | int | str | bool]]:
+def _build_samples_table_rows(
+    results: dict[str, Any],
+) -> list[dict[str, float | int | str | bool]]:
     rows = []
     for sample_name, sample in results["samples"].items():
         row: dict[str, float | int | str | bool] = {"sample": sample_name}
@@ -299,7 +397,9 @@ def _build_samples_table_rows(results: dict[str, Any]) -> list[dict[str, float |
         row.update(_flatten_metrics(sample["initial_latent_stats"], prefix="initial_latent"))
         row.update(_flatten_metrics(sample["final_latent_stats"], prefix="final_latent"))
         if "first_pred_noise_stats" in sample:
-            row.update(_flatten_metrics(sample["first_pred_noise_stats"], prefix="first_pred_noise"))
+            row.update(
+                _flatten_metrics(sample["first_pred_noise_stats"], prefix="first_pred_noise")
+            )
         if "last_pred_noise_stats" in sample:
             row.update(_flatten_metrics(sample["last_pred_noise_stats"], prefix="last_pred_noise"))
         if "inverted_noise_stats" in sample:
@@ -322,7 +422,9 @@ def log_to_wandb(results: dict[str, Any], output_dir: Path, args: argparse.Names
     try:
         import wandb
     except ImportError:
-        logger.warning("W&B logging skipped because `wandb` is not installed in the active environment")
+        logger.warning(
+            "W&B logging skipped because `wandb` is not installed in the active environment"
+        )
         return
 
     wandb_root = output_dir / "wandb"
@@ -386,6 +488,9 @@ def log_to_wandb(results: dict[str, Any], output_dir: Path, args: argparse.Names
             artifact.add_file(summary_json.as_posix())
         if summary_md.exists():
             artifact.add_file(summary_md.as_posix())
+        noise_comparison_dir = output_dir / "noise_comparisons"
+        if noise_comparison_dir.exists():
+            artifact.add_dir(noise_comparison_dir.as_posix(), name="noise_comparisons")
         run.log_artifact(artifact)
 
         run.summary["input_dir"] = results["input_dir"]
@@ -401,12 +506,28 @@ def write_outputs(results: dict[str, Any], output_dir: Path) -> None:
     with json_path.open("w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)
 
+    noise_comparisons = results.get("noise_comparisons") or []
+    if noise_comparisons:
+        comparison_dir = output_dir / "noise_comparisons"
+        comparison_dir.mkdir(parents=True, exist_ok=True)
+        comparison_json_path = comparison_dir / "noise_comparisons.json"
+        comparison_csv_path = comparison_dir / "noise_comparisons.csv"
+        with comparison_json_path.open("w", encoding="utf-8") as f:
+            json.dump(noise_comparisons, f, indent=2)
+        columns = sorted({key for row in noise_comparisons for key in row})
+        with comparison_csv_path.open("w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=columns)
+            writer.writeheader()
+            writer.writerows(noise_comparisons)
+
     aggregate = results["aggregate"]
     markdown_path = output_dir / "evaluation_summary.md"
     with markdown_path.open("w", encoding="utf-8") as f:
         f.write("# Evaluation Summary\n\n")
         f.write(f"- Input directory: `{results['input_dir']}`\n")
         f.write(f"- Samples: {results['num_samples']}\n\n")
+        if noise_comparisons:
+            f.write("- Noise comparison artifacts: `noise_comparisons/`\n\n")
         f.write("## Aggregate\n\n")
         for name, metrics in aggregate.items():
             f.write(f"### {name}\n\n")
@@ -442,6 +563,11 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=200_000,
         help="Maximum tensor elements used for distribution summaries.",
+    )
+    parser.add_argument(
+        "--no-noise-previews",
+        action="store_true",
+        help="Do not write PNG previews for initial vs inverted noise comparisons.",
     )
     parser.add_argument(
         "--wandb-mode",
@@ -491,6 +617,7 @@ def main() -> None:
         patch_size=args.patch_size,
         top_k=args.top_k,
         max_elements=args.max_elements,
+        save_noise_previews=not args.no_noise_previews,
     )
     write_outputs(results, args.output_dir)
     log_to_wandb(results, args.output_dir, args)

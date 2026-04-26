@@ -17,6 +17,7 @@ INVERT_INPUT_DIR ?= data/processed/sdxl_trajectories
 INVERT_OVERWRITE ?=
 EVAL_INPUT_DIR ?= data/processed/sdxl_trajectories
 EVAL_OUTPUT_DIR ?= reports/eval
+EVAL_NO_NOISE_PREVIEWS ?=
 WANDB_MODE ?= disabled
 WANDB_PROJECT ?= diff-inversion
 WANDB_ENTITY ?=
@@ -103,6 +104,7 @@ evaluate:
 		--output-dir $(EVAL_OUTPUT_DIR) \
 		--wandb-mode $(WANDB_MODE) \
 		--wandb-project $(WANDB_PROJECT) \
+		$(if $(EVAL_NO_NOISE_PREVIEWS),--no-noise-previews) \
 		$(if $(WANDB_ENTITY),--wandb-entity $(WANDB_ENTITY)) \
 		$(if $(WANDB_GROUP),--wandb-group $(WANDB_GROUP)) \
 		$(if $(WANDB_RUN_NAME),--wandb-run-name "$(WANDB_RUN_NAME)") \
