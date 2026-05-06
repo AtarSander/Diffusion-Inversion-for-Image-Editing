@@ -13,10 +13,8 @@ TRAJ_START_INDEX ?= 0
 TRAJ_SEED ?= 1234
 TRAJ_GUIDANCE_SCALE ?= 1.0
 TRAJ_NUM_INFERENCE_STEPS ?= 50
-INVERT_INPUT_DIR ?= data/processed/sdxl_trajectories
-INVERT_OVERWRITE ?=
-RECON_INPUT_DIR ?= data/processed/sdxl_trajectories
-RECON_OVERWRITE ?=
+INVERT_OVERRIDES ?=
+RECON_OVERRIDES ?=
 EVAL_OVERRIDES ?=
 
 export UV_CACHE_DIR
@@ -85,17 +83,13 @@ generate-baseline-samples: generate_trajectories
 ## Run optional baseline DDIM inversion over generated SDXL trajectory samples
 .PHONY: invert-baseline-samples
 invert-baseline-samples:
-	$(UV) run python -m diff_inversion.eval.invert_sdxl \
-		--input-dir $(INVERT_INPUT_DIR) \
-		$(if $(INVERT_OVERWRITE),--overwrite)
+	$(UV) run python -m diff_inversion.eval.invert_sdxl $(INVERT_OVERRIDES)
 
 
 ## Reconstruct baseline SDXL images from saved inverted DDIM noise
 .PHONY: reconstruct-baseline-samples
 reconstruct-baseline-samples:
-	$(UV) run python -m diff_inversion.eval.reconstruct_sdxl \
-		--input-dir $(RECON_INPUT_DIR) \
-		$(if $(RECON_OVERWRITE),--overwrite)
+	$(UV) run python -m diff_inversion.eval.reconstruct_sdxl $(RECON_OVERRIDES)
 
 
 ## Run lightweight evaluation over generated SDXL trajectory artifacts
