@@ -1,6 +1,9 @@
 from pathlib import Path
 
 import hydra
+from hydra.utils import to_absolute_path
+from loguru import logger
+from omegaconf import DictConfig, OmegaConf
 import torch
 from hydra.utils import to_absolute_path
 from loguru import logger
@@ -26,7 +29,9 @@ def get_top_k_corr_in_patches(tensor: torch.Tensor, patch_size: int = 8, top_k: 
 
     for i in range(0, height, patch_size):
         for j in range(0, width, patch_size):
-            patches = tensor[:, :, i : i + patch_size, j : j + patch_size].reshape(num_examples, -1)
+            patches = tensor[:, :, i : i + patch_size, j : j + patch_size].reshape(
+                num_examples, -1
+            )
 
             if patches.size(1) > 1:  # Ensure there are at least two elements
                 mean = patches.mean(dim=0, keepdim=True)
@@ -40,7 +45,9 @@ def get_top_k_corr_in_patches(tensor: torch.Tensor, patch_size: int = 8, top_k: 
                 upper_triangle_values = corr_matrix[triu_indices[0], triu_indices[1]]
 
                 # Get the top-k absolute correlation coefficients for this patch
-                top_k_values, _ = torch.topk(upper_triangle_values.abs(), min(top_k, upper_triangle_values.numel()))
+                top_k_values, _ = torch.topk(
+                    upper_triangle_values.abs(), min(top_k, upper_triangle_values.numel())
+                )
                 avg_topk_values.append(top_k_values)
             else:
                 patch_counter += 1
@@ -54,19 +61,81 @@ def get_top_k_corr_in_patches(tensor: torch.Tensor, patch_size: int = 8, top_k: 
         std_top_k = 0
 
     if patch_counter > 0:
-        print(f"Warning: {patch_counter} patches were empty")
+        logger.warning("{} patches were empty", patch_counter)
 
     return {"mean": mean_top_k, "std": std_top_k}
 
 
+def _resolve_path(path: str | Path) -> Path:
+    return Path(to_absolute_path(str(path))).resolve()
+
+
+def _resolve_torch_dtype(dtype: str) -> torch.dtype:
+    try:
+        return getattr(torch, dtype)
+    except AttributeError as exc:
+        raise ValueError(f"Unsupported torch dtype: {dtype}") from exc
+
+
+def _load_tensor(path: Path, dtype: torch.dtype, weights_only: bool) -> torch.Tensor:
+    logger.debug("Loading tensor from {}", path)
+    return torch.load(path, weights_only=weights_only).to(dtype)
+
+
+@hydra.main(config_path="../../config/eval", config_name="correlation", version_base=None)
+def main(cfg: DictConfig) -> None:
+    logger.info("Correlation config:\n{}", OmegaConf.to_yaml(cfg))
+
+    outputs_dir = _resolve_path(cfg.outputs_dir)
+    dtype = _resolve_torch_dtype(cfg.dtype)
+    metrics = cfg.metrics
+
+    for model in cfg.models:
+        model_dir = outputs_dir / model / cfg.timestep_dir
+        logger.info("Running correlation for model '{}' from {}", model, model_dir)
+
+        noisess = _load_tensor(model_dir / cfg.filenames.noise, dtype, cfg.weights_only)
+        latents = _load_tensor(model_dir / cfg.filenames.latents, dtype, cfg.weights_only)
+        samples = _load_tensor(model_dir / cfg.filenames.samples, dtype, cfg.weights_only)
+
+        logger.info(
+            "Tensor dtypes: noisess={}, latents={}, samples={}",
+            noisess.dtype,
+            latents.dtype,
+            samples.dtype,
+        )
+        logger.info(
+            "Tensor shapes: noisess={}, latents={}, samples={}",
+            tuple(noisess.shape),
+            tuple(latents.shape),
+            tuple(samples.shape),
+        )
+
+        logger.info(
+            "Noisess: {}",
+            get_top_k_corr_in_patches(
+                noisess,
+                top_k=metrics.top_k,
+                patch_size=metrics.patch_size,
+            ),
+        )
+        logger.info(
+            "Latents: {}",
+            get_top_k_corr_in_patches(
+                latents,
+                top_k=metrics.top_k,
+                patch_size=metrics.patch_size,
+            ),
+        )
+        logger.info(
+            "Samples: {}",
+            get_top_k_corr_in_patches(
+                samples,
+                top_k=metrics.top_k,
+                patch_size=metrics.patch_size,
+            ),
+        )
+
+
 if __name__ == "__main__":
-    for idx, model in enumerate(["cifar_pixel_32", "imagenet_pixel_64", "imagenet_pixel_256", "celeba_ldm_256", "imagenet_dit_256"]):
-        print("Model name: ", model)
-        noisess = torch.load(f"experiments/outputs_correlation/{model}/T_100/noise.pt", weights_only=False).to(torch.float16)
-        latents = torch.load(f"experiments/outputs_correlation/{model}/T_100/latents.pt", weights_only=False).to(torch.float16)
-        samples = torch.load(f"experiments/outputs_correlation/{model}/T_100/samples.pt", weights_only=False).to(torch.float16)
-        print(f"Dtypes: {noisess.dtype=}, {latents.dtype=}, {samples.dtype=}")
-        print(f"Shapes: {noisess.shape=}, {latents.shape=}, {samples.shape=}")
-        print("Noisess: ", get_top_k_corr_in_patches(noisess, top_k=20, patch_size=8))
-        print("Latents: ", get_top_k_corr_in_patches(latents, top_k=20, patch_size=8))
-        print("Samples: ", get_top_k_corr_in_patches(samples, top_k=20, patch_size=8))
+    main()

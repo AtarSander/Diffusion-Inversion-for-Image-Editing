@@ -1,0 +1,25 @@
+input_dir: data/processed/sdxl_trajectories
+output_dir: reports/eval
+
+patch_size: 8
+top_k: 20
+max_elements: 200000
+
+save_noise_previews: true
+plain_threshold: 0.025
+
+normality_sample_size: 5000
+qq_num_quantiles: 201
+save_normality_plots: true
+
+calculate_lpips: true
+lpips_device: auto
+
+wandb:
+  mode: disabled
+  project: diff-inversion
+  entity: null
+  group: null
+  run_name: null
+  artifact_name: null
+  tags: null
