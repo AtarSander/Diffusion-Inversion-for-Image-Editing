@@ -76,6 +76,14 @@ def _tensor_stats(tensor: torch.Tensor, max_elements: int) -> dict[str, float]:
     }
 
 
+def _flat_sample(tensor: torch.Tensor, max_elements: int) -> torch.Tensor:
+    flat = tensor.detach().float().cpu().flatten()
+    if flat.numel() > max_elements:
+        idx = torch.linspace(0, flat.numel() - 1, max_elements).long()
+        flat = flat[idx]
+    return flat
+
+
 def _safe_cosine(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     a = torch.nn.functional.normalize(a.flatten(), dim=0)
     b = torch.nn.functional.normalize(b.flatten(), dim=0)
@@ -161,6 +169,160 @@ def _latent_error_structure_metrics(
             _safe_cosine(delta.abs(), final_latent.abs()).item()
         ),
     }
+
+
+def _optional_shapiro_p_value(values: torch.Tensor) -> float | None:
+    if values.numel() < 3:
+        return None
+    try:
+        from scipy.stats import shapiro
+    except ImportError:
+        return None
+
+    _, p_value = shapiro(values.numpy())
+    return float(p_value)
+
+
+def _gaussian_kl_from_stats(
+    mean_p: torch.Tensor,
+    std_p: torch.Tensor,
+    mean_q: torch.Tensor,
+    std_q: torch.Tensor,
+) -> torch.Tensor:
+    var_p = std_p.clamp_min(1e-12).pow(2)
+    var_q = std_q.clamp_min(1e-12).pow(2)
+    return 0.5 * (torch.log(var_q / var_p) + (var_p + (mean_p - mean_q).pow(2)) / var_q - 1)
+
+
+def _qq_quantiles(
+    reference: torch.Tensor,
+    candidate: torch.Tensor,
+    max_elements: int,
+    num_quantiles: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    reference_flat = _flat_sample(reference, max_elements)
+    candidate_flat = _flat_sample(candidate, max_elements)
+    num_quantiles = max(2, int(num_quantiles))
+    probabilities = torch.linspace(0.001, 0.999, num_quantiles, dtype=torch.float32)
+    return (
+        torch.quantile(reference_flat, probabilities),
+        torch.quantile(candidate_flat, probabilities),
+    )
+
+
+def _qq_metrics(
+    reference: torch.Tensor,
+    candidate: torch.Tensor,
+    max_elements: int,
+    num_quantiles: int,
+) -> dict[str, float]:
+    reference_q, candidate_q = _qq_quantiles(
+        reference,
+        candidate,
+        max_elements=max_elements,
+        num_quantiles=num_quantiles,
+    )
+    reference_centered = reference_q - reference_q.mean()
+    candidate_centered = candidate_q - candidate_q.mean()
+    denom = torch.linalg.vector_norm(reference_centered) * torch.linalg.vector_norm(
+        candidate_centered
+    )
+    qq_correlation = torch.sum(reference_centered * candidate_centered) / denom.clamp_min(1e-12)
+    slope = torch.sum(reference_centered * candidate_centered) / torch.sum(
+        reference_centered.pow(2)
+    ).clamp_min(1e-12)
+    intercept = candidate_q.mean() - slope * reference_q.mean()
+    delta = candidate_q - reference_q
+    return {
+        "qq_correlation": float(qq_correlation.item()),
+        "qq_slope": float(slope.item()),
+        "qq_intercept": float(intercept.item()),
+        "qq_rmse": float(torch.sqrt(delta.pow(2).mean()).item()),
+        "qq_mae": float(delta.abs().mean().item()),
+    }
+
+
+def _noise_normality_metrics(
+    reference: torch.Tensor,
+    candidate: torch.Tensor,
+    max_elements: int,
+    num_quantiles: int,
+) -> dict[str, float | int | bool | None]:
+    reference_flat = _flat_sample(reference, max_elements)
+    candidate_flat = _flat_sample(candidate, max_elements)
+    reference_mean = reference_flat.mean()
+    candidate_mean = candidate_flat.mean()
+    reference_std = reference_flat.std(unbiased=False).clamp_min(1e-12)
+    candidate_std = candidate_flat.std(unbiased=False).clamp_min(1e-12)
+    ref_to_candidate_kl = _gaussian_kl_from_stats(
+        reference_mean,
+        reference_std,
+        candidate_mean,
+        candidate_std,
+    )
+    candidate_to_ref_kl = _gaussian_kl_from_stats(
+        candidate_mean,
+        candidate_std,
+        reference_mean,
+        reference_std,
+    )
+    initial_shapiro = _optional_shapiro_p_value(reference_flat)
+    inverted_shapiro = _optional_shapiro_p_value(candidate_flat)
+    metrics: dict[str, float | int | bool | None] = {
+        "sample_size": int(min(reference_flat.numel(), candidate_flat.numel())),
+        "num_quantiles": int(max(2, num_quantiles)),
+        "initial_shapiro_p_value": initial_shapiro,
+        "inverted_shapiro_p_value": inverted_shapiro,
+        "shapiro_available": initial_shapiro is not None and inverted_shapiro is not None,
+        "gaussian_kl_initial_to_inverted": float(ref_to_candidate_kl.item()),
+        "gaussian_kl_inverted_to_initial": float(candidate_to_ref_kl.item()),
+        "gaussian_kl_symmetric": float(((ref_to_candidate_kl + candidate_to_ref_kl) / 2).item()),
+    }
+    metrics.update(
+        _qq_metrics(
+            reference,
+            candidate,
+            max_elements=max_elements,
+            num_quantiles=num_quantiles,
+        )
+    )
+    return metrics
+
+
+def _write_qq_plot(
+    output_path: Path,
+    reference: torch.Tensor,
+    candidate: torch.Tensor,
+    max_elements: int,
+    num_quantiles: int,
+    title: str,
+) -> dict[str, str]:
+    import matplotlib
+
+    matplotlib.use("Agg", force=True)
+    import matplotlib.pyplot as plt
+
+    reference_q, candidate_q = _qq_quantiles(
+        reference,
+        candidate,
+        max_elements=max_elements,
+        num_quantiles=num_quantiles,
+    )
+    low = float(torch.minimum(reference_q.min(), candidate_q.min()).item())
+    high = float(torch.maximum(reference_q.max(), candidate_q.max()).item())
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig, ax = plt.subplots(figsize=(5, 5), dpi=150)
+    ax.scatter(reference_q.numpy(), candidate_q.numpy(), s=9, alpha=0.75)
+    ax.plot([low, high], [low, high], color="black", linewidth=1, linestyle="--")
+    ax.set_title(title)
+    ax.set_xlabel("initial noise quantiles")
+    ax.set_ylabel("inverted noise quantiles")
+    ax.grid(True, alpha=0.25)
+    fig.tight_layout()
+    fig.savefig(output_path)
+    plt.close(fig)
+    return {"qq_plot_path": output_path.as_posix()}
 
 
 def _load_rgb_tensor(path: Path, size: tuple[int, int] | None = None) -> torch.Tensor:
@@ -667,6 +829,9 @@ def run_evaluation(
     max_elements: int,
     save_noise_previews: bool,
     plain_threshold: float,
+    normality_sample_size: int,
+    qq_num_quantiles: int,
+    save_normality_plots: bool,
 ) -> dict[str, Any]:
     sample_dirs = sorted(path for path in input_dir.glob("sample_*") if path.is_dir())
     if not sample_dirs:
@@ -685,8 +850,10 @@ def run_evaluation(
     last_pred_noises = []
     inverted_noises = []
     noise_comparisons = []
+    normality_comparisons = []
     image_comparisons = []
     noise_comparison_dir = output_dir / "noise_comparisons"
+    normality_dir = output_dir / "normality"
     image_comparison_dir = output_dir / "image_comparisons"
 
     for sample_dir in sample_dirs:
@@ -731,6 +898,13 @@ def run_evaluation(
                 inversion_error_per_channel
             )
             per_sample[sample_dir.name]["inversion_error_structure"] = inversion_error_structure
+            normality_metrics = _noise_normality_metrics(
+                steps[0],
+                inverted_noise,
+                max_elements=normality_sample_size,
+                num_quantiles=qq_num_quantiles,
+            )
+            per_sample[sample_dir.name]["noise_normality"] = normality_metrics
             inverted_noises.append(inverted_noise)
             prompt_record = metadata.get("prompt")
             prompt_text = prompt_record.get("prompt") if isinstance(prompt_record, dict) else None
@@ -757,6 +931,26 @@ def run_evaluation(
                     )
                 )
             noise_comparisons.append(comparison)
+            normality_comparison = {
+                "sample": sample_dir.name,
+                "prompt": prompt_text or "",
+                "input_noise_path": (sample_dir / "latents" / "x_000.pt").as_posix(),
+                "inverted_noise_path": (sample_dir / "inverted_noise.pt").as_posix(),
+                **normality_metrics,
+            }
+            if save_normality_plots:
+                qq_plot_path = normality_dir / f"{sample_dir.name}_qq.png"
+                normality_comparison.update(
+                    _write_qq_plot(
+                        qq_plot_path,
+                        steps[0],
+                        inverted_noise,
+                        max_elements=normality_sample_size,
+                        num_quantiles=qq_num_quantiles,
+                        title=f"{sample_dir.name}: initial vs inverted noise",
+                    )
+                )
+            normality_comparisons.append(normality_comparison)
         final_image_path = sample_dir / "final.png"
         reconstructed_image_path = sample_dir / "reconstructed.png"
         if final_image_path.exists() and reconstructed_image_path.exists():
@@ -838,6 +1032,10 @@ def run_evaluation(
             image_comparisons,
             prefixes_to_skip=("reference_", "candidate_"),
         )
+    if normality_comparisons:
+        aggregate["initial_vs_inverted_noise_normality"] = _summarize_numeric_rows(
+            normality_comparisons,
+        )
 
     results = {
         "input_dir": input_dir.as_posix(),
@@ -846,6 +1044,7 @@ def run_evaluation(
             "This runner evaluates saved generation trajectories.",
             "If present, pred_noises are included as forward DDIM reference targets.",
             "If present, inverted_noise is compared against initial latent noise x_T.",
+            "If present, normality diagnostics compare initial and inverted noise.",
             "If present, reconstructed.png is compared against final.png.",
             "Plain-area reconstruction metrics use final.png local pixel differences.",
             "Editing metrics need paired edited images.",
@@ -853,6 +1052,7 @@ def run_evaluation(
         "aggregate": aggregate,
         "samples": per_sample,
         "noise_comparisons": noise_comparisons,
+        "normality_comparisons": normality_comparisons,
         "image_comparisons": image_comparisons,
     }
     return results
@@ -909,6 +1109,8 @@ def _build_samples_table_rows(
                     prefix="inversion_error_structure",
                 )
             )
+        if "noise_normality" in sample:
+            row.update(_flatten_metrics(sample["noise_normality"], prefix="noise_normality"))
         if "reconstruction_image" in sample:
             row.update(
                 _flatten_metrics(
@@ -959,6 +1161,8 @@ def log_to_wandb(results: dict[str, Any], output_dir: Path, args: argparse.Names
             "top_k": args.top_k,
             "max_elements": args.max_elements,
             "plain_threshold": args.plain_threshold,
+            "normality_sample_size": args.normality_sample_size,
+            "qq_num_quantiles": args.qq_num_quantiles,
         }
         run = wandb.init(
             project=args.wandb_project,
@@ -1002,6 +1206,9 @@ def log_to_wandb(results: dict[str, Any], output_dir: Path, args: argparse.Names
         noise_comparison_dir = output_dir / "noise_comparisons"
         if noise_comparison_dir.exists():
             artifact.add_dir(noise_comparison_dir.as_posix(), name="noise_comparisons")
+        normality_dir = output_dir / "normality"
+        if normality_dir.exists():
+            artifact.add_dir(normality_dir.as_posix(), name="normality")
         image_comparison_dir = output_dir / "image_comparisons"
         if image_comparison_dir.exists():
             artifact.add_dir(image_comparison_dir.as_posix(), name="image_comparisons")
@@ -1034,6 +1241,20 @@ def write_outputs(results: dict[str, Any], output_dir: Path) -> None:
             writer.writeheader()
             writer.writerows(noise_comparisons)
 
+    normality_comparisons = results.get("normality_comparisons") or []
+    if normality_comparisons:
+        normality_dir = output_dir / "normality"
+        normality_dir.mkdir(parents=True, exist_ok=True)
+        normality_json_path = normality_dir / "normality_comparisons.json"
+        normality_csv_path = normality_dir / "normality_comparisons.csv"
+        with normality_json_path.open("w", encoding="utf-8") as f:
+            json.dump(normality_comparisons, f, indent=2)
+        columns = sorted({key for row in normality_comparisons for key in row})
+        with normality_csv_path.open("w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=columns)
+            writer.writeheader()
+            writer.writerows(normality_comparisons)
+
     image_comparisons = results.get("image_comparisons") or []
     if image_comparisons:
         comparison_dir = output_dir / "image_comparisons"
@@ -1056,6 +1277,8 @@ def write_outputs(results: dict[str, Any], output_dir: Path) -> None:
         f.write(f"- Samples: {results['num_samples']}\n\n")
         if noise_comparisons:
             f.write("- Noise comparison artifacts: `noise_comparisons/`\n\n")
+        if normality_comparisons:
+            f.write("- Normality artifacts: `normality/`\n\n")
         if image_comparisons:
             f.write("- Image reconstruction artifacts: `image_comparisons/`\n\n")
         f.write("## Aggregate\n\n")
@@ -1104,6 +1327,23 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.025,
         help="Pixel-difference threshold in [0,1] for final.png plain-area masks.",
+    )
+    parser.add_argument(
+        "--normality-sample-size",
+        type=int,
+        default=5_000,
+        help="Maximum tensor elements per sample used for normality diagnostics.",
+    )
+    parser.add_argument(
+        "--qq-num-quantiles",
+        type=int,
+        default=201,
+        help="Number of quantile points used in initial-vs-inverted QQ plots.",
+    )
+    parser.add_argument(
+        "--no-normality-plots",
+        action="store_true",
+        help="Compute normality metrics without writing per-sample QQ plot PNGs.",
     )
     parser.add_argument(
         "--wandb-mode",
@@ -1155,6 +1395,9 @@ def main() -> None:
         max_elements=args.max_elements,
         save_noise_previews=not args.no_noise_previews,
         plain_threshold=args.plain_threshold,
+        normality_sample_size=args.normality_sample_size,
+        qq_num_quantiles=args.qq_num_quantiles,
+        save_normality_plots=not args.no_normality_plots,
     )
     write_outputs(results, args.output_dir)
     log_to_wandb(results, args.output_dir, args)
