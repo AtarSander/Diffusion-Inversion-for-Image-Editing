@@ -1,20 +1,37 @@
-"""Run lightweight evaluation over saved SDXL trajectory samples."""
+"""Run evaluation over saved SDXL trajectory samples."""
 
 from __future__ import annotations
 
 import argparse
-import csv
 import json
-import math
 import os
 from pathlib import Path
-import re
 from typing import Any
 
 from loguru import logger
-import numpy as np
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image
 import torch
+
+from diff_inversion.eval.diversity import lpips_calculate_distances
+from diff_inversion.eval.previews import write_image_comparison, write_noise_images
+from diff_inversion.eval.reporting import (
+    log_to_wandb,
+    summarize_numeric_rows,
+    write_outputs,
+)
+from diff_inversion.eval.sample_metrics import (
+    error_distribution_metrics,
+    image_pair_metrics,
+    latent_error_structure_metrics,
+    load_rgb_tensor,
+    noise_normality_metrics,
+    pair_metrics,
+    patch_topk_corr,
+    per_channel_pair_metrics,
+    tensor_stats,
+    trajectory_metrics,
+    write_qq_plot,
+)
 
 
 def _load_tensor(path: Path) -> torch.Tensor:
@@ -41,753 +58,6 @@ def _load_optional_sample_tensor(path: Path) -> torch.Tensor | None:
     if not path.exists():
         return None
     return _as_sample_tensor(_load_tensor(path))
-
-
-def _tensor_stats(tensor: torch.Tensor, max_elements: int) -> dict[str, float]:
-    flat = tensor.flatten()
-    if flat.numel() > max_elements:
-        idx = torch.linspace(0, flat.numel() - 1, max_elements).long()
-        flat = flat[idx]
-
-    mean = flat.mean()
-    std = flat.std(unbiased=False).clamp_min(1e-12)
-    centered = (flat - mean) / std
-    quantiles = torch.quantile(
-        flat,
-        torch.tensor([0.01, 0.05, 0.50, 0.95, 0.99], dtype=flat.dtype),
-    )
-    variance = std.pow(2)
-    normal_kl = 0.5 * (variance + mean.pow(2) - 1 - torch.log(variance))
-    return {
-        "mean": float(mean.item()),
-        "std": float(std.item()),
-        "min": float(flat.min().item()),
-        "p01": float(quantiles[0].item()),
-        "p05": float(quantiles[1].item()),
-        "p50": float(quantiles[2].item()),
-        "p95": float(quantiles[3].item()),
-        "p99": float(quantiles[4].item()),
-        "max": float(flat.max().item()),
-        "skew": float(centered.pow(3).mean().item()),
-        "excess_kurtosis": float(centered.pow(4).mean().sub(3).item()),
-        "abs_mean_error_from_normal": float(mean.abs().item()),
-        "abs_std_error_from_normal": float((std - 1).abs().item()),
-        "normal_kl_from_standard": float(normal_kl.item()),
-    }
-
-
-def _flat_sample(tensor: torch.Tensor, max_elements: int) -> torch.Tensor:
-    flat = tensor.detach().float().cpu().flatten()
-    if flat.numel() > max_elements:
-        idx = torch.linspace(0, flat.numel() - 1, max_elements).long()
-        flat = flat[idx]
-    return flat
-
-
-def _safe_cosine(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-    a = torch.nn.functional.normalize(a.flatten(), dim=0)
-    b = torch.nn.functional.normalize(b.flatten(), dim=0)
-    return torch.sum(a * b)
-
-
-def _pair_metrics(reference: torch.Tensor, candidate: torch.Tensor) -> dict[str, float]:
-    delta = candidate - reference
-    mse = delta.pow(2).mean()
-    mae = delta.abs().mean()
-    rmse = torch.sqrt(mse)
-    reference_std = reference.std(unbiased=False).clamp_min(1e-12)
-    candidate_std = candidate.std(unbiased=False).clamp_min(1e-12)
-    return {
-        "mse": float(mse.item()),
-        "rmse": float(rmse.item()),
-        "mae": float(mae.item()),
-        "l2": float(torch.linalg.vector_norm(delta).item()),
-        "cosine": float(_safe_cosine(reference, candidate).item()),
-        "relative_rmse_to_reference_std": float((rmse / reference_std).item()),
-        "candidate_to_reference_std_ratio": float((candidate_std / reference_std).item()),
-        "mean_shift": float((candidate.mean() - reference.mean()).item()),
-    }
-
-
-def _per_channel_pair_metrics(
-    reference: torch.Tensor, candidate: torch.Tensor
-) -> dict[str, float]:
-    if reference.ndim != candidate.ndim or reference.ndim not in (3, 4):
-        return {}
-    channel_dim = 0 if reference.ndim == 3 else 1
-    metrics = {}
-    for channel_idx in range(reference.shape[channel_dim]):
-        if reference.ndim == 3:
-            reference_channel = reference[channel_idx]
-            candidate_channel = candidate[channel_idx]
-        else:
-            reference_channel = reference[:, channel_idx]
-            candidate_channel = candidate[:, channel_idx]
-        channel_metrics = _pair_metrics(reference_channel, candidate_channel)
-        for name, value in channel_metrics.items():
-            metrics[f"channel_{channel_idx}/{name}"] = value
-    return metrics
-
-
-def _error_distribution_metrics(
-    reference: torch.Tensor,
-    candidate: torch.Tensor,
-    max_elements: int,
-) -> dict[str, float]:
-    delta = candidate - reference
-    abs_delta = delta.abs()
-    flat_abs = abs_delta.flatten()
-    if flat_abs.numel() > max_elements:
-        idx = torch.linspace(0, flat_abs.numel() - 1, max_elements).long()
-        flat_abs = flat_abs[idx]
-    quantiles = torch.quantile(
-        flat_abs,
-        torch.tensor([0.50, 0.90, 0.95, 0.99], dtype=flat_abs.dtype),
-    )
-    return {
-        "signed_mean": float(delta.mean().item()),
-        "signed_std": float(delta.std(unbiased=False).item()),
-        "abs_mean": float(flat_abs.mean().item()),
-        "abs_std": float(flat_abs.std(unbiased=False).item()),
-        "abs_p50": float(quantiles[0].item()),
-        "abs_p90": float(quantiles[1].item()),
-        "abs_p95": float(quantiles[2].item()),
-        "abs_p99": float(quantiles[3].item()),
-        "abs_max": float(flat_abs.max().item()),
-    }
-
-
-def _latent_error_structure_metrics(
-    reference: torch.Tensor,
-    candidate: torch.Tensor,
-    final_latent: torch.Tensor,
-) -> dict[str, float]:
-    delta = candidate - reference
-    return {
-        "signed_error_vs_final_latent_cosine": float(_safe_cosine(delta, final_latent).item()),
-        "abs_error_vs_abs_final_latent_cosine": float(
-            _safe_cosine(delta.abs(), final_latent.abs()).item()
-        ),
-    }
-
-
-def _optional_shapiro_p_value(values: torch.Tensor) -> float | None:
-    if values.numel() < 3:
-        return None
-    try:
-        from scipy.stats import shapiro
-    except ImportError:
-        return None
-
-    _, p_value = shapiro(values.numpy())
-    return float(p_value)
-
-
-def _gaussian_kl_from_stats(
-    mean_p: torch.Tensor,
-    std_p: torch.Tensor,
-    mean_q: torch.Tensor,
-    std_q: torch.Tensor,
-) -> torch.Tensor:
-    var_p = std_p.clamp_min(1e-12).pow(2)
-    var_q = std_q.clamp_min(1e-12).pow(2)
-    return 0.5 * (torch.log(var_q / var_p) + (var_p + (mean_p - mean_q).pow(2)) / var_q - 1)
-
-
-def _qq_quantiles(
-    reference: torch.Tensor,
-    candidate: torch.Tensor,
-    max_elements: int,
-    num_quantiles: int,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    reference_flat = _flat_sample(reference, max_elements)
-    candidate_flat = _flat_sample(candidate, max_elements)
-    num_quantiles = max(2, int(num_quantiles))
-    probabilities = torch.linspace(0.001, 0.999, num_quantiles, dtype=torch.float32)
-    return (
-        torch.quantile(reference_flat, probabilities),
-        torch.quantile(candidate_flat, probabilities),
-    )
-
-
-def _qq_metrics(
-    reference: torch.Tensor,
-    candidate: torch.Tensor,
-    max_elements: int,
-    num_quantiles: int,
-) -> dict[str, float]:
-    reference_q, candidate_q = _qq_quantiles(
-        reference,
-        candidate,
-        max_elements=max_elements,
-        num_quantiles=num_quantiles,
-    )
-    reference_centered = reference_q - reference_q.mean()
-    candidate_centered = candidate_q - candidate_q.mean()
-    denom = torch.linalg.vector_norm(reference_centered) * torch.linalg.vector_norm(
-        candidate_centered
-    )
-    qq_correlation = torch.sum(reference_centered * candidate_centered) / denom.clamp_min(1e-12)
-    slope = torch.sum(reference_centered * candidate_centered) / torch.sum(
-        reference_centered.pow(2)
-    ).clamp_min(1e-12)
-    intercept = candidate_q.mean() - slope * reference_q.mean()
-    delta = candidate_q - reference_q
-    return {
-        "qq_correlation": float(qq_correlation.item()),
-        "qq_slope": float(slope.item()),
-        "qq_intercept": float(intercept.item()),
-        "qq_rmse": float(torch.sqrt(delta.pow(2).mean()).item()),
-        "qq_mae": float(delta.abs().mean().item()),
-    }
-
-
-def _noise_normality_metrics(
-    reference: torch.Tensor,
-    candidate: torch.Tensor,
-    max_elements: int,
-    num_quantiles: int,
-) -> dict[str, float | int | bool | None]:
-    reference_flat = _flat_sample(reference, max_elements)
-    candidate_flat = _flat_sample(candidate, max_elements)
-    reference_mean = reference_flat.mean()
-    candidate_mean = candidate_flat.mean()
-    reference_std = reference_flat.std(unbiased=False).clamp_min(1e-12)
-    candidate_std = candidate_flat.std(unbiased=False).clamp_min(1e-12)
-    ref_to_candidate_kl = _gaussian_kl_from_stats(
-        reference_mean,
-        reference_std,
-        candidate_mean,
-        candidate_std,
-    )
-    candidate_to_ref_kl = _gaussian_kl_from_stats(
-        candidate_mean,
-        candidate_std,
-        reference_mean,
-        reference_std,
-    )
-    initial_shapiro = _optional_shapiro_p_value(reference_flat)
-    inverted_shapiro = _optional_shapiro_p_value(candidate_flat)
-    metrics: dict[str, float | int | bool | None] = {
-        "sample_size": int(min(reference_flat.numel(), candidate_flat.numel())),
-        "num_quantiles": int(max(2, num_quantiles)),
-        "initial_shapiro_p_value": initial_shapiro,
-        "inverted_shapiro_p_value": inverted_shapiro,
-        "shapiro_available": initial_shapiro is not None and inverted_shapiro is not None,
-        "gaussian_kl_initial_to_inverted": float(ref_to_candidate_kl.item()),
-        "gaussian_kl_inverted_to_initial": float(candidate_to_ref_kl.item()),
-        "gaussian_kl_symmetric": float(((ref_to_candidate_kl + candidate_to_ref_kl) / 2).item()),
-    }
-    metrics.update(
-        _qq_metrics(
-            reference,
-            candidate,
-            max_elements=max_elements,
-            num_quantiles=num_quantiles,
-        )
-    )
-    return metrics
-
-
-def _write_qq_plot(
-    output_path: Path,
-    reference: torch.Tensor,
-    candidate: torch.Tensor,
-    max_elements: int,
-    num_quantiles: int,
-    title: str,
-) -> dict[str, str]:
-    import matplotlib
-
-    matplotlib.use("Agg", force=True)
-    import matplotlib.pyplot as plt
-
-    reference_q, candidate_q = _qq_quantiles(
-        reference,
-        candidate,
-        max_elements=max_elements,
-        num_quantiles=num_quantiles,
-    )
-    low = float(torch.minimum(reference_q.min(), candidate_q.min()).item())
-    high = float(torch.maximum(reference_q.max(), candidate_q.max()).item())
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(5, 5), dpi=150)
-    ax.scatter(reference_q.numpy(), candidate_q.numpy(), s=9, alpha=0.75)
-    ax.plot([low, high], [low, high], color="black", linewidth=1, linestyle="--")
-    ax.set_title(title)
-    ax.set_xlabel("initial noise quantiles")
-    ax.set_ylabel("inverted noise quantiles")
-    ax.grid(True, alpha=0.25)
-    fig.tight_layout()
-    fig.savefig(output_path)
-    plt.close(fig)
-    return {"qq_plot_path": output_path.as_posix()}
-
-
-def _load_rgb_tensor(path: Path, size: tuple[int, int] | None = None) -> torch.Tensor:
-    with Image.open(path) as image:
-        image = image.convert("RGB")
-        if size is not None and image.size != size:
-            image = image.resize(size, Image.Resampling.BICUBIC)
-        array = np.asarray(image, dtype=np.float32).copy()
-    return torch.from_numpy(array).permute(2, 0, 1).div(255.0)
-
-
-def _ssim_torch(reference: torch.Tensor, candidate: torch.Tensor) -> float:
-    channels, height, width = reference.shape
-    window_size = min(11, height, width)
-    if window_size % 2 == 0:
-        window_size -= 1
-    if window_size < 3:
-        return float(1.0 - torch.mean((reference - candidate).abs()).clamp(0, 1).item())
-
-    coords = torch.arange(window_size, dtype=reference.dtype) - window_size // 2
-    kernel_1d = torch.exp(-(coords.pow(2)) / (2 * 1.5**2))
-    kernel_1d = kernel_1d / kernel_1d.sum()
-    kernel_2d = torch.outer(kernel_1d, kernel_1d)
-    kernel = kernel_2d.expand(channels, 1, window_size, window_size)
-
-    reference_b = reference.unsqueeze(0)
-    candidate_b = candidate.unsqueeze(0)
-    padding = window_size // 2
-    mu_ref = torch.nn.functional.conv2d(reference_b, kernel, padding=padding, groups=channels)
-    mu_cand = torch.nn.functional.conv2d(candidate_b, kernel, padding=padding, groups=channels)
-    mu_ref_sq = mu_ref.pow(2)
-    mu_cand_sq = mu_cand.pow(2)
-    mu_ref_cand = mu_ref * mu_cand
-
-    sigma_ref_sq = (
-        torch.nn.functional.conv2d(
-            reference_b * reference_b, kernel, padding=padding, groups=channels
-        )
-        - mu_ref_sq
-    )
-    sigma_cand_sq = (
-        torch.nn.functional.conv2d(
-            candidate_b * candidate_b, kernel, padding=padding, groups=channels
-        )
-        - mu_cand_sq
-    )
-    sigma_ref_cand = (
-        torch.nn.functional.conv2d(
-            reference_b * candidate_b,
-            kernel,
-            padding=padding,
-            groups=channels,
-        )
-        - mu_ref_cand
-    )
-
-    c1 = 0.01**2
-    c2 = 0.03**2
-    numerator = (2 * mu_ref_cand + c1) * (2 * sigma_ref_cand + c2)
-    denominator = (mu_ref_sq + mu_cand_sq + c1) * (sigma_ref_sq + sigma_cand_sq + c2)
-    ssim_map = numerator / denominator.clamp_min(1e-12)
-    return float(ssim_map.mean().clamp(-1, 1).item())
-
-
-def _plain_area_mask(image: torch.Tensor, threshold: float) -> torch.Tensor:
-    if image.ndim != 3:
-        raise ValueError(f"Expected [C,H,W] image tensor, got {tuple(image.shape)}")
-
-    diff_h = torch.abs(image[:, 1:, :] - image[:, :-1, :])
-    diff_w = torch.abs(image[:, :, 1:] - image[:, :, :-1])
-    diff_h = torch.nn.functional.pad(diff_h, (0, 0, 0, 1))
-    diff_w = torch.nn.functional.pad(diff_w, (0, 1, 0, 0))
-    diff_combined = (diff_h + diff_w) / 2
-    return (diff_combined < threshold).all(dim=0)
-
-
-def _masked_image_error_metrics(
-    delta: torch.Tensor,
-    mask: torch.Tensor,
-    prefix: str,
-) -> dict[str, float | int | None]:
-    spatial_count = int(mask.sum().item())
-    total_spatial_count = int(mask.numel())
-    metrics: dict[str, float | int | None] = {
-        f"{prefix}_pixel_count": spatial_count,
-        f"{prefix}_pixel_fraction": (
-            float(spatial_count / total_spatial_count) if total_spatial_count else 0.0
-        ),
-    }
-    if spatial_count == 0:
-        metrics.update(
-            {
-                f"{prefix}_mse": None,
-                f"{prefix}_rmse": None,
-                f"{prefix}_mae": None,
-                f"{prefix}_max_abs_error": None,
-                f"{prefix}_mean_signed_error": None,
-            }
-        )
-        return metrics
-
-    masked_delta = delta[:, mask]
-    mse = masked_delta.pow(2).mean()
-    metrics.update(
-        {
-            f"{prefix}_mse": float(mse.item()),
-            f"{prefix}_rmse": float(torch.sqrt(mse).item()),
-            f"{prefix}_mae": float(masked_delta.abs().mean().item()),
-            f"{prefix}_max_abs_error": float(masked_delta.abs().max().item()),
-            f"{prefix}_mean_signed_error": float(masked_delta.mean().item()),
-        }
-    )
-    return metrics
-
-
-def _image_pair_metrics(
-    reference_path: Path,
-    candidate_path: Path,
-    plain_threshold: float,
-) -> dict[str, float | int | bool | None]:
-    with Image.open(reference_path) as image:
-        reference_size = image.size
-    with Image.open(candidate_path) as image:
-        candidate_size = image.size
-
-    reference = _load_rgb_tensor(reference_path)
-    candidate = _load_rgb_tensor(candidate_path, size=reference_size)
-    delta = candidate - reference
-    mse = delta.pow(2).mean()
-    mae = delta.abs().mean()
-    rmse = torch.sqrt(mse)
-    psnr = 100.0 if mse.item() <= 1e-12 else -10.0 * math.log10(float(mse.item()))
-    plain_mask = _plain_area_mask(reference, threshold=plain_threshold)
-    non_plain_mask = ~plain_mask
-
-    metrics: dict[str, float | int | bool | None] = {
-        "mse": float(mse.item()),
-        "rmse": float(rmse.item()),
-        "mae": float(mae.item()),
-        "psnr_db": float(psnr),
-        "ssim": _ssim_torch(reference, candidate),
-        "max_abs_error": float(delta.abs().max().item()),
-        "mean_signed_error": float(delta.mean().item()),
-        "reference_width": int(reference_size[0]),
-        "reference_height": int(reference_size[1]),
-        "candidate_width": int(candidate_size[0]),
-        "candidate_height": int(candidate_size[1]),
-        "candidate_resized_for_metrics": bool(candidate_size != reference_size),
-        "plain_threshold": float(plain_threshold),
-    }
-    metrics.update(_masked_image_error_metrics(delta, plain_mask, prefix="plain"))
-    metrics.update(_masked_image_error_metrics(delta, non_plain_mask, prefix="non_plain"))
-    return metrics
-
-
-def _summarize_numeric_rows(
-    rows: list[dict[str, Any]],
-    prefixes_to_skip: tuple[str, ...] = (),
-) -> dict[str, float]:
-    values_by_key: dict[str, list[float]] = {}
-    for row in rows:
-        for key, value in row.items():
-            if key.startswith(prefixes_to_skip) or isinstance(value, bool):
-                continue
-            if isinstance(value, (float, int)) and math.isfinite(float(value)):
-                values_by_key.setdefault(key, []).append(float(value))
-
-    summary = {}
-    for key, values in values_by_key.items():
-        values_t = torch.tensor(values, dtype=torch.float32)
-        summary[f"{key}/mean"] = float(values_t.mean().item())
-        summary[f"{key}/std"] = float(values_t.std(unbiased=False).item())
-        summary[f"{key}/min"] = float(values_t.min().item())
-        summary[f"{key}/max"] = float(values_t.max().item())
-    return summary
-
-
-def _normalize_to_uint8(tensor: torch.Tensor, vmin: float, vmax: float) -> torch.Tensor:
-    if vmax <= vmin:
-        return torch.zeros_like(tensor, dtype=torch.uint8)
-    normalized = (tensor - vmin) / (vmax - vmin)
-    return normalized.clamp(0, 1).mul(255).round().to(torch.uint8)
-
-
-def _channel_grid_image(tensor: torch.Tensor, vmin: float, vmax: float) -> Image.Image:
-    tensor = tensor.detach().float().cpu()
-    if tensor.ndim != 3:
-        raise ValueError(f"Expected [C,H,W] tensor for preview, got {tuple(tensor.shape)}")
-
-    channels = min(int(tensor.shape[0]), 4)
-    height = int(tensor.shape[1])
-    width = int(tensor.shape[2])
-    canvas = Image.new("L", (width * 2, height * 2), color=0)
-
-    for channel_idx in range(channels):
-        channel = _normalize_to_uint8(tensor[channel_idx], vmin, vmax)
-        image = Image.fromarray(channel.numpy(), mode="L")
-        canvas.paste(image, ((channel_idx % 2) * width, (channel_idx // 2) * height))
-
-    return canvas.convert("RGB")
-
-
-def _pca_rgb_image(
-    tensor: torch.Tensor, components: torch.Tensor | None = None
-) -> tuple[Image.Image, torch.Tensor]:
-    tensor = tensor.detach().float().cpu()
-    if tensor.ndim != 3:
-        raise ValueError(f"Expected [C,H,W] tensor for PCA preview, got {tuple(tensor.shape)}")
-
-    channels, height, width = tensor.shape
-    flat = tensor.permute(1, 2, 0).reshape(-1, channels)
-    centered = flat - flat.mean(dim=0, keepdim=True)
-
-    if components is None:
-        _, _, vh = torch.linalg.svd(centered, full_matrices=False)
-        components = vh[: min(3, vh.shape[0])]
-
-    projected = centered @ components.T
-    if projected.shape[1] < 3:
-        projected = torch.nn.functional.pad(projected, (0, 3 - projected.shape[1]))
-    projected = projected[:, :3].reshape(height, width, 3)
-
-    channels_u8 = []
-    for channel_idx in range(3):
-        channel = projected[:, :, channel_idx]
-        vmin = float(channel.quantile(0.01).item())
-        vmax = float(channel.quantile(0.99).item())
-        channels_u8.append(_normalize_to_uint8(channel, vmin, vmax))
-
-    image = torch.stack(channels_u8, dim=-1).numpy()
-    return Image.fromarray(image, mode="RGB"), components
-
-
-def _load_final_image_preview(final_image_path: Path, target_size: tuple[int, int]) -> Image.Image:
-    with Image.open(final_image_path) as image:
-        image = ImageOps.contain(image.convert("RGB"), target_size, Image.Resampling.LANCZOS)
-
-    canvas = Image.new("RGB", target_size, color="white")
-    x = (target_size[0] - image.width) // 2
-    y = (target_size[1] - image.height) // 2
-    canvas.paste(image, (x, y))
-    return canvas
-
-
-def _fit_panel(image: Image.Image, target_size: tuple[int, int]) -> Image.Image:
-    image = ImageOps.contain(image.convert("RGB"), target_size, Image.Resampling.LANCZOS)
-    canvas = Image.new("RGB", target_size, color="white")
-    x = (target_size[0] - image.width) // 2
-    y = (target_size[1] - image.height) // 2
-    canvas.paste(image, (x, y))
-    return canvas
-
-
-def _write_image_comparison(
-    output_path: Path,
-    final_image_path: Path,
-    reconstructed_image_path: Path,
-    plain_threshold: float,
-) -> dict[str, str]:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with Image.open(final_image_path) as image:
-        reference_size = image.size
-    reference = _load_rgb_tensor(final_image_path)
-    reconstructed = _load_rgb_tensor(reconstructed_image_path, size=reference_size)
-    error = (reconstructed - reference).abs()
-    error_vmax = float(error.quantile(0.99).item())
-    error_u8 = _normalize_to_uint8(error, 0.0, max(error_vmax, 1e-8))
-    error_image = Image.fromarray(error_u8.permute(1, 2, 0).numpy(), mode="RGB")
-    plain_mask = _plain_area_mask(reference, threshold=plain_threshold)
-    plain_mask_image = Image.fromarray(
-        plain_mask.to(torch.uint8).mul(255).numpy(),
-        mode="L",
-    ).convert("RGB")
-
-    error_path = output_path.with_name(f"{output_path.stem}_abs_image_error.png")
-    plain_mask_path = output_path.with_name(f"{output_path.stem}_plain_mask.png")
-    error_image.save(error_path)
-    plain_mask_image.save(plain_mask_path)
-
-    panel_size = (320, 320)
-    final_panel = _load_final_image_preview(final_image_path, panel_size)
-    reconstructed_panel = _load_final_image_preview(reconstructed_image_path, panel_size)
-    error_panel = _fit_panel(error_image, panel_size)
-    plain_mask_panel = _fit_panel(plain_mask_image, panel_size)
-
-    panels = [
-        ("final.png", final_panel),
-        ("reconstructed.png", reconstructed_panel),
-        ("abs image error", error_panel),
-        ("plain-area mask", plain_mask_panel),
-    ]
-    label_height = 18
-    canvas = Image.new(
-        "RGB",
-        (panel_size[0] * len(panels), panel_size[1] + label_height),
-        color="white",
-    )
-    draw = ImageDraw.Draw(canvas)
-    for idx, (label, image) in enumerate(panels):
-        x = idx * panel_size[0]
-        draw.text((x + 4, 3), label, fill="black")
-        canvas.paste(image, (x, label_height))
-    canvas.save(output_path)
-
-    return {
-        "image_comparison_preview_path": output_path.as_posix(),
-        "abs_image_error_path": error_path.as_posix(),
-        "plain_mask_path": plain_mask_path.as_posix(),
-    }
-
-
-def _write_noise_images(
-    output_path: Path,
-    initial_noise: torch.Tensor,
-    inverted_noise: torch.Tensor,
-    final_image_path: Path | None = None,
-) -> dict[str, str]:
-    combined = torch.cat([initial_noise.flatten(), inverted_noise.flatten()])
-    vmin = float(combined.quantile(0.01).item())
-    vmax = float(combined.quantile(0.99).item())
-    error = (inverted_noise - initial_noise).abs()
-    error_vmax = float(error.quantile(0.99).item())
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    input_path = output_path.with_name(f"{output_path.stem}_input_noise.png")
-    inverted_path = output_path.with_name(f"{output_path.stem}_inverted_noise.png")
-    error_path = output_path.with_name(f"{output_path.stem}_abs_error.png")
-
-    input_image = _channel_grid_image(initial_noise, vmin, vmax)
-    inverted_image = _channel_grid_image(inverted_noise, vmin, vmax)
-    error_image = _channel_grid_image(error, 0.0, max(error_vmax, 1e-8))
-
-    input_image.save(input_path)
-    inverted_image.save(inverted_path)
-    error_image.save(error_path)
-
-    pca_input_path = output_path.with_name(f"{output_path.stem}_pca_input_noise.png")
-    pca_inverted_path = output_path.with_name(f"{output_path.stem}_pca_inverted_noise.png")
-    pca_error_path = output_path.with_name(f"{output_path.stem}_pca_abs_error.png")
-    pca_input_image, components = _pca_rgb_image(initial_noise)
-    pca_inverted_image, _ = _pca_rgb_image(inverted_noise, components=components)
-    pca_error_image, _ = _pca_rgb_image(error)
-    pca_input_image.save(pca_input_path)
-    pca_inverted_image.save(pca_inverted_path)
-    pca_error_image.save(pca_error_path)
-
-    output_paths = {
-        "preview_path": output_path.as_posix(),
-        "input_noise_image_path": input_path.as_posix(),
-        "inverted_noise_image_path": inverted_path.as_posix(),
-        "abs_error_image_path": error_path.as_posix(),
-        "pca_input_noise_image_path": pca_input_path.as_posix(),
-        "pca_inverted_noise_image_path": pca_inverted_path.as_posix(),
-        "pca_abs_error_image_path": pca_error_path.as_posix(),
-    }
-    panels = [
-        ("input: latents/x_000.pt", input_image),
-        ("inverted: inverted_noise.pt", inverted_image),
-        ("abs error", error_image),
-    ]
-
-    label_height = 18
-    panel_width, panel_height = panels[0][1].size
-    if final_image_path is not None and final_image_path.exists():
-        final_preview_path = output_path.with_name(f"{output_path.stem}_final_image.png")
-        final_image = _load_final_image_preview(final_image_path, (panel_width, panel_height))
-        final_image.save(final_preview_path)
-        panels.insert(0, ("final: final.png", final_image))
-        output_paths["final_image_path"] = final_image_path.as_posix()
-        output_paths["final_image_preview_path"] = final_preview_path.as_posix()
-
-    canvas = Image.new(
-        "RGB", (panel_width * len(panels), panel_height + label_height), color="white"
-    )
-    draw = ImageDraw.Draw(canvas)
-    for idx, (label, image) in enumerate(panels):
-        x = idx * panel_width
-        draw.text((x + 4, 3), label, fill="black")
-        canvas.paste(image, (x, label_height))
-
-    canvas.save(output_path)
-    return output_paths
-
-
-def _trajectory_metrics(steps: list[torch.Tensor]) -> dict[str, Any]:
-    adjacent_l2 = []
-    adjacent_mse = []
-    adjacent_cosine = []
-
-    for current, nxt in zip(steps, steps[1:]):
-        delta = nxt - current
-        adjacent_l2.append(torch.linalg.vector_norm(delta).item())
-        adjacent_mse.append(delta.pow(2).mean().item())
-        adjacent_cosine.append(_safe_cosine(current, nxt).item())
-
-    first = steps[0]
-    last = steps[-1]
-    first_last_delta = last - first
-
-    def summarize(values: list[float]) -> dict[str, float]:
-        values_t = torch.tensor(values, dtype=torch.float32)
-        return {
-            "mean": float(values_t.mean().item()),
-            "std": float(values_t.std(unbiased=False).item()),
-            "min": float(values_t.min().item()),
-            "max": float(values_t.max().item()),
-        }
-
-    return {
-        "num_steps": len(steps),
-        "latent_shape": list(first.shape),
-        "adjacent_l2": summarize(adjacent_l2),
-        "adjacent_mse": summarize(adjacent_mse),
-        "adjacent_cosine": summarize(adjacent_cosine),
-        "first_last_l2": float(torch.linalg.vector_norm(first_last_delta).item()),
-        "first_last_mse": float(first_last_delta.pow(2).mean().item()),
-        "first_last_cosine": float(_safe_cosine(first, last).item()),
-    }
-
-
-def _patch_topk_corr(tensors: torch.Tensor, patch_size: int, top_k: int) -> dict[str, float | int]:
-    if tensors.ndim != 4:
-        raise ValueError(f"Expected [N,C,H,W] tensor, got {tuple(tensors.shape)}")
-    if tensors.shape[0] < 2:
-        return {"mean": 0.0, "std": 0.0, "num_values": 0}
-
-    _, _, height, width = tensors.shape
-    values = []
-    for row in range(0, height, patch_size):
-        for col in range(0, width, patch_size):
-            patch = tensors[:, :, row : row + patch_size, col : col + patch_size].reshape(
-                tensors.shape[0],
-                -1,
-            )
-            if patch.shape[1] < 2:
-                continue
-            std = patch.std(dim=0, unbiased=False)
-            keep = std > 1e-8
-            patch = patch[:, keep]
-            if patch.shape[1] < 2:
-                continue
-
-            patch = (patch - patch.mean(dim=0, keepdim=True)) / patch.std(
-                dim=0,
-                unbiased=False,
-                keepdim=True,
-            ).clamp_min(1e-8)
-            corr = patch.T @ patch / patch.shape[0]
-            corr = torch.nan_to_num(corr, nan=0.0, posinf=1.0, neginf=-1.0).clamp(-1.0, 1.0)
-            triu = torch.triu_indices(corr.shape[0], corr.shape[1], offset=1)
-            upper = corr[triu[0], triu[1]].abs()
-            if upper.numel() == 0:
-                continue
-            values.append(torch.topk(upper, min(top_k, upper.numel())).values)
-
-    if not values:
-        return {"mean": 0.0, "std": 0.0, "num_values": 0}
-
-    values_t = torch.cat(values)
-    return {
-        "mean": float(values_t.mean().item()),
-        "std": float(values_t.std(unbiased=False).item()),
-        "num_values": int(values_t.numel()),
-    }
 
 
 def _load_noise_paths(sample_dir: Path) -> list[Path]:
@@ -821,6 +91,178 @@ def _load_sample(
     return steps, pred_noises, inverted_noise, metadata
 
 
+def _prompt_text(metadata: dict[str, Any]) -> str:
+    prompt_record = metadata.get("prompt")
+    if isinstance(prompt_record, dict):
+        return str(prompt_record.get("prompt") or "")
+    return ""
+
+
+def _add_inversion_metrics(
+    sample_name: str,
+    sample_dir: Path,
+    steps: list[torch.Tensor],
+    inverted_noise: torch.Tensor,
+    metadata: dict[str, Any],
+    max_elements: int,
+    normality_sample_size: int,
+    qq_num_quantiles: int,
+    save_noise_previews: bool,
+    save_normality_plots: bool,
+    noise_comparison_dir: Path,
+    normality_dir: Path,
+    sample_results: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    initial_noise = steps[0]
+    inversion_error = pair_metrics(initial_noise, inverted_noise)
+    inversion_error_stats = error_distribution_metrics(
+        initial_noise,
+        inverted_noise,
+        max_elements=max_elements,
+    )
+    inversion_error_per_channel = per_channel_pair_metrics(initial_noise, inverted_noise)
+    inversion_error_structure = latent_error_structure_metrics(
+        initial_noise,
+        inverted_noise,
+        steps[-1],
+    )
+    normality_metrics = noise_normality_metrics(
+        initial_noise,
+        inverted_noise,
+        max_elements=normality_sample_size,
+        num_quantiles=qq_num_quantiles,
+    )
+
+    sample_results["inverted_noise_stats"] = tensor_stats(
+        inverted_noise,
+        max_elements=max_elements,
+    )
+    sample_results["inversion_error"] = inversion_error
+    sample_results["inversion_error_stats"] = inversion_error_stats
+    sample_results["inversion_error_per_channel"] = inversion_error_per_channel
+    sample_results["inversion_error_structure"] = inversion_error_structure
+    sample_results["noise_normality"] = normality_metrics
+
+    noise_comparison = {
+        "sample": sample_name,
+        "prompt": _prompt_text(metadata),
+        "input_noise_path": (sample_dir / "latents" / "x_000.pt").as_posix(),
+        "inverted_noise_path": (sample_dir / "inverted_noise.pt").as_posix(),
+        **inversion_error,
+        **{f"error_stats/{key}": value for key, value in inversion_error_stats.items()},
+        **{f"error_structure/{key}": value for key, value in inversion_error_structure.items()},
+    }
+    if save_noise_previews:
+        noise_comparison.update(
+            write_noise_images(
+                noise_comparison_dir / f"{sample_name}.png",
+                initial_noise,
+                inverted_noise,
+                final_image_path=sample_dir / "final.png",
+            )
+        )
+
+    normality_comparison = {
+        "sample": sample_name,
+        "prompt": _prompt_text(metadata),
+        "input_noise_path": (sample_dir / "latents" / "x_000.pt").as_posix(),
+        "inverted_noise_path": (sample_dir / "inverted_noise.pt").as_posix(),
+        **normality_metrics,
+    }
+    if save_normality_plots:
+        normality_comparison.update(
+            write_qq_plot(
+                normality_dir / f"{sample_name}_qq.png",
+                initial_noise,
+                inverted_noise,
+                max_elements=normality_sample_size,
+                num_quantiles=qq_num_quantiles,
+                title=f"{sample_name}: initial vs inverted noise",
+            )
+        )
+    return noise_comparison, normality_comparison
+
+
+def _add_image_metrics(
+    sample_name: str,
+    sample_dir: Path,
+    metadata: dict[str, Any],
+    plain_threshold: float,
+    save_previews: bool,
+    image_comparison_dir: Path,
+    sample_results: dict[str, Any],
+) -> dict[str, Any] | None:
+    final_image_path = sample_dir / "final.png"
+    reconstructed_image_path = sample_dir / "reconstructed.png"
+    if not final_image_path.exists() or not reconstructed_image_path.exists():
+        return None
+
+    metrics = image_pair_metrics(
+        final_image_path,
+        reconstructed_image_path,
+        plain_threshold=plain_threshold,
+    )
+    metrics["lpips"] = None
+    sample_results["reconstruction_image"] = metrics
+    comparison = {
+        "sample": sample_name,
+        "prompt": _prompt_text(metadata),
+        "final_image_path": final_image_path.as_posix(),
+        "reconstructed_image_path": reconstructed_image_path.as_posix(),
+        **metrics,
+    }
+    if save_previews:
+        comparison.update(
+            write_image_comparison(
+                image_comparison_dir / f"{sample_name}.png",
+                final_image_path=final_image_path,
+                reconstructed_image_path=reconstructed_image_path,
+                plain_threshold=plain_threshold,
+            )
+        )
+    return comparison
+
+
+def _lpips_device(device_name: str) -> torch.device:
+    if device_name == "auto":
+        device_name = "cuda" if torch.cuda.is_available() else "cpu"
+    return torch.device(device_name)
+
+
+def _add_lpips_metrics(
+    image_comparisons: list[dict[str, Any]],
+    per_sample: dict[str, Any],
+    device_name: str,
+) -> None:
+    if not image_comparisons:
+        return
+
+    try:
+        references = []
+        candidates = []
+        for row in image_comparisons:
+            final_image_path = Path(str(row["final_image_path"]))
+            reconstructed_image_path = Path(str(row["reconstructed_image_path"]))
+            with Image.open(final_image_path) as image:
+                reference_size = image.size
+            references.append(load_rgb_tensor(final_image_path))
+            candidates.append(load_rgb_tensor(reconstructed_image_path, size=reference_size))
+
+        device = _lpips_device(device_name)
+        logger.info("Calculating LPIPS on {}", device)
+        distances = lpips_calculate_distances(
+            torch.stack(references),
+            torch.stack(candidates),
+            device=device,
+        )
+        for row, distance in zip(image_comparisons, distances, strict=True):
+            lpips_value = float(distance.item())
+            row["lpips"] = lpips_value
+            per_sample[row["sample"]]["reconstruction_image"]["lpips"] = lpips_value
+    except Exception as exc:
+        logger.warning("LPIPS disabled: {}", exc)
+
+
 def run_evaluation(
     input_dir: Path,
     output_dir: Path,
@@ -832,6 +274,8 @@ def run_evaluation(
     normality_sample_size: int,
     qq_num_quantiles: int,
     save_normality_plots: bool,
+    calculate_lpips: bool,
+    lpips_device: str,
 ) -> dict[str, Any]:
     sample_dirs = sorted(path for path in input_dir.glob("sample_*") if path.is_dir())
     if not sample_dirs:
@@ -858,186 +302,119 @@ def run_evaluation(
 
     for sample_dir in sample_dirs:
         steps, pred_noises, inverted_noise, metadata = _load_sample(sample_dir)
-        per_sample[sample_dir.name] = {
+        sample_results = {
             "metadata": metadata,
-            "trajectory": _trajectory_metrics(steps),
-            "initial_latent_stats": _tensor_stats(steps[0], max_elements=max_elements),
-            "final_latent_stats": _tensor_stats(steps[-1], max_elements=max_elements),
+            "trajectory": trajectory_metrics(steps),
+            "initial_latent_stats": tensor_stats(steps[0], max_elements=max_elements),
+            "final_latent_stats": tensor_stats(steps[-1], max_elements=max_elements),
         }
+        per_sample[sample_dir.name] = sample_results
+
         if pred_noises:
-            per_sample[sample_dir.name]["first_pred_noise_stats"] = _tensor_stats(
+            sample_results["first_pred_noise_stats"] = tensor_stats(
                 pred_noises[0],
                 max_elements=max_elements,
             )
-            per_sample[sample_dir.name]["last_pred_noise_stats"] = _tensor_stats(
+            sample_results["last_pred_noise_stats"] = tensor_stats(
                 pred_noises[-1],
                 max_elements=max_elements,
             )
             first_pred_noises.append(pred_noises[0])
             last_pred_noises.append(pred_noises[-1])
+
         if inverted_noise is not None:
-            inversion_error = _pair_metrics(steps[0], inverted_noise)
-            inversion_error_stats = _error_distribution_metrics(
-                steps[0],
-                inverted_noise,
+            noise_comparison, normality_comparison = _add_inversion_metrics(
+                sample_name=sample_dir.name,
+                sample_dir=sample_dir,
+                steps=steps,
+                inverted_noise=inverted_noise,
+                metadata=metadata,
                 max_elements=max_elements,
+                normality_sample_size=normality_sample_size,
+                qq_num_quantiles=qq_num_quantiles,
+                save_noise_previews=save_noise_previews,
+                save_normality_plots=save_normality_plots,
+                noise_comparison_dir=noise_comparison_dir,
+                normality_dir=normality_dir,
+                sample_results=sample_results,
             )
-            inversion_error_per_channel = _per_channel_pair_metrics(steps[0], inverted_noise)
-            inversion_error_structure = _latent_error_structure_metrics(
-                steps[0],
-                inverted_noise,
-                steps[-1],
-            )
-            per_sample[sample_dir.name]["inverted_noise_stats"] = _tensor_stats(
-                inverted_noise,
-                max_elements=max_elements,
-            )
-            per_sample[sample_dir.name]["inversion_error"] = inversion_error
-            per_sample[sample_dir.name]["inversion_error_stats"] = inversion_error_stats
-            per_sample[sample_dir.name]["inversion_error_per_channel"] = (
-                inversion_error_per_channel
-            )
-            per_sample[sample_dir.name]["inversion_error_structure"] = inversion_error_structure
-            normality_metrics = _noise_normality_metrics(
-                steps[0],
-                inverted_noise,
-                max_elements=normality_sample_size,
-                num_quantiles=qq_num_quantiles,
-            )
-            per_sample[sample_dir.name]["noise_normality"] = normality_metrics
             inverted_noises.append(inverted_noise)
-            prompt_record = metadata.get("prompt")
-            prompt_text = prompt_record.get("prompt") if isinstance(prompt_record, dict) else None
-            comparison = {
-                "sample": sample_dir.name,
-                "prompt": prompt_text or "",
-                "input_noise_path": (sample_dir / "latents" / "x_000.pt").as_posix(),
-                "inverted_noise_path": (sample_dir / "inverted_noise.pt").as_posix(),
-                **inversion_error,
-                **{f"error_stats/{key}": value for key, value in inversion_error_stats.items()},
-                **{
-                    f"error_structure/{key}": value
-                    for key, value in inversion_error_structure.items()
-                },
-            }
-            if save_noise_previews:
-                preview_path = noise_comparison_dir / f"{sample_dir.name}.png"
-                comparison.update(
-                    _write_noise_images(
-                        preview_path,
-                        steps[0],
-                        inverted_noise,
-                        final_image_path=sample_dir / "final.png",
-                    )
-                )
-            noise_comparisons.append(comparison)
-            normality_comparison = {
-                "sample": sample_dir.name,
-                "prompt": prompt_text or "",
-                "input_noise_path": (sample_dir / "latents" / "x_000.pt").as_posix(),
-                "inverted_noise_path": (sample_dir / "inverted_noise.pt").as_posix(),
-                **normality_metrics,
-            }
-            if save_normality_plots:
-                qq_plot_path = normality_dir / f"{sample_dir.name}_qq.png"
-                normality_comparison.update(
-                    _write_qq_plot(
-                        qq_plot_path,
-                        steps[0],
-                        inverted_noise,
-                        max_elements=normality_sample_size,
-                        num_quantiles=qq_num_quantiles,
-                        title=f"{sample_dir.name}: initial vs inverted noise",
-                    )
-                )
+            noise_comparisons.append(noise_comparison)
             normality_comparisons.append(normality_comparison)
-        final_image_path = sample_dir / "final.png"
-        reconstructed_image_path = sample_dir / "reconstructed.png"
-        if final_image_path.exists() and reconstructed_image_path.exists():
-            image_metrics = _image_pair_metrics(
-                final_image_path,
-                reconstructed_image_path,
-                plain_threshold=plain_threshold,
-            )
-            per_sample[sample_dir.name]["reconstruction_image"] = image_metrics
-            prompt_record = metadata.get("prompt")
-            prompt_text = prompt_record.get("prompt") if isinstance(prompt_record, dict) else None
-            image_comparison = {
-                "sample": sample_dir.name,
-                "prompt": prompt_text or "",
-                "final_image_path": final_image_path.as_posix(),
-                "reconstructed_image_path": reconstructed_image_path.as_posix(),
-                **image_metrics,
-            }
-            if save_noise_previews:
-                preview_path = image_comparison_dir / f"{sample_dir.name}.png"
-                image_comparison.update(
-                    _write_image_comparison(
-                        preview_path,
-                        final_image_path=final_image_path,
-                        reconstructed_image_path=reconstructed_image_path,
-                        plain_threshold=plain_threshold,
-                    )
-                )
+
+        image_comparison = _add_image_metrics(
+            sample_name=sample_dir.name,
+            sample_dir=sample_dir,
+            metadata=metadata,
+            plain_threshold=plain_threshold,
+            save_previews=save_noise_previews,
+            image_comparison_dir=image_comparison_dir,
+            sample_results=sample_results,
+        )
+        if image_comparison is not None:
             image_comparisons.append(image_comparison)
+
         initial_latents.append(steps[0])
         final_latents.append(steps[-1])
+
+    if calculate_lpips:
+        _add_lpips_metrics(image_comparisons, per_sample, lpips_device)
 
     initial_batch = torch.stack(initial_latents)
     final_batch = torch.stack(final_latents)
     aggregate = {
-        "initial_latent_stats": _tensor_stats(initial_batch, max_elements=max_elements),
-        "final_latent_stats": _tensor_stats(final_batch, max_elements=max_elements),
-        "initial_patch_topk_correlation": _patch_topk_corr(initial_batch, patch_size, top_k),
-        "final_patch_topk_correlation": _patch_topk_corr(final_batch, patch_size, top_k),
+        "initial_latent_stats": tensor_stats(initial_batch, max_elements=max_elements),
+        "final_latent_stats": tensor_stats(final_batch, max_elements=max_elements),
+        "initial_patch_topk_correlation": patch_topk_corr(initial_batch, patch_size, top_k),
+        "final_patch_topk_correlation": patch_topk_corr(final_batch, patch_size, top_k),
     }
     if first_pred_noises and len(first_pred_noises) == len(sample_dirs):
-        aggregate["first_pred_noise_stats"] = _tensor_stats(
+        aggregate["first_pred_noise_stats"] = tensor_stats(
             torch.stack(first_pred_noises),
             max_elements=max_elements,
         )
-        aggregate["last_pred_noise_stats"] = _tensor_stats(
+        aggregate["last_pred_noise_stats"] = tensor_stats(
             torch.stack(last_pred_noises),
             max_elements=max_elements,
         )
     if inverted_noises and len(inverted_noises) == len(sample_dirs):
         inverted_batch = torch.stack(inverted_noises)
         inversion_error_batch = inverted_batch - initial_batch
-        aggregate["inverted_noise_stats"] = _tensor_stats(
+        aggregate["inverted_noise_stats"] = tensor_stats(
             inverted_batch,
             max_elements=max_elements,
         )
-        aggregate["initial_vs_inverted_noise"] = _pair_metrics(initial_batch, inverted_batch)
-        aggregate["initial_vs_inverted_noise_per_channel"] = _per_channel_pair_metrics(
+        aggregate["initial_vs_inverted_noise"] = pair_metrics(initial_batch, inverted_batch)
+        aggregate["initial_vs_inverted_noise_per_channel"] = per_channel_pair_metrics(
             initial_batch,
             inverted_batch,
         )
-        aggregate["inversion_error_stats"] = _error_distribution_metrics(
+        aggregate["inversion_error_stats"] = error_distribution_metrics(
             initial_batch,
             inverted_batch,
             max_elements=max_elements,
         )
-        aggregate["inversion_error_patch_topk_correlation"] = _patch_topk_corr(
+        aggregate["inversion_error_patch_topk_correlation"] = patch_topk_corr(
             inversion_error_batch.abs(),
             patch_size,
             top_k,
         )
-        aggregate["inversion_error_structure"] = _latent_error_structure_metrics(
+        aggregate["inversion_error_structure"] = latent_error_structure_metrics(
             initial_batch,
             inverted_batch,
             final_batch,
         )
     if image_comparisons:
-        aggregate["final_vs_reconstructed_image"] = _summarize_numeric_rows(
+        aggregate["final_vs_reconstructed_image"] = summarize_numeric_rows(
             image_comparisons,
             prefixes_to_skip=("reference_", "candidate_"),
         )
     if normality_comparisons:
-        aggregate["initial_vs_inverted_noise_normality"] = _summarize_numeric_rows(
+        aggregate["initial_vs_inverted_noise_normality"] = summarize_numeric_rows(
             normality_comparisons,
         )
 
-    results = {
+    return {
         "input_dir": input_dir.as_posix(),
         "num_samples": len(sample_dirs),
         "notes": [
@@ -1046,6 +423,7 @@ def run_evaluation(
             "If present, inverted_noise is compared against initial latent noise x_T.",
             "If present, normality diagnostics compare initial and inverted noise.",
             "If present, reconstructed.png is compared against final.png.",
+            "LPIPS uses the AlexNet v0.1 perceptual metric when available.",
             "Plain-area reconstruction metrics use final.png local pixel differences.",
             "Editing metrics need paired edited images.",
         ],
@@ -1055,244 +433,6 @@ def run_evaluation(
         "normality_comparisons": normality_comparisons,
         "image_comparisons": image_comparisons,
     }
-    return results
-
-
-def _flatten_metrics(
-    data: dict[str, Any], prefix: str = ""
-) -> dict[str, float | int | str | bool]:
-    flat: dict[str, float | int | str | bool] = {}
-    for key, value in data.items():
-        full_key = f"{prefix}/{key}" if prefix else key
-        if isinstance(value, dict):
-            flat.update(_flatten_metrics(value, full_key))
-        elif isinstance(value, (float, int, str, bool)):
-            flat[full_key] = value
-    return flat
-
-
-def _build_samples_table_rows(
-    results: dict[str, Any],
-) -> list[dict[str, float | int | str | bool]]:
-    rows = []
-    for sample_name, sample in results["samples"].items():
-        row: dict[str, float | int | str | bool] = {"sample": sample_name}
-        row.update(_flatten_metrics(sample["metadata"], prefix="metadata"))
-        row.update(_flatten_metrics(sample["trajectory"], prefix="trajectory"))
-        row.update(_flatten_metrics(sample["initial_latent_stats"], prefix="initial_latent"))
-        row.update(_flatten_metrics(sample["final_latent_stats"], prefix="final_latent"))
-        if "first_pred_noise_stats" in sample:
-            row.update(
-                _flatten_metrics(sample["first_pred_noise_stats"], prefix="first_pred_noise")
-            )
-        if "last_pred_noise_stats" in sample:
-            row.update(_flatten_metrics(sample["last_pred_noise_stats"], prefix="last_pred_noise"))
-        if "inverted_noise_stats" in sample:
-            row.update(_flatten_metrics(sample["inverted_noise_stats"], prefix="inverted_noise"))
-        if "inversion_error" in sample:
-            row.update(_flatten_metrics(sample["inversion_error"], prefix="inversion_error"))
-        if "inversion_error_stats" in sample:
-            row.update(
-                _flatten_metrics(sample["inversion_error_stats"], prefix="inversion_error_stats")
-            )
-        if "inversion_error_per_channel" in sample:
-            row.update(
-                _flatten_metrics(
-                    sample["inversion_error_per_channel"],
-                    prefix="inversion_error_per_channel",
-                )
-            )
-        if "inversion_error_structure" in sample:
-            row.update(
-                _flatten_metrics(
-                    sample["inversion_error_structure"],
-                    prefix="inversion_error_structure",
-                )
-            )
-        if "noise_normality" in sample:
-            row.update(_flatten_metrics(sample["noise_normality"], prefix="noise_normality"))
-        if "reconstruction_image" in sample:
-            row.update(
-                _flatten_metrics(
-                    sample["reconstruction_image"],
-                    prefix="reconstruction_image",
-                )
-            )
-        rows.append(row)
-    return rows
-
-
-def _sanitize_artifact_name(name: str) -> str:
-    sanitized = re.sub(r"[^A-Za-z0-9_.-]+", "-", name.strip())
-    return sanitized.strip("-.") or "evaluation-summary"
-
-
-def log_to_wandb(results: dict[str, Any], output_dir: Path, args: argparse.Namespace) -> None:
-    if args.wandb_mode == "disabled":
-        return
-
-    try:
-        import wandb
-    except ImportError:
-        logger.warning(
-            "W&B logging skipped because `wandb` is not installed in the active environment"
-        )
-        return
-
-    wandb_root = output_dir / "wandb"
-    cache_dir = wandb_root / "cache"
-    config_dir = wandb_root / "config"
-    data_dir = wandb_root / "data"
-    files_dir = wandb_root / "files"
-    for directory in (wandb_root, cache_dir, config_dir, data_dir, files_dir):
-        directory.mkdir(parents=True, exist_ok=True)
-
-    os.environ.setdefault("WANDB_DIR", wandb_root.as_posix())
-    os.environ.setdefault("WANDB_CACHE_DIR", cache_dir.as_posix())
-    os.environ.setdefault("WANDB_CONFIG_DIR", config_dir.as_posix())
-    os.environ.setdefault("WANDB_DATA_DIR", data_dir.as_posix())
-
-    try:
-        config = {
-            "input_dir": results["input_dir"],
-            "output_dir": output_dir.as_posix(),
-            "num_samples": results["num_samples"],
-            "patch_size": args.patch_size,
-            "top_k": args.top_k,
-            "max_elements": args.max_elements,
-            "plain_threshold": args.plain_threshold,
-            "normality_sample_size": args.normality_sample_size,
-            "qq_num_quantiles": args.qq_num_quantiles,
-        }
-        run = wandb.init(
-            project=args.wandb_project,
-            entity=args.wandb_entity,
-            group=args.wandb_group,
-            name=args.wandb_run_name,
-            tags=args.wandb_tags,
-            job_type="evaluation",
-            mode=args.wandb_mode,
-            config=config,
-            dir=wandb_root.as_posix(),
-            settings=wandb.Settings(
-                root_dir=wandb_root.as_posix(),
-                x_files_dir=files_dir.as_posix(),
-                x_disable_stats=True,
-            ),
-        )
-
-        aggregate_metrics = _flatten_metrics(results["aggregate"], prefix="aggregate")
-        aggregate_metrics["num_samples"] = results["num_samples"]
-        wandb.log(aggregate_metrics)
-
-        rows = _build_samples_table_rows(results)
-        if rows:
-            columns = sorted({key for row in rows for key in row})
-            table = wandb.Table(columns=columns)
-            for row in rows:
-                table.add_data(*[row.get(column) for column in columns])
-            wandb.log({"samples_table": table})
-
-        summary_json = output_dir / "evaluation_summary.json"
-        summary_md = output_dir / "evaluation_summary.md"
-        artifact = wandb.Artifact(
-            name=_sanitize_artifact_name(args.wandb_artifact_name or output_dir.name),
-            type="evaluation",
-        )
-        if summary_json.exists():
-            artifact.add_file(summary_json.as_posix())
-        if summary_md.exists():
-            artifact.add_file(summary_md.as_posix())
-        noise_comparison_dir = output_dir / "noise_comparisons"
-        if noise_comparison_dir.exists():
-            artifact.add_dir(noise_comparison_dir.as_posix(), name="noise_comparisons")
-        normality_dir = output_dir / "normality"
-        if normality_dir.exists():
-            artifact.add_dir(normality_dir.as_posix(), name="normality")
-        image_comparison_dir = output_dir / "image_comparisons"
-        if image_comparison_dir.exists():
-            artifact.add_dir(image_comparison_dir.as_posix(), name="image_comparisons")
-        run.log_artifact(artifact)
-
-        run.summary["input_dir"] = results["input_dir"]
-        run.summary["notes"] = results["notes"]
-        run.finish()
-        logger.success("Logged evaluation to Weights & Biases")
-    except Exception as exc:
-        logger.warning("W&B logging skipped because initialization failed: {}", exc)
-
-
-def write_outputs(results: dict[str, Any], output_dir: Path) -> None:
-    json_path = output_dir / "evaluation_summary.json"
-    with json_path.open("w", encoding="utf-8") as f:
-        json.dump(results, f, indent=2)
-
-    noise_comparisons = results.get("noise_comparisons") or []
-    if noise_comparisons:
-        comparison_dir = output_dir / "noise_comparisons"
-        comparison_dir.mkdir(parents=True, exist_ok=True)
-        comparison_json_path = comparison_dir / "noise_comparisons.json"
-        comparison_csv_path = comparison_dir / "noise_comparisons.csv"
-        with comparison_json_path.open("w", encoding="utf-8") as f:
-            json.dump(noise_comparisons, f, indent=2)
-        columns = sorted({key for row in noise_comparisons for key in row})
-        with comparison_csv_path.open("w", encoding="utf-8", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=columns)
-            writer.writeheader()
-            writer.writerows(noise_comparisons)
-
-    normality_comparisons = results.get("normality_comparisons") or []
-    if normality_comparisons:
-        normality_dir = output_dir / "normality"
-        normality_dir.mkdir(parents=True, exist_ok=True)
-        normality_json_path = normality_dir / "normality_comparisons.json"
-        normality_csv_path = normality_dir / "normality_comparisons.csv"
-        with normality_json_path.open("w", encoding="utf-8") as f:
-            json.dump(normality_comparisons, f, indent=2)
-        columns = sorted({key for row in normality_comparisons for key in row})
-        with normality_csv_path.open("w", encoding="utf-8", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=columns)
-            writer.writeheader()
-            writer.writerows(normality_comparisons)
-
-    image_comparisons = results.get("image_comparisons") or []
-    if image_comparisons:
-        comparison_dir = output_dir / "image_comparisons"
-        comparison_dir.mkdir(parents=True, exist_ok=True)
-        comparison_json_path = comparison_dir / "image_comparisons.json"
-        comparison_csv_path = comparison_dir / "image_comparisons.csv"
-        with comparison_json_path.open("w", encoding="utf-8") as f:
-            json.dump(image_comparisons, f, indent=2)
-        columns = sorted({key for row in image_comparisons for key in row})
-        with comparison_csv_path.open("w", encoding="utf-8", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=columns)
-            writer.writeheader()
-            writer.writerows(image_comparisons)
-
-    aggregate = results["aggregate"]
-    markdown_path = output_dir / "evaluation_summary.md"
-    with markdown_path.open("w", encoding="utf-8") as f:
-        f.write("# Evaluation Summary\n\n")
-        f.write(f"- Input directory: `{results['input_dir']}`\n")
-        f.write(f"- Samples: {results['num_samples']}\n\n")
-        if noise_comparisons:
-            f.write("- Noise comparison artifacts: `noise_comparisons/`\n\n")
-        if normality_comparisons:
-            f.write("- Normality artifacts: `normality/`\n\n")
-        if image_comparisons:
-            f.write("- Image reconstruction artifacts: `image_comparisons/`\n\n")
-        f.write("## Aggregate\n\n")
-        for name, metrics in aggregate.items():
-            f.write(f"### {name}\n\n")
-            for key, value in metrics.items():
-                f.write(f"- `{key}`: {value}\n")
-            f.write("\n")
-        f.write("## Notes\n\n")
-        for note in results["notes"]:
-            f.write(f"- {note}\n")
-
-    logger.success("Saved {}", json_path)
-    logger.success("Saved {}", markdown_path)
 
 
 def parse_args() -> argparse.Namespace:
@@ -1310,7 +450,7 @@ def parse_args() -> argparse.Namespace:
         help="Directory for evaluation_summary.json and evaluation_summary.md.",
     )
     parser.add_argument("--patch-size", type=int, default=8)
-    parser.add_argument("--top-k", type=int, default=10)
+    parser.add_argument("--top-k", type=int, default=20)
     parser.add_argument(
         "--max-elements",
         type=int,
@@ -1344,6 +484,17 @@ def parse_args() -> argparse.Namespace:
         "--no-normality-plots",
         action="store_true",
         help="Compute normality metrics without writing per-sample QQ plot PNGs.",
+    )
+    parser.add_argument(
+        "--no-lpips",
+        action="store_true",
+        help="Do not calculate LPIPS for final.png vs reconstructed.png.",
+    )
+    parser.add_argument(
+        "--lpips-device",
+        choices=("auto", "cpu", "cuda"),
+        default="auto",
+        help="Device used for LPIPS. `auto` uses CUDA when available.",
     )
     parser.add_argument(
         "--wandb-mode",
@@ -1398,6 +549,8 @@ def main() -> None:
         normality_sample_size=args.normality_sample_size,
         qq_num_quantiles=args.qq_num_quantiles,
         save_normality_plots=not args.no_normality_plots,
+        calculate_lpips=not args.no_lpips,
+        lpips_device=args.lpips_device,
     )
     write_outputs(results, args.output_dir)
     log_to_wandb(results, args.output_dir, args)
