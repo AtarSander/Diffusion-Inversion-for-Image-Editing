@@ -225,9 +225,62 @@ def _ssim_torch(reference: torch.Tensor, candidate: torch.Tensor) -> float:
     return float(ssim_map.mean().clamp(-1, 1).item())
 
 
+def _plain_area_mask(image: torch.Tensor, threshold: float) -> torch.Tensor:
+    if image.ndim != 3:
+        raise ValueError(f"Expected [C,H,W] image tensor, got {tuple(image.shape)}")
+
+    diff_h = torch.abs(image[:, 1:, :] - image[:, :-1, :])
+    diff_w = torch.abs(image[:, :, 1:] - image[:, :, :-1])
+    diff_h = torch.nn.functional.pad(diff_h, (0, 0, 0, 1))
+    diff_w = torch.nn.functional.pad(diff_w, (0, 1, 0, 0))
+    diff_combined = (diff_h + diff_w) / 2
+    return (diff_combined < threshold).all(dim=0)
+
+
+def _masked_image_error_metrics(
+    delta: torch.Tensor,
+    mask: torch.Tensor,
+    prefix: str,
+) -> dict[str, float | int | None]:
+    spatial_count = int(mask.sum().item())
+    total_spatial_count = int(mask.numel())
+    metrics: dict[str, float | int | None] = {
+        f"{prefix}_pixel_count": spatial_count,
+        f"{prefix}_pixel_fraction": (
+            float(spatial_count / total_spatial_count) if total_spatial_count else 0.0
+        ),
+    }
+    if spatial_count == 0:
+        metrics.update(
+            {
+                f"{prefix}_mse": None,
+                f"{prefix}_rmse": None,
+                f"{prefix}_mae": None,
+                f"{prefix}_max_abs_error": None,
+                f"{prefix}_mean_signed_error": None,
+            }
+        )
+        return metrics
+
+    masked_delta = delta[:, mask]
+    mse = masked_delta.pow(2).mean()
+    metrics.update(
+        {
+            f"{prefix}_mse": float(mse.item()),
+            f"{prefix}_rmse": float(torch.sqrt(mse).item()),
+            f"{prefix}_mae": float(masked_delta.abs().mean().item()),
+            f"{prefix}_max_abs_error": float(masked_delta.abs().max().item()),
+            f"{prefix}_mean_signed_error": float(masked_delta.mean().item()),
+        }
+    )
+    return metrics
+
+
 def _image_pair_metrics(
-    reference_path: Path, candidate_path: Path
-) -> dict[str, float | int | bool]:
+    reference_path: Path,
+    candidate_path: Path,
+    plain_threshold: float,
+) -> dict[str, float | int | bool | None]:
     with Image.open(reference_path) as image:
         reference_size = image.size
     with Image.open(candidate_path) as image:
@@ -240,8 +293,10 @@ def _image_pair_metrics(
     mae = delta.abs().mean()
     rmse = torch.sqrt(mse)
     psnr = 100.0 if mse.item() <= 1e-12 else -10.0 * math.log10(float(mse.item()))
+    plain_mask = _plain_area_mask(reference, threshold=plain_threshold)
+    non_plain_mask = ~plain_mask
 
-    return {
+    metrics: dict[str, float | int | bool | None] = {
         "mse": float(mse.item()),
         "rmse": float(rmse.item()),
         "mae": float(mae.item()),
@@ -254,7 +309,11 @@ def _image_pair_metrics(
         "candidate_width": int(candidate_size[0]),
         "candidate_height": int(candidate_size[1]),
         "candidate_resized_for_metrics": bool(candidate_size != reference_size),
+        "plain_threshold": float(plain_threshold),
     }
+    metrics.update(_masked_image_error_metrics(delta, plain_mask, prefix="plain"))
+    metrics.update(_masked_image_error_metrics(delta, non_plain_mask, prefix="non_plain"))
+    return metrics
 
 
 def _summarize_numeric_rows(
@@ -359,6 +418,7 @@ def _write_image_comparison(
     output_path: Path,
     final_image_path: Path,
     reconstructed_image_path: Path,
+    plain_threshold: float,
 ) -> dict[str, str]:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -370,19 +430,28 @@ def _write_image_comparison(
     error_vmax = float(error.quantile(0.99).item())
     error_u8 = _normalize_to_uint8(error, 0.0, max(error_vmax, 1e-8))
     error_image = Image.fromarray(error_u8.permute(1, 2, 0).numpy(), mode="RGB")
+    plain_mask = _plain_area_mask(reference, threshold=plain_threshold)
+    plain_mask_image = Image.fromarray(
+        plain_mask.to(torch.uint8).mul(255).numpy(),
+        mode="L",
+    ).convert("RGB")
 
     error_path = output_path.with_name(f"{output_path.stem}_abs_image_error.png")
+    plain_mask_path = output_path.with_name(f"{output_path.stem}_plain_mask.png")
     error_image.save(error_path)
+    plain_mask_image.save(plain_mask_path)
 
     panel_size = (320, 320)
     final_panel = _load_final_image_preview(final_image_path, panel_size)
     reconstructed_panel = _load_final_image_preview(reconstructed_image_path, panel_size)
     error_panel = _fit_panel(error_image, panel_size)
+    plain_mask_panel = _fit_panel(plain_mask_image, panel_size)
 
     panels = [
         ("final.png", final_panel),
         ("reconstructed.png", reconstructed_panel),
         ("abs image error", error_panel),
+        ("plain-area mask", plain_mask_panel),
     ]
     label_height = 18
     canvas = Image.new(
@@ -400,6 +469,7 @@ def _write_image_comparison(
     return {
         "image_comparison_preview_path": output_path.as_posix(),
         "abs_image_error_path": error_path.as_posix(),
+        "plain_mask_path": plain_mask_path.as_posix(),
     }
 
 
@@ -596,6 +666,7 @@ def run_evaluation(
     top_k: int,
     max_elements: int,
     save_noise_previews: bool,
+    plain_threshold: float,
 ) -> dict[str, Any]:
     sample_dirs = sorted(path for path in input_dir.glob("sample_*") if path.is_dir())
     if not sample_dirs:
@@ -689,7 +760,11 @@ def run_evaluation(
         final_image_path = sample_dir / "final.png"
         reconstructed_image_path = sample_dir / "reconstructed.png"
         if final_image_path.exists() and reconstructed_image_path.exists():
-            image_metrics = _image_pair_metrics(final_image_path, reconstructed_image_path)
+            image_metrics = _image_pair_metrics(
+                final_image_path,
+                reconstructed_image_path,
+                plain_threshold=plain_threshold,
+            )
             per_sample[sample_dir.name]["reconstruction_image"] = image_metrics
             prompt_record = metadata.get("prompt")
             prompt_text = prompt_record.get("prompt") if isinstance(prompt_record, dict) else None
@@ -707,6 +782,7 @@ def run_evaluation(
                         preview_path,
                         final_image_path=final_image_path,
                         reconstructed_image_path=reconstructed_image_path,
+                        plain_threshold=plain_threshold,
                     )
                 )
             image_comparisons.append(image_comparison)
@@ -771,6 +847,7 @@ def run_evaluation(
             "If present, pred_noises are included as forward DDIM reference targets.",
             "If present, inverted_noise is compared against initial latent noise x_T.",
             "If present, reconstructed.png is compared against final.png.",
+            "Plain-area reconstruction metrics use final.png local pixel differences.",
             "Editing metrics need paired edited images.",
         ],
         "aggregate": aggregate,
@@ -881,6 +958,7 @@ def log_to_wandb(results: dict[str, Any], output_dir: Path, args: argparse.Names
             "patch_size": args.patch_size,
             "top_k": args.top_k,
             "max_elements": args.max_elements,
+            "plain_threshold": args.plain_threshold,
         }
         run = wandb.init(
             project=args.wandb_project,
@@ -1022,6 +1100,12 @@ def parse_args() -> argparse.Namespace:
         help="Do not write PNG previews for initial vs inverted noise comparisons.",
     )
     parser.add_argument(
+        "--plain-threshold",
+        type=float,
+        default=0.025,
+        help="Pixel-difference threshold in [0,1] for final.png plain-area masks.",
+    )
+    parser.add_argument(
         "--wandb-mode",
         choices=("disabled", "offline", "online"),
         default=os.getenv("WANDB_MODE", "disabled"),
@@ -1070,6 +1154,7 @@ def main() -> None:
         top_k=args.top_k,
         max_elements=args.max_elements,
         save_noise_previews=not args.no_noise_previews,
+        plain_threshold=args.plain_threshold,
     )
     write_outputs(results, args.output_dir)
     log_to_wandb(results, args.output_dir, args)
