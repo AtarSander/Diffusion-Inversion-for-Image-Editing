@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 from pathlib import Path
 
+import hydra
+from hydra.utils import to_absolute_path
 from loguru import logger
+from omegaconf import DictConfig, OmegaConf
 import torch
 from tqdm import tqdm
 
@@ -22,6 +24,11 @@ from diff_inversion.eval.invert_sdxl import (
     _sample_dirs,
     predict_noise_sdxl,
 )
+from diff_inversion.eval.lora import configure_unet_lora
+
+
+def _resolve_path(path: str | Path) -> Path:
+    return Path(to_absolute_path(str(path))).resolve()
 
 
 @torch.no_grad()
@@ -127,44 +134,30 @@ def reconstruct_sample(
     logger.success("Saved reconstruction for {}", sample_dir)
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--input-dir",
-        type=Path,
-        default=Path("data/processed/sdxl_trajectories"),
-        help="Directory containing sample_* with inverted_noise.pt.",
-    )
-    parser.add_argument(
-        "--output-name",
-        default="reconstructed.png",
-        help="Image filename to write inside each sample directory.",
-    )
-    parser.add_argument("--overwrite", action="store_true", help="Recompute existing images.")
-    return parser.parse_args()
-
-
-def main() -> None:
-    args = parse_args()
-    cfg = _load_run_config(args.input_dir)
-    samples = _sample_dirs(args.input_dir)
+@hydra.main(config_path="../../config/eval", config_name="reconstruct_sdxl", version_base=None)
+def main(cfg: DictConfig) -> None:
+    logger.info("Reconstruction config:\n{}", OmegaConf.to_yaml(cfg))
+    input_dir = _resolve_path(cfg.input_dir)
+    run_cfg = _load_run_config(input_dir)
+    samples = _sample_dirs(input_dir)
     if not samples:
-        raise FileNotFoundError(f"No sample directories found in {args.input_dir}")
+        raise FileNotFoundError(f"No sample directories found in {input_dir}")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    if cfg.model.require_cuda and device != "cuda":
+    if run_cfg.model.require_cuda and device != "cuda":
         raise RuntimeError("This script is intended to run on CUDA.")
 
-    pipe = make_pipe(cfg.model, device)
-    negative_prompt = str(cfg.negative_prompt)
+    pipe = make_pipe(run_cfg.model, device)
+    configure_unet_lora(pipe, cfg.lora)
+    negative_prompt = str(run_cfg.negative_prompt)
     for sample_dir in tqdm(samples, desc="Running SDXL reconstruction"):
         reconstruct_sample(
             pipe=pipe,
             sample_dir=sample_dir,
-            model_cfg=cfg.model,
+            model_cfg=run_cfg.model,
             negative_prompt=negative_prompt,
-            output_name=args.output_name,
-            overwrite=args.overwrite,
+            output_name=str(cfg.output_name),
+            overwrite=bool(cfg.overwrite),
         )
 
 
