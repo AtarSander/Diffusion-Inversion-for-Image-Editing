@@ -19,11 +19,14 @@ RECON_INPUT_DIR ?= data/processed/sdxl_trajectories
 RECON_OVERWRITE ?=
 EVAL_INPUT_DIR ?= data/processed/sdxl_trajectories
 EVAL_OUTPUT_DIR ?= reports/eval
+EVAL_TOP_K ?= 20
 EVAL_NO_NOISE_PREVIEWS ?=
 EVAL_PLAIN_THRESHOLD ?= 0.025
 EVAL_NORMALITY_SAMPLE_SIZE ?= 5000
 EVAL_QQ_NUM_QUANTILES ?= 201
 EVAL_NO_NORMALITY_PLOTS ?=
+EVAL_NO_LPIPS ?=
+EVAL_LPIPS_DEVICE ?= auto
 WANDB_MODE ?= disabled
 WANDB_PROJECT ?= diff-inversion
 WANDB_ENTITY ?=
@@ -116,13 +119,16 @@ evaluate:
 	$(UV) run python -m diff_inversion.eval.run \
 		--input-dir $(EVAL_INPUT_DIR) \
 		--output-dir $(EVAL_OUTPUT_DIR) \
+		--top-k $(EVAL_TOP_K) \
 		--plain-threshold $(EVAL_PLAIN_THRESHOLD) \
 		--normality-sample-size $(EVAL_NORMALITY_SAMPLE_SIZE) \
 		--qq-num-quantiles $(EVAL_QQ_NUM_QUANTILES) \
+		--lpips-device $(EVAL_LPIPS_DEVICE) \
 		--wandb-mode $(WANDB_MODE) \
 		--wandb-project $(WANDB_PROJECT) \
 		$(if $(EVAL_NO_NOISE_PREVIEWS),--no-noise-previews) \
 		$(if $(EVAL_NO_NORMALITY_PLOTS),--no-normality-plots) \
+		$(if $(EVAL_NO_LPIPS),--no-lpips) \
 		$(if $(WANDB_ENTITY),--wandb-entity $(WANDB_ENTITY)) \
 		$(if $(WANDB_GROUP),--wandb-group $(WANDB_GROUP)) \
 		$(if $(WANDB_RUN_NAME),--wandb-run-name "$(WANDB_RUN_NAME)") \
