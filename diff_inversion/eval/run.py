@@ -5,12 +5,14 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import os
 from pathlib import Path
 import re
 from typing import Any
 
 from loguru import logger
+import numpy as np
 from PIL import Image, ImageDraw, ImageOps
 import torch
 
@@ -161,6 +163,122 @@ def _latent_error_structure_metrics(
     }
 
 
+def _load_rgb_tensor(path: Path, size: tuple[int, int] | None = None) -> torch.Tensor:
+    with Image.open(path) as image:
+        image = image.convert("RGB")
+        if size is not None and image.size != size:
+            image = image.resize(size, Image.Resampling.BICUBIC)
+        array = np.asarray(image, dtype=np.float32).copy()
+    return torch.from_numpy(array).permute(2, 0, 1).div(255.0)
+
+
+def _ssim_torch(reference: torch.Tensor, candidate: torch.Tensor) -> float:
+    channels, height, width = reference.shape
+    window_size = min(11, height, width)
+    if window_size % 2 == 0:
+        window_size -= 1
+    if window_size < 3:
+        return float(1.0 - torch.mean((reference - candidate).abs()).clamp(0, 1).item())
+
+    coords = torch.arange(window_size, dtype=reference.dtype) - window_size // 2
+    kernel_1d = torch.exp(-(coords.pow(2)) / (2 * 1.5**2))
+    kernel_1d = kernel_1d / kernel_1d.sum()
+    kernel_2d = torch.outer(kernel_1d, kernel_1d)
+    kernel = kernel_2d.expand(channels, 1, window_size, window_size)
+
+    reference_b = reference.unsqueeze(0)
+    candidate_b = candidate.unsqueeze(0)
+    padding = window_size // 2
+    mu_ref = torch.nn.functional.conv2d(reference_b, kernel, padding=padding, groups=channels)
+    mu_cand = torch.nn.functional.conv2d(candidate_b, kernel, padding=padding, groups=channels)
+    mu_ref_sq = mu_ref.pow(2)
+    mu_cand_sq = mu_cand.pow(2)
+    mu_ref_cand = mu_ref * mu_cand
+
+    sigma_ref_sq = (
+        torch.nn.functional.conv2d(
+            reference_b * reference_b, kernel, padding=padding, groups=channels
+        )
+        - mu_ref_sq
+    )
+    sigma_cand_sq = (
+        torch.nn.functional.conv2d(
+            candidate_b * candidate_b, kernel, padding=padding, groups=channels
+        )
+        - mu_cand_sq
+    )
+    sigma_ref_cand = (
+        torch.nn.functional.conv2d(
+            reference_b * candidate_b,
+            kernel,
+            padding=padding,
+            groups=channels,
+        )
+        - mu_ref_cand
+    )
+
+    c1 = 0.01**2
+    c2 = 0.03**2
+    numerator = (2 * mu_ref_cand + c1) * (2 * sigma_ref_cand + c2)
+    denominator = (mu_ref_sq + mu_cand_sq + c1) * (sigma_ref_sq + sigma_cand_sq + c2)
+    ssim_map = numerator / denominator.clamp_min(1e-12)
+    return float(ssim_map.mean().clamp(-1, 1).item())
+
+
+def _image_pair_metrics(
+    reference_path: Path, candidate_path: Path
+) -> dict[str, float | int | bool]:
+    with Image.open(reference_path) as image:
+        reference_size = image.size
+    with Image.open(candidate_path) as image:
+        candidate_size = image.size
+
+    reference = _load_rgb_tensor(reference_path)
+    candidate = _load_rgb_tensor(candidate_path, size=reference_size)
+    delta = candidate - reference
+    mse = delta.pow(2).mean()
+    mae = delta.abs().mean()
+    rmse = torch.sqrt(mse)
+    psnr = 100.0 if mse.item() <= 1e-12 else -10.0 * math.log10(float(mse.item()))
+
+    return {
+        "mse": float(mse.item()),
+        "rmse": float(rmse.item()),
+        "mae": float(mae.item()),
+        "psnr_db": float(psnr),
+        "ssim": _ssim_torch(reference, candidate),
+        "max_abs_error": float(delta.abs().max().item()),
+        "mean_signed_error": float(delta.mean().item()),
+        "reference_width": int(reference_size[0]),
+        "reference_height": int(reference_size[1]),
+        "candidate_width": int(candidate_size[0]),
+        "candidate_height": int(candidate_size[1]),
+        "candidate_resized_for_metrics": bool(candidate_size != reference_size),
+    }
+
+
+def _summarize_numeric_rows(
+    rows: list[dict[str, Any]],
+    prefixes_to_skip: tuple[str, ...] = (),
+) -> dict[str, float]:
+    values_by_key: dict[str, list[float]] = {}
+    for row in rows:
+        for key, value in row.items():
+            if key.startswith(prefixes_to_skip) or isinstance(value, bool):
+                continue
+            if isinstance(value, (float, int)) and math.isfinite(float(value)):
+                values_by_key.setdefault(key, []).append(float(value))
+
+    summary = {}
+    for key, values in values_by_key.items():
+        values_t = torch.tensor(values, dtype=torch.float32)
+        summary[f"{key}/mean"] = float(values_t.mean().item())
+        summary[f"{key}/std"] = float(values_t.std(unbiased=False).item())
+        summary[f"{key}/min"] = float(values_t.min().item())
+        summary[f"{key}/max"] = float(values_t.max().item())
+    return summary
+
+
 def _normalize_to_uint8(tensor: torch.Tensor, vmin: float, vmax: float) -> torch.Tensor:
     if vmax <= vmin:
         return torch.zeros_like(tensor, dtype=torch.uint8)
@@ -226,6 +344,63 @@ def _load_final_image_preview(final_image_path: Path, target_size: tuple[int, in
     y = (target_size[1] - image.height) // 2
     canvas.paste(image, (x, y))
     return canvas
+
+
+def _fit_panel(image: Image.Image, target_size: tuple[int, int]) -> Image.Image:
+    image = ImageOps.contain(image.convert("RGB"), target_size, Image.Resampling.LANCZOS)
+    canvas = Image.new("RGB", target_size, color="white")
+    x = (target_size[0] - image.width) // 2
+    y = (target_size[1] - image.height) // 2
+    canvas.paste(image, (x, y))
+    return canvas
+
+
+def _write_image_comparison(
+    output_path: Path,
+    final_image_path: Path,
+    reconstructed_image_path: Path,
+) -> dict[str, str]:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with Image.open(final_image_path) as image:
+        reference_size = image.size
+    reference = _load_rgb_tensor(final_image_path)
+    reconstructed = _load_rgb_tensor(reconstructed_image_path, size=reference_size)
+    error = (reconstructed - reference).abs()
+    error_vmax = float(error.quantile(0.99).item())
+    error_u8 = _normalize_to_uint8(error, 0.0, max(error_vmax, 1e-8))
+    error_image = Image.fromarray(error_u8.permute(1, 2, 0).numpy(), mode="RGB")
+
+    error_path = output_path.with_name(f"{output_path.stem}_abs_image_error.png")
+    error_image.save(error_path)
+
+    panel_size = (320, 320)
+    final_panel = _load_final_image_preview(final_image_path, panel_size)
+    reconstructed_panel = _load_final_image_preview(reconstructed_image_path, panel_size)
+    error_panel = _fit_panel(error_image, panel_size)
+
+    panels = [
+        ("final.png", final_panel),
+        ("reconstructed.png", reconstructed_panel),
+        ("abs image error", error_panel),
+    ]
+    label_height = 18
+    canvas = Image.new(
+        "RGB",
+        (panel_size[0] * len(panels), panel_size[1] + label_height),
+        color="white",
+    )
+    draw = ImageDraw.Draw(canvas)
+    for idx, (label, image) in enumerate(panels):
+        x = idx * panel_size[0]
+        draw.text((x + 4, 3), label, fill="black")
+        canvas.paste(image, (x, label_height))
+    canvas.save(output_path)
+
+    return {
+        "image_comparison_preview_path": output_path.as_posix(),
+        "abs_image_error_path": error_path.as_posix(),
+    }
 
 
 def _write_noise_images(
@@ -407,6 +582,7 @@ def _load_sample(
             with metadata_path.open("r", encoding="utf-8") as f:
                 metadata[metadata_name.removesuffix(".json")] = json.load(f)
     metadata["has_final_image"] = (sample_dir / "final.png").exists()
+    metadata["has_reconstructed_image"] = (sample_dir / "reconstructed.png").exists()
     metadata["pred_noises_count"] = len(pred_noises)
     metadata["has_initial_noise"] = (sample_dir / "initial_noise.pt").exists()
     metadata["has_inverted_noise"] = inverted_noise is not None
@@ -438,7 +614,9 @@ def run_evaluation(
     last_pred_noises = []
     inverted_noises = []
     noise_comparisons = []
+    image_comparisons = []
     noise_comparison_dir = output_dir / "noise_comparisons"
+    image_comparison_dir = output_dir / "image_comparisons"
 
     for sample_dir in sample_dirs:
         steps, pred_noises, inverted_noise, metadata = _load_sample(sample_dir)
@@ -508,6 +686,30 @@ def run_evaluation(
                     )
                 )
             noise_comparisons.append(comparison)
+        final_image_path = sample_dir / "final.png"
+        reconstructed_image_path = sample_dir / "reconstructed.png"
+        if final_image_path.exists() and reconstructed_image_path.exists():
+            image_metrics = _image_pair_metrics(final_image_path, reconstructed_image_path)
+            per_sample[sample_dir.name]["reconstruction_image"] = image_metrics
+            prompt_record = metadata.get("prompt")
+            prompt_text = prompt_record.get("prompt") if isinstance(prompt_record, dict) else None
+            image_comparison = {
+                "sample": sample_dir.name,
+                "prompt": prompt_text or "",
+                "final_image_path": final_image_path.as_posix(),
+                "reconstructed_image_path": reconstructed_image_path.as_posix(),
+                **image_metrics,
+            }
+            if save_noise_previews:
+                preview_path = image_comparison_dir / f"{sample_dir.name}.png"
+                image_comparison.update(
+                    _write_image_comparison(
+                        preview_path,
+                        final_image_path=final_image_path,
+                        reconstructed_image_path=reconstructed_image_path,
+                    )
+                )
+            image_comparisons.append(image_comparison)
         initial_latents.append(steps[0])
         final_latents.append(steps[-1])
 
@@ -555,6 +757,11 @@ def run_evaluation(
             inverted_batch,
             final_batch,
         )
+    if image_comparisons:
+        aggregate["final_vs_reconstructed_image"] = _summarize_numeric_rows(
+            image_comparisons,
+            prefixes_to_skip=("reference_", "candidate_"),
+        )
 
     results = {
         "input_dir": input_dir.as_posix(),
@@ -563,11 +770,13 @@ def run_evaluation(
             "This runner evaluates saved generation trajectories.",
             "If present, pred_noises are included as forward DDIM reference targets.",
             "If present, inverted_noise is compared against initial latent noise x_T.",
-            "Reconstruction/editing metrics need paired reconstructed or edited images.",
+            "If present, reconstructed.png is compared against final.png.",
+            "Editing metrics need paired edited images.",
         ],
         "aggregate": aggregate,
         "samples": per_sample,
         "noise_comparisons": noise_comparisons,
+        "image_comparisons": image_comparisons,
     }
     return results
 
@@ -621,6 +830,13 @@ def _build_samples_table_rows(
                 _flatten_metrics(
                     sample["inversion_error_structure"],
                     prefix="inversion_error_structure",
+                )
+            )
+        if "reconstruction_image" in sample:
+            row.update(
+                _flatten_metrics(
+                    sample["reconstruction_image"],
+                    prefix="reconstruction_image",
                 )
             )
         rows.append(row)
@@ -708,6 +924,9 @@ def log_to_wandb(results: dict[str, Any], output_dir: Path, args: argparse.Names
         noise_comparison_dir = output_dir / "noise_comparisons"
         if noise_comparison_dir.exists():
             artifact.add_dir(noise_comparison_dir.as_posix(), name="noise_comparisons")
+        image_comparison_dir = output_dir / "image_comparisons"
+        if image_comparison_dir.exists():
+            artifact.add_dir(image_comparison_dir.as_posix(), name="image_comparisons")
         run.log_artifact(artifact)
 
         run.summary["input_dir"] = results["input_dir"]
@@ -737,6 +956,20 @@ def write_outputs(results: dict[str, Any], output_dir: Path) -> None:
             writer.writeheader()
             writer.writerows(noise_comparisons)
 
+    image_comparisons = results.get("image_comparisons") or []
+    if image_comparisons:
+        comparison_dir = output_dir / "image_comparisons"
+        comparison_dir.mkdir(parents=True, exist_ok=True)
+        comparison_json_path = comparison_dir / "image_comparisons.json"
+        comparison_csv_path = comparison_dir / "image_comparisons.csv"
+        with comparison_json_path.open("w", encoding="utf-8") as f:
+            json.dump(image_comparisons, f, indent=2)
+        columns = sorted({key for row in image_comparisons for key in row})
+        with comparison_csv_path.open("w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=columns)
+            writer.writeheader()
+            writer.writerows(image_comparisons)
+
     aggregate = results["aggregate"]
     markdown_path = output_dir / "evaluation_summary.md"
     with markdown_path.open("w", encoding="utf-8") as f:
@@ -745,6 +978,8 @@ def write_outputs(results: dict[str, Any], output_dir: Path) -> None:
         f.write(f"- Samples: {results['num_samples']}\n\n")
         if noise_comparisons:
             f.write("- Noise comparison artifacts: `noise_comparisons/`\n\n")
+        if image_comparisons:
+            f.write("- Image reconstruction artifacts: `image_comparisons/`\n\n")
         f.write("## Aggregate\n\n")
         for name, metrics in aggregate.items():
             f.write(f"### {name}\n\n")
