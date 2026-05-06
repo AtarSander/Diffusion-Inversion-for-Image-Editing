@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import argparse
 import json
-import os
 from pathlib import Path
 from typing import Any
 
+import hydra
+from hydra.utils import to_absolute_path
 from loguru import logger
+from omegaconf import DictConfig, OmegaConf
 from PIL import Image
 import torch
 
@@ -42,6 +43,10 @@ def _load_tensor(path: Path) -> torch.Tensor:
     if not isinstance(tensor, torch.Tensor):
         raise TypeError(f"Expected a tensor in {path}, got {type(tensor)!r}")
     return tensor.detach().float().cpu()
+
+
+def _resolve_path(path: str | Path) -> Path:
+    return Path(to_absolute_path(str(path))).resolve()
 
 
 def _as_sample_tensor(tensor: torch.Tensor) -> torch.Tensor:
@@ -435,125 +440,28 @@ def run_evaluation(
     }
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--input-dir",
-        type=Path,
-        default=Path("data/processed/sdxl_trajectories"),
-        help="Directory containing sample_*/latents/x_*.pt generated trajectories.",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=Path("reports/eval"),
-        help="Directory for evaluation_summary.json and evaluation_summary.md.",
-    )
-    parser.add_argument("--patch-size", type=int, default=8)
-    parser.add_argument("--top-k", type=int, default=20)
-    parser.add_argument(
-        "--max-elements",
-        type=int,
-        default=200_000,
-        help="Maximum tensor elements used for distribution summaries.",
-    )
-    parser.add_argument(
-        "--no-noise-previews",
-        action="store_true",
-        help="Do not write PNG previews for initial vs inverted noise comparisons.",
-    )
-    parser.add_argument(
-        "--plain-threshold",
-        type=float,
-        default=0.025,
-        help="Pixel-difference threshold in [0,1] for final.png plain-area masks.",
-    )
-    parser.add_argument(
-        "--normality-sample-size",
-        type=int,
-        default=5_000,
-        help="Maximum tensor elements per sample used for normality diagnostics.",
-    )
-    parser.add_argument(
-        "--qq-num-quantiles",
-        type=int,
-        default=201,
-        help="Number of quantile points used in initial-vs-inverted QQ plots.",
-    )
-    parser.add_argument(
-        "--no-normality-plots",
-        action="store_true",
-        help="Compute normality metrics without writing per-sample QQ plot PNGs.",
-    )
-    parser.add_argument(
-        "--no-lpips",
-        action="store_true",
-        help="Do not calculate LPIPS for final.png vs reconstructed.png.",
-    )
-    parser.add_argument(
-        "--lpips-device",
-        choices=("auto", "cpu", "cuda"),
-        default="auto",
-        help="Device used for LPIPS. `auto` uses CUDA when available.",
-    )
-    parser.add_argument(
-        "--wandb-mode",
-        choices=("disabled", "offline", "online"),
-        default=os.getenv("WANDB_MODE", "disabled"),
-        help="Weights & Biases logging mode.",
-    )
-    parser.add_argument(
-        "--wandb-project",
-        default=os.getenv("WANDB_PROJECT", "diff-inversion"),
-        help="Weights & Biases project name.",
-    )
-    parser.add_argument(
-        "--wandb-entity",
-        default=os.getenv("WANDB_ENTITY"),
-        help="Optional Weights & Biases entity.",
-    )
-    parser.add_argument(
-        "--wandb-group",
-        default=os.getenv("WANDB_GROUP"),
-        help="Optional Weights & Biases group name.",
-    )
-    parser.add_argument(
-        "--wandb-run-name",
-        default=os.getenv("WANDB_RUN_NAME"),
-        help="Optional Weights & Biases run name.",
-    )
-    parser.add_argument(
-        "--wandb-artifact-name",
-        default=os.getenv("WANDB_ARTIFACT_NAME"),
-        help="Optional Weights & Biases artifact name.",
-    )
-    parser.add_argument(
-        "--wandb-tags",
-        nargs="*",
-        default=os.getenv("WANDB_TAGS", "").split(",") if os.getenv("WANDB_TAGS") else None,
-        help="Optional Weights & Biases tags.",
-    )
-    return parser.parse_args()
+@hydra.main(config_path="../../config/eval", config_name="run", version_base=None)
+def main(cfg: DictConfig) -> None:
+    logger.info("Evaluation config:\n{}", OmegaConf.to_yaml(cfg))
+    input_dir = _resolve_path(cfg.input_dir)
+    output_dir = _resolve_path(cfg.output_dir)
 
-
-def main() -> None:
-    args = parse_args()
     results = run_evaluation(
-        input_dir=args.input_dir,
-        output_dir=args.output_dir,
-        patch_size=args.patch_size,
-        top_k=args.top_k,
-        max_elements=args.max_elements,
-        save_noise_previews=not args.no_noise_previews,
-        plain_threshold=args.plain_threshold,
-        normality_sample_size=args.normality_sample_size,
-        qq_num_quantiles=args.qq_num_quantiles,
-        save_normality_plots=not args.no_normality_plots,
-        calculate_lpips=not args.no_lpips,
-        lpips_device=args.lpips_device,
+        input_dir=input_dir,
+        output_dir=output_dir,
+        patch_size=cfg.patch_size,
+        top_k=cfg.top_k,
+        max_elements=cfg.max_elements,
+        save_noise_previews=cfg.save_noise_previews,
+        plain_threshold=cfg.plain_threshold,
+        normality_sample_size=cfg.normality_sample_size,
+        qq_num_quantiles=cfg.qq_num_quantiles,
+        save_normality_plots=cfg.save_normality_plots,
+        calculate_lpips=cfg.calculate_lpips,
+        lpips_device=cfg.lpips_device,
     )
-    write_outputs(results, args.output_dir)
-    log_to_wandb(results, args.output_dir, args)
+    write_outputs(results, output_dir)
+    log_to_wandb(results, output_dir, cfg)
 
 
 if __name__ == "__main__":

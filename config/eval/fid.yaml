@@ -1,0 +1,16 @@
+path_outputs: ???
+path_ref: null
+
+ds_name: null
+dataset_res: null
+dataset_split: null
+
+output_dir: reports/eval/fid
+output_filename: fid_scores.json
+
+seed: 42
+mode: legacy_tensorflow
+model_name: inception_v3
+num_workers: 16
+batch_size: 64
+device: cuda

@@ -1,0 +1,20 @@
+outputs_dir: experiments/outputs_correlation
+timestep_dir: T_100
+models:
+  - cifar_pixel_32
+  - imagenet_pixel_64
+  - imagenet_pixel_256
+  - celeba_ldm_256
+  - imagenet_dit_256
+
+dtype: float16
+weights_only: false
+
+filenames:
+  noise: noise.pt
+  latents: latents.pt
+  samples: samples.pt
+
+metrics:
+  patch_size: 8
+  top_k: 20

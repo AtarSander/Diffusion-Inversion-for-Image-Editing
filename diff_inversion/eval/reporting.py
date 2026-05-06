@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import csv
 import json
 import math
@@ -102,8 +101,16 @@ def sanitize_artifact_name(name: str) -> str:
     return sanitized.strip("-.") or "evaluation-summary"
 
 
-def log_to_wandb(results: dict[str, Any], output_dir: Path, args: argparse.Namespace) -> None:
-    if args.wandb_mode == "disabled":
+def _config_get(config: Any, key: str, default: Any = None) -> Any:
+    if isinstance(config, dict):
+        return config.get(key, default)
+    return getattr(config, key, default)
+
+
+def log_to_wandb(results: dict[str, Any], output_dir: Path, config: Any) -> None:
+    wandb_cfg = _config_get(config, "wandb", {})
+    wandb_mode = _config_get(wandb_cfg, "mode", "disabled")
+    if wandb_mode == "disabled":
         return
 
     try:
@@ -128,26 +135,26 @@ def log_to_wandb(results: dict[str, Any], output_dir: Path, args: argparse.Names
     os.environ.setdefault("WANDB_DATA_DIR", data_dir.as_posix())
 
     try:
-        config = {
+        wandb_config = {
             "input_dir": results["input_dir"],
             "output_dir": output_dir.as_posix(),
             "num_samples": results["num_samples"],
-            "patch_size": args.patch_size,
-            "top_k": args.top_k,
-            "max_elements": args.max_elements,
-            "plain_threshold": args.plain_threshold,
-            "normality_sample_size": args.normality_sample_size,
-            "qq_num_quantiles": args.qq_num_quantiles,
+            "patch_size": _config_get(config, "patch_size"),
+            "top_k": _config_get(config, "top_k"),
+            "max_elements": _config_get(config, "max_elements"),
+            "plain_threshold": _config_get(config, "plain_threshold"),
+            "normality_sample_size": _config_get(config, "normality_sample_size"),
+            "qq_num_quantiles": _config_get(config, "qq_num_quantiles"),
         }
         run = wandb.init(
-            project=args.wandb_project,
-            entity=args.wandb_entity,
-            group=args.wandb_group,
-            name=args.wandb_run_name,
-            tags=args.wandb_tags,
+            project=_config_get(wandb_cfg, "project"),
+            entity=_config_get(wandb_cfg, "entity"),
+            group=_config_get(wandb_cfg, "group"),
+            name=_config_get(wandb_cfg, "run_name"),
+            tags=_config_get(wandb_cfg, "tags"),
             job_type="evaluation",
-            mode=args.wandb_mode,
-            config=config,
+            mode=wandb_mode,
+            config=wandb_config,
             dir=wandb_root.as_posix(),
             settings=wandb.Settings(
                 root_dir=wandb_root.as_posix(),
@@ -171,7 +178,9 @@ def log_to_wandb(results: dict[str, Any], output_dir: Path, args: argparse.Names
         summary_json = output_dir / "evaluation_summary.json"
         summary_md = output_dir / "evaluation_summary.md"
         artifact = wandb.Artifact(
-            name=sanitize_artifact_name(args.wandb_artifact_name or output_dir.name),
+            name=sanitize_artifact_name(
+                _config_get(wandb_cfg, "artifact_name") or output_dir.name
+            ),
             type="evaluation",
         )
         if summary_json.exists():
