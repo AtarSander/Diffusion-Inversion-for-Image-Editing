@@ -11,7 +11,7 @@ import re
 from typing import Any
 
 from loguru import logger
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageOps
 import torch
 
 
@@ -50,15 +50,27 @@ def _tensor_stats(tensor: torch.Tensor, max_elements: int) -> dict[str, float]:
     mean = flat.mean()
     std = flat.std(unbiased=False).clamp_min(1e-12)
     centered = (flat - mean) / std
+    quantiles = torch.quantile(
+        flat,
+        torch.tensor([0.01, 0.05, 0.50, 0.95, 0.99], dtype=flat.dtype),
+    )
+    variance = std.pow(2)
+    normal_kl = 0.5 * (variance + mean.pow(2) - 1 - torch.log(variance))
     return {
         "mean": float(mean.item()),
         "std": float(std.item()),
         "min": float(flat.min().item()),
+        "p01": float(quantiles[0].item()),
+        "p05": float(quantiles[1].item()),
+        "p50": float(quantiles[2].item()),
+        "p95": float(quantiles[3].item()),
+        "p99": float(quantiles[4].item()),
         "max": float(flat.max().item()),
         "skew": float(centered.pow(3).mean().item()),
         "excess_kurtosis": float(centered.pow(4).mean().sub(3).item()),
         "abs_mean_error_from_normal": float(mean.abs().item()),
         "abs_std_error_from_normal": float((std - 1).abs().item()),
+        "normal_kl_from_standard": float(normal_kl.item()),
     }
 
 
@@ -70,11 +82,82 @@ def _safe_cosine(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
 
 def _pair_metrics(reference: torch.Tensor, candidate: torch.Tensor) -> dict[str, float]:
     delta = candidate - reference
+    mse = delta.pow(2).mean()
+    mae = delta.abs().mean()
+    rmse = torch.sqrt(mse)
+    reference_std = reference.std(unbiased=False).clamp_min(1e-12)
+    candidate_std = candidate.std(unbiased=False).clamp_min(1e-12)
     return {
-        "mse": float(delta.pow(2).mean().item()),
-        "mae": float(delta.abs().mean().item()),
+        "mse": float(mse.item()),
+        "rmse": float(rmse.item()),
+        "mae": float(mae.item()),
         "l2": float(torch.linalg.vector_norm(delta).item()),
         "cosine": float(_safe_cosine(reference, candidate).item()),
+        "relative_rmse_to_reference_std": float((rmse / reference_std).item()),
+        "candidate_to_reference_std_ratio": float((candidate_std / reference_std).item()),
+        "mean_shift": float((candidate.mean() - reference.mean()).item()),
+    }
+
+
+def _per_channel_pair_metrics(
+    reference: torch.Tensor, candidate: torch.Tensor
+) -> dict[str, float]:
+    if reference.ndim != candidate.ndim or reference.ndim not in (3, 4):
+        return {}
+    channel_dim = 0 if reference.ndim == 3 else 1
+    metrics = {}
+    for channel_idx in range(reference.shape[channel_dim]):
+        if reference.ndim == 3:
+            reference_channel = reference[channel_idx]
+            candidate_channel = candidate[channel_idx]
+        else:
+            reference_channel = reference[:, channel_idx]
+            candidate_channel = candidate[:, channel_idx]
+        channel_metrics = _pair_metrics(reference_channel, candidate_channel)
+        for name, value in channel_metrics.items():
+            metrics[f"channel_{channel_idx}/{name}"] = value
+    return metrics
+
+
+def _error_distribution_metrics(
+    reference: torch.Tensor,
+    candidate: torch.Tensor,
+    max_elements: int,
+) -> dict[str, float]:
+    delta = candidate - reference
+    abs_delta = delta.abs()
+    flat_abs = abs_delta.flatten()
+    if flat_abs.numel() > max_elements:
+        idx = torch.linspace(0, flat_abs.numel() - 1, max_elements).long()
+        flat_abs = flat_abs[idx]
+    quantiles = torch.quantile(
+        flat_abs,
+        torch.tensor([0.50, 0.90, 0.95, 0.99], dtype=flat_abs.dtype),
+    )
+    return {
+        "signed_mean": float(delta.mean().item()),
+        "signed_std": float(delta.std(unbiased=False).item()),
+        "abs_mean": float(flat_abs.mean().item()),
+        "abs_std": float(flat_abs.std(unbiased=False).item()),
+        "abs_p50": float(quantiles[0].item()),
+        "abs_p90": float(quantiles[1].item()),
+        "abs_p95": float(quantiles[2].item()),
+        "abs_p99": float(quantiles[3].item()),
+        "abs_max": float(flat_abs.max().item()),
+    }
+
+
+def _latent_error_structure_metrics(
+    reference: torch.Tensor,
+    candidate: torch.Tensor,
+    final_latent: torch.Tensor,
+) -> dict[str, float]:
+    delta = candidate - reference
+    return {
+        "signed_error_vs_final_latent_cosine": float(_safe_cosine(delta, final_latent).item()),
+        "abs_error_vs_abs_final_latent_cosine": float(
+            _safe_cosine(delta.abs(), final_latent.abs()).item()
+        ),
     }
 
 
@@ -134,10 +217,22 @@ def _pca_rgb_image(
     return Image.fromarray(image, mode="RGB"), components
 
 
+def _load_final_image_preview(final_image_path: Path, target_size: tuple[int, int]) -> Image.Image:
+    with Image.open(final_image_path) as image:
+        image = ImageOps.contain(image.convert("RGB"), target_size, Image.Resampling.LANCZOS)
+
+    canvas = Image.new("RGB", target_size, color="white")
+    x = (target_size[0] - image.width) // 2
+    y = (target_size[1] - image.height) // 2
+    canvas.paste(image, (x, y))
+    return canvas
+
+
 def _write_noise_images(
     output_path: Path,
     initial_noise: torch.Tensor,
     inverted_noise: torch.Tensor,
+    final_image_path: Path | None = None,
 ) -> dict[str, str]:
     combined = torch.cat([initial_noise.flatten(), inverted_noise.flatten()])
     vmin = float(combined.quantile(0.01).item())
@@ -168,6 +263,15 @@ def _write_noise_images(
     pca_inverted_image.save(pca_inverted_path)
     pca_error_image.save(pca_error_path)
 
+    output_paths = {
+        "preview_path": output_path.as_posix(),
+        "input_noise_image_path": input_path.as_posix(),
+        "inverted_noise_image_path": inverted_path.as_posix(),
+        "abs_error_image_path": error_path.as_posix(),
+        "pca_input_noise_image_path": pca_input_path.as_posix(),
+        "pca_inverted_noise_image_path": pca_inverted_path.as_posix(),
+        "pca_abs_error_image_path": pca_error_path.as_posix(),
+    }
     panels = [
         ("input: latents/x_000.pt", input_image),
         ("inverted: inverted_noise.pt", inverted_image),
@@ -176,6 +280,14 @@ def _write_noise_images(
 
     label_height = 18
     panel_width, panel_height = panels[0][1].size
+    if final_image_path is not None and final_image_path.exists():
+        final_preview_path = output_path.with_name(f"{output_path.stem}_final_image.png")
+        final_image = _load_final_image_preview(final_image_path, (panel_width, panel_height))
+        final_image.save(final_preview_path)
+        panels.insert(0, ("final: final.png", final_image))
+        output_paths["final_image_path"] = final_image_path.as_posix()
+        output_paths["final_image_preview_path"] = final_preview_path.as_posix()
+
     canvas = Image.new(
         "RGB", (panel_width * len(panels), panel_height + label_height), color="white"
     )
@@ -186,15 +298,7 @@ def _write_noise_images(
         canvas.paste(image, (x, label_height))
 
     canvas.save(output_path)
-    return {
-        "preview_path": output_path.as_posix(),
-        "input_noise_image_path": input_path.as_posix(),
-        "inverted_noise_image_path": inverted_path.as_posix(),
-        "abs_error_image_path": error_path.as_posix(),
-        "pca_input_noise_image_path": pca_input_path.as_posix(),
-        "pca_inverted_noise_image_path": pca_inverted_path.as_posix(),
-        "pca_abs_error_image_path": pca_error_path.as_posix(),
-    }
+    return output_paths
 
 
 def _trajectory_metrics(steps: list[torch.Tensor]) -> dict[str, Any]:
@@ -357,21 +461,52 @@ def run_evaluation(
             last_pred_noises.append(pred_noises[-1])
         if inverted_noise is not None:
             inversion_error = _pair_metrics(steps[0], inverted_noise)
+            inversion_error_stats = _error_distribution_metrics(
+                steps[0],
+                inverted_noise,
+                max_elements=max_elements,
+            )
+            inversion_error_per_channel = _per_channel_pair_metrics(steps[0], inverted_noise)
+            inversion_error_structure = _latent_error_structure_metrics(
+                steps[0],
+                inverted_noise,
+                steps[-1],
+            )
             per_sample[sample_dir.name]["inverted_noise_stats"] = _tensor_stats(
                 inverted_noise,
                 max_elements=max_elements,
             )
             per_sample[sample_dir.name]["inversion_error"] = inversion_error
+            per_sample[sample_dir.name]["inversion_error_stats"] = inversion_error_stats
+            per_sample[sample_dir.name]["inversion_error_per_channel"] = (
+                inversion_error_per_channel
+            )
+            per_sample[sample_dir.name]["inversion_error_structure"] = inversion_error_structure
             inverted_noises.append(inverted_noise)
+            prompt_record = metadata.get("prompt")
+            prompt_text = prompt_record.get("prompt") if isinstance(prompt_record, dict) else None
             comparison = {
                 "sample": sample_dir.name,
+                "prompt": prompt_text or "",
                 "input_noise_path": (sample_dir / "latents" / "x_000.pt").as_posix(),
                 "inverted_noise_path": (sample_dir / "inverted_noise.pt").as_posix(),
                 **inversion_error,
+                **{f"error_stats/{key}": value for key, value in inversion_error_stats.items()},
+                **{
+                    f"error_structure/{key}": value
+                    for key, value in inversion_error_structure.items()
+                },
             }
             if save_noise_previews:
                 preview_path = noise_comparison_dir / f"{sample_dir.name}.png"
-                comparison.update(_write_noise_images(preview_path, steps[0], inverted_noise))
+                comparison.update(
+                    _write_noise_images(
+                        preview_path,
+                        steps[0],
+                        inverted_noise,
+                        final_image_path=sample_dir / "final.png",
+                    )
+                )
             noise_comparisons.append(comparison)
         initial_latents.append(steps[0])
         final_latents.append(steps[-1])
@@ -395,11 +530,31 @@ def run_evaluation(
         )
     if inverted_noises and len(inverted_noises) == len(sample_dirs):
         inverted_batch = torch.stack(inverted_noises)
+        inversion_error_batch = inverted_batch - initial_batch
         aggregate["inverted_noise_stats"] = _tensor_stats(
             inverted_batch,
             max_elements=max_elements,
         )
         aggregate["initial_vs_inverted_noise"] = _pair_metrics(initial_batch, inverted_batch)
+        aggregate["initial_vs_inverted_noise_per_channel"] = _per_channel_pair_metrics(
+            initial_batch,
+            inverted_batch,
+        )
+        aggregate["inversion_error_stats"] = _error_distribution_metrics(
+            initial_batch,
+            inverted_batch,
+            max_elements=max_elements,
+        )
+        aggregate["inversion_error_patch_topk_correlation"] = _patch_topk_corr(
+            inversion_error_batch.abs(),
+            patch_size,
+            top_k,
+        )
+        aggregate["inversion_error_structure"] = _latent_error_structure_metrics(
+            initial_batch,
+            inverted_batch,
+            final_batch,
+        )
 
     results = {
         "input_dir": input_dir.as_posix(),
@@ -450,6 +605,24 @@ def _build_samples_table_rows(
             row.update(_flatten_metrics(sample["inverted_noise_stats"], prefix="inverted_noise"))
         if "inversion_error" in sample:
             row.update(_flatten_metrics(sample["inversion_error"], prefix="inversion_error"))
+        if "inversion_error_stats" in sample:
+            row.update(
+                _flatten_metrics(sample["inversion_error_stats"], prefix="inversion_error_stats")
+            )
+        if "inversion_error_per_channel" in sample:
+            row.update(
+                _flatten_metrics(
+                    sample["inversion_error_per_channel"],
+                    prefix="inversion_error_per_channel",
+                )
+            )
+        if "inversion_error_structure" in sample:
+            row.update(
+                _flatten_metrics(
+                    sample["inversion_error_structure"],
+                    prefix="inversion_error_structure",
+                )
+            )
         rows.append(row)
     return rows
 
