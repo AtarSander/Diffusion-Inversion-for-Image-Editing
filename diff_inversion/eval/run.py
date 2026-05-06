@@ -103,6 +103,37 @@ def _channel_grid_image(tensor: torch.Tensor, vmin: float, vmax: float) -> Image
     return canvas.convert("RGB")
 
 
+def _pca_rgb_image(
+    tensor: torch.Tensor, components: torch.Tensor | None = None
+) -> tuple[Image.Image, torch.Tensor]:
+    tensor = tensor.detach().float().cpu()
+    if tensor.ndim != 3:
+        raise ValueError(f"Expected [C,H,W] tensor for PCA preview, got {tuple(tensor.shape)}")
+
+    channels, height, width = tensor.shape
+    flat = tensor.permute(1, 2, 0).reshape(-1, channels)
+    centered = flat - flat.mean(dim=0, keepdim=True)
+
+    if components is None:
+        _, _, vh = torch.linalg.svd(centered, full_matrices=False)
+        components = vh[: min(3, vh.shape[0])]
+
+    projected = centered @ components.T
+    if projected.shape[1] < 3:
+        projected = torch.nn.functional.pad(projected, (0, 3 - projected.shape[1]))
+    projected = projected[:, :3].reshape(height, width, 3)
+
+    channels_u8 = []
+    for channel_idx in range(3):
+        channel = projected[:, :, channel_idx]
+        vmin = float(channel.quantile(0.01).item())
+        vmax = float(channel.quantile(0.99).item())
+        channels_u8.append(_normalize_to_uint8(channel, vmin, vmax))
+
+    image = torch.stack(channels_u8, dim=-1).numpy()
+    return Image.fromarray(image, mode="RGB"), components
+
+
 def _write_noise_images(
     output_path: Path,
     initial_noise: torch.Tensor,
@@ -127,6 +158,16 @@ def _write_noise_images(
     inverted_image.save(inverted_path)
     error_image.save(error_path)
 
+    pca_input_path = output_path.with_name(f"{output_path.stem}_pca_input_noise.png")
+    pca_inverted_path = output_path.with_name(f"{output_path.stem}_pca_inverted_noise.png")
+    pca_error_path = output_path.with_name(f"{output_path.stem}_pca_abs_error.png")
+    pca_input_image, components = _pca_rgb_image(initial_noise)
+    pca_inverted_image, _ = _pca_rgb_image(inverted_noise, components=components)
+    pca_error_image, _ = _pca_rgb_image(error)
+    pca_input_image.save(pca_input_path)
+    pca_inverted_image.save(pca_inverted_path)
+    pca_error_image.save(pca_error_path)
+
     panels = [
         ("input: latents/x_000.pt", input_image),
         ("inverted: inverted_noise.pt", inverted_image),
@@ -150,6 +191,9 @@ def _write_noise_images(
         "input_noise_image_path": input_path.as_posix(),
         "inverted_noise_image_path": inverted_path.as_posix(),
         "abs_error_image_path": error_path.as_posix(),
+        "pca_input_noise_image_path": pca_input_path.as_posix(),
+        "pca_inverted_noise_image_path": pca_inverted_path.as_posix(),
+        "pca_abs_error_image_path": pca_error_path.as_posix(),
     }
 
 
