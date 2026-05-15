@@ -19,6 +19,7 @@ from diff_inversion.data.generate_sdxl_samples import (
     make_pipe,
 )
 from diff_inversion.eval.lora import configure_unet_lora
+from diff_inversion.modeling.sdxl_sampling import predict_noise_sdxl
 
 
 def _load_tensor(path: Path) -> torch.Tensor:
@@ -59,43 +60,6 @@ def _final_latent_path(sample_dir: Path) -> Path:
     if not latent_paths:
         raise FileNotFoundError(f"No generated latents found in {sample_dir / 'latents'}")
     return latent_paths[-1]
-
-
-@torch.no_grad()
-def predict_noise_sdxl(
-    pipe,
-    latents: torch.Tensor,
-    timestep: torch.Tensor,
-    cond: dict[str, torch.Tensor],
-    guidance_scale: float,
-) -> torch.Tensor:
-    """Predict CFG-combined SDXL noise for one latent batch."""
-    latent_model_input = torch.cat([latents, latents], dim=0)
-    latent_model_input = pipe.scheduler.scale_model_input(latent_model_input, timestep)
-
-    encoder_hidden_states = torch.cat(
-        [cond["negative_prompt_embeds"], cond["prompt_embeds"]],
-        dim=0,
-    )
-    text_embeds = torch.cat(
-        [cond["negative_pooled_prompt_embeds"], cond["pooled_prompt_embeds"]],
-        dim=0,
-    )
-    time_ids = cond["add_time_ids"].repeat(2, 1)
-
-    noise_pred = pipe.unet(
-        latent_model_input,
-        timestep,
-        encoder_hidden_states=encoder_hidden_states,
-        added_cond_kwargs={
-            "text_embeds": text_embeds,
-            "time_ids": time_ids,
-        },
-        return_dict=False,
-    )[0]
-
-    noise_uncond, noise_text = noise_pred.chunk(2)
-    return noise_uncond + guidance_scale * (noise_text - noise_uncond)
 
 
 @torch.no_grad()
