@@ -1,0 +1,60 @@
+defaults:
+  - model: sdxl
+  - train: sdxl_lora
+  - _self_
+
+run_name: sdxl-lora-inversion
+checkpoint_dir: checkpoints/sdxl_lora
+
+data:
+  root_dir: data/processed/sdxl_train_100
+  val_root_dir: data/processed/sdxl_val_10
+  batch_size: 1
+  num_workers: 0
+  pin_memory: true
+  latents_dir_name: latents
+  pred_noises_dir_name: pred_noises
+  oversample_early_inversion_steps: true
+  early_inversion_fraction: 0.1
+  early_inversion_weight: 5.0
+
+training:
+  seed: 42
+  epochs: 1
+  learning_rate: 1.0e-4
+  weight_decay: 0.0
+  max_grad_norm: 1.0
+  gradient_checkpointing: true
+  cast_trainable_params_to_float32: true
+  skip_nonfinite_batches: true
+  max_nonfinite_batches: 10
+  save_every_epochs: 1
+  save_every_steps: 0
+
+logging:
+  log_every_steps: 5
+  basic: true
+  loss_log10: true
+  gradients: true
+  lora: true
+  learning_rate: true
+  timestep_stats: true
+  prediction_stats: true
+
+validation_preview:
+  enabled: true
+  every_epochs: 1
+  num_samples: 2
+  output_dir: null
+  use_lora_for_reconstruction: false
+
+wandb:
+  mode: disabled
+  project: diff-inversion
+  entity: null
+  group: null
+  run_name: null
+  tags:
+    - sdxl
+    - lora
+    - inversion

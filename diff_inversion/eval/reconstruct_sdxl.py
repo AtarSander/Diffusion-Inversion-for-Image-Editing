@@ -22,9 +22,9 @@ from diff_inversion.eval.invert_sdxl import (
     _load_tensor,
     _read_json,
     _sample_dirs,
-    predict_noise_sdxl,
 )
 from diff_inversion.eval.lora import configure_unet_lora
+from diff_inversion.modeling.sdxl_sampling import reconstruct_latent_sdxl
 
 
 def _resolve_path(path: str | Path) -> Path:
@@ -48,7 +48,6 @@ def reconstruct_from_noise_sdxl(
             f"got {tuple(inverted_noise.shape)}"
         )
 
-    latents = inverted_noise.to(device=pipe.device, dtype=pipe.unet.dtype)
     cond = encode_prompt_sdxl(
         pipe=pipe,
         prompt=prompt,
@@ -56,28 +55,14 @@ def reconstruct_from_noise_sdxl(
         height=model_cfg.height,
         width=model_cfg.width,
     )
-
-    pipe.scheduler.set_timesteps(model_cfg.num_inference_steps, device=pipe.device)
-    timestep_values = []
-    for timestep in tqdm(pipe.scheduler.timesteps, desc="Reconstructing", leave=False):
-        timestep_values.append(
-            int(timestep.item()) if hasattr(timestep, "item") else int(timestep)
-        )
-        noise_pred = predict_noise_sdxl(
-            pipe=pipe,
-            latents=latents,
-            timestep=timestep,
-            cond=cond,
-            guidance_scale=model_cfg.guidance_scale,
-        )
-        latents = pipe.scheduler.step(
-            model_output=noise_pred,
-            timestep=timestep,
-            sample=latents,
-            return_dict=True,
-        ).prev_sample
-
-    return latents.detach().cpu(), timestep_values
+    return reconstruct_latent_sdxl(
+        pipe=pipe,
+        noise_latent=inverted_noise,
+        cond=cond,
+        num_inference_steps=model_cfg.num_inference_steps,
+        guidance_scale=model_cfg.guidance_scale,
+        progress_desc="Reconstructing",
+    )
 
 
 @torch.no_grad()

@@ -75,10 +75,11 @@ def decode_latent_to_pil(pipe: StableDiffusionXLPipeline, latents: torch.Tensor)
 @torch.no_grad()
 def encode_prompt_sdxl(
     pipe: StableDiffusionXLPipeline,
-    prompt: str,
-    negative_prompt: str,
+    prompt: str | list[str],
+    negative_prompt: str | list[str],
     height: int,
     width: int,
+    do_classifier_free_guidance: bool = True,
 ) -> Dict[str, torch.Tensor]:
     """Encode prompt text and auxiliary conditioning tensors for SDXL."""
     (
@@ -91,11 +92,12 @@ def encode_prompt_sdxl(
         prompt_2=prompt,
         device=pipe._execution_device,
         num_images_per_prompt=1,
-        do_classifier_free_guidance=True,
+        do_classifier_free_guidance=do_classifier_free_guidance,
         negative_prompt=negative_prompt,
         negative_prompt_2=negative_prompt,
     )
 
+    batch_size = prompt_embeds.shape[0]
     add_time_ids = pipe._get_add_time_ids(
         original_size=(height, width),
         crops_coords_top_left=(0, 0),
@@ -103,6 +105,7 @@ def encode_prompt_sdxl(
         dtype=prompt_embeds.dtype,
         text_encoder_projection_dim=pipe.text_encoder_2.config.projection_dim,
     ).to(pipe.device)
+    add_time_ids = add_time_ids.repeat(batch_size, 1)
 
     return {
         "prompt_embeds": prompt_embeds,

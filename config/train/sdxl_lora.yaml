@@ -1,0 +1,15 @@
+# @package _global_
+
+lora:
+  checkpoint_path: null
+  adapter_name: inversion
+  r: 16
+  lora_alpha: 8
+  lora_dropout: 0.0
+  bias: none
+  init_lora_weights: gaussian
+  target_modules:
+    - to_k
+    - to_q
+    - to_v
+    - to_out.0
