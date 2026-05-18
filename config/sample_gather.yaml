@@ -3,8 +3,8 @@ defaults:
   - model: sdxl
   - _self_
 
-output_dir: data/processed/sdxl_trajectories
-num_samples: 4
+output_dir: /net/tscratch/people/plgatarsander/ZZSN_data/processed/sdxl_trajectories
+num_samples: 27396
 start_index: 0
 seed: 1234
 negative_prompt: ""
@@ -18,5 +18,8 @@ save_timesteps: true
 
 sample_dir_template: sample_{sample_idx:06d}
 latents_dir_name: latents
+latents_format: stacked_pt
+latents_file_name: trajectory.pt
+per_step_latent_template: x_{step_idx:03d}.pt
 final_image_name: final.png
 run_config_name: run_config.json

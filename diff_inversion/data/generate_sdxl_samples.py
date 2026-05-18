@@ -58,7 +58,9 @@ def make_pipe(cfg: DictConfig, device: str) -> StableDiffusionXLPipeline:
 
 
 @torch.no_grad()
-def decode_latent_to_pil(pipe: StableDiffusionXLPipeline, latents: torch.Tensor) -> Image.Image:
+def decode_latent_to_pil(
+    pipe: StableDiffusionXLPipeline, latents: torch.Tensor
+) -> Image.Image:
     """Decode a latent tensor into a PIL image."""
     pipe.vae.to(dtype=torch.float32)
     latents_fp32 = latents.to(device=pipe.device, dtype=torch.float32)
@@ -193,6 +195,41 @@ def sample_with_trajectory(
     return latents, trajectory, timestep_values
 
 
+def save_latent_trajectory(
+    trajectory: List[torch.Tensor],
+    latents_dir: Path,
+    gather_cfg: DictConfig,
+) -> str:
+    """Persist latent trajectory tensors using the configured file layout."""
+    latents_format = str(
+        OmegaConf.select(gather_cfg, "latents_format", default="stacked_pt")
+    )
+
+    if latents_format == "per_step_pt":
+        template = str(
+            OmegaConf.select(
+                gather_cfg,
+                "per_step_latent_template",
+                default="x_{step_idx:03d}.pt",
+            )
+        )
+        for step_idx, latent in enumerate(trajectory):
+            torch.save(latent, latents_dir / template.format(step_idx=step_idx))
+        return latents_format
+
+    if latents_format == "stacked_pt":
+        file_name = str(
+            OmegaConf.select(gather_cfg, "latents_file_name", default="trajectory.pt")
+        )
+        torch.save(torch.stack(trajectory, dim=0), latents_dir / file_name)
+        return latents_format
+
+    raise ValueError(
+        f"Unsupported latents_format: {latents_format}. "
+        "Expected one of: stacked_pt, per_step_pt."
+    )
+
+
 def save_sample(
     pipe: StableDiffusionXLPipeline,
     record: Dict[str, Any],
@@ -231,9 +268,9 @@ def save_sample(
         final_image = decode_latent_to_pil(pipe, final_latent)
         final_image.save(sample_dir / str(gather_cfg.final_image_name))
 
+    latents_format = None
     if gather_cfg.save_latents:
-        for i, latent in enumerate(trajectory):
-            torch.save(latent, latents_dir / f"x_{i:03d}.pt")
+        latents_format = save_latent_trajectory(trajectory, latents_dir, gather_cfg)
 
     if gather_cfg.save_prompt:
         with (sample_dir / "prompt.json").open("w", encoding="utf-8") as f:
@@ -250,6 +287,8 @@ def save_sample(
         "negative_prompt": gather_cfg.negative_prompt,
         "trajectory_length": len(trajectory),
     }
+    if latents_format is not None:
+        meta["latents_format"] = latents_format
     if gather_cfg.save_meta:
         with (sample_dir / "meta.json").open("w", encoding="utf-8") as f:
             json.dump(meta, f, indent=2, ensure_ascii=False)
@@ -261,11 +300,31 @@ def save_sample(
     logger.success("Saved sample {}: {}", sample_idx, sample_dir)
 
 
-@hydra.main(config_path="../../config", config_name="sample_gather", version_base=None)
+def apply_job_spec(gather_cfg: DictConfig) -> None:
+    """Apply optional per-job overrides from sample_gather_*_submitit configs."""
+    if "job_specs" not in gather_cfg or "job_id" not in gather_cfg:
+        return
+
+    job_id = int(gather_cfg.job_id)
+    job_spec = gather_cfg.job_specs[job_id]
+    gather_cfg.start_index = int(job_spec.start_index)
+    gather_cfg.num_samples = int(job_spec.num_samples)
+
+    if "output_dir" in job_spec:
+        gather_cfg.output_dir = str(job_spec.output_dir)
+    if "prompts_jsonl" in job_spec:
+        gather_cfg.data.prompts_jsonl = str(job_spec.prompts_jsonl)
+
+
+@hydra.main(
+    config_path="../../config", config_name="sample_gather_submitit", version_base=None
+)
 def main(cfg: DictConfig) -> None:
     """CLI entrypoint for generating SDXL samples from prepared prompts."""
     model_cfg = cfg.model
     gather_cfg = cfg
+
+    apply_job_spec(gather_cfg)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if model_cfg.require_cuda and device != "cuda":
@@ -299,7 +358,9 @@ def main(cfg: DictConfig) -> None:
     pipe = make_pipe(model_cfg, device)
 
     with (out_dir / str(gather_cfg.run_config_name)).open("w", encoding="utf-8") as f:
-        json.dump(OmegaConf.to_container(cfg, resolve=True), f, indent=2, ensure_ascii=False)
+        json.dump(
+            OmegaConf.to_container(cfg, resolve=True), f, indent=2, ensure_ascii=False
+        )
     logger.info("Saved run config: {}", out_dir / str(gather_cfg.run_config_name))
 
     for sample_idx, record in tqdm(
