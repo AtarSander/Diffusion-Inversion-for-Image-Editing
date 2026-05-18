@@ -2,28 +2,18 @@
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
-from diffusers import DDIMScheduler, StableDiffusionXLPipeline
 import hydra
+import torch
+from diffusers import StableDiffusionXLPipeline
 from hydra.utils import to_absolute_path
 from loguru import logger
 from omegaconf import DictConfig, OmegaConf
 from PIL import Image
-import torch
 from tqdm import tqdm
 
-
-def resolve_torch_dtype(dtype_name: Optional[str]) -> Optional[torch.dtype]:
-    """Resolve a torch dtype name from Hydra config."""
-    if dtype_name is None:
-        return None
-
-    dtype = getattr(torch, dtype_name, None)
-    if not isinstance(dtype, torch.dtype):
-        raise ValueError(f"Unsupported torch dtype: {dtype_name}")
-
-    return dtype
+from diff_inversion.utils import make_pipe
 
 
 def load_recap_prompt_records(jsonl_path: Path) -> List[Dict[str, Any]]:
@@ -36,25 +26,6 @@ def load_recap_prompt_records(jsonl_path: Path) -> List[Dict[str, Any]]:
                 continue
             records.append(json.loads(line))
     return records
-
-
-def make_pipe(cfg: DictConfig, device: str) -> StableDiffusionXLPipeline:
-    """Create an SDXL pipeline configured for DDIM sampling."""
-    logger.info("Loading SDXL pipeline: {}", cfg.model_id)
-    pipe = StableDiffusionXLPipeline.from_pretrained(
-        cfg.model_id,
-        torch_dtype=resolve_torch_dtype(cfg.torch_dtype),
-        variant=cfg.variant,
-        use_safetensors=bool(cfg.use_safetensors),
-    )
-    if cfg.scheduler == "ddim":
-        pipe.scheduler = DDIMScheduler.from_config(pipe.scheduler.config)
-    else:
-        raise ValueError(f"Unsupported scheduler: {cfg.scheduler}")
-
-    pipe.to(device)
-    logger.success("SDXL pipeline loaded on {}", device)
-    return pipe
 
 
 @torch.no_grad()
@@ -125,7 +96,7 @@ def sample_with_trajectory(
     height: int,
     width: int,
     seed: int,
-) -> Tuple[torch.Tensor, List[torch.Tensor], List[int]]:
+) -> Tuple[torch.Tensor, List[torch.Tensor], List[torch.Tensor], List[int]]:
     """Run DDIM sampling and keep the full latent trajectory."""
     device = pipe.device
 
@@ -150,6 +121,7 @@ def sample_with_trajectory(
     )
 
     trajectory: List[torch.Tensor] = [latents.detach().cpu()]
+    pred_noises: List[torch.Tensor] = []
     timestep_values: List[int] = [
         int(timesteps[0].item()) if hasattr(timesteps[0], "item") else int(timesteps[0])
     ]
@@ -190,9 +162,10 @@ def sample_with_trajectory(
         ).prev_sample
 
         trajectory.append(latents.detach().cpu())
+        pred_noises.append(noise_pred.detach().cpu())
         timestep_values.append(int(t.item()) if hasattr(t, "item") else int(t))
 
-    return latents, trajectory, timestep_values
+    return latents, trajectory, pred_noises, timestep_values
 
 
 def save_latent_trajectory(
@@ -241,6 +214,7 @@ def save_sample(
     """Generate and persist one sample directory with images, latents, and metadata."""
     sample_dir = out_dir / gather_cfg.sample_dir_template.format(sample_idx=sample_idx)
     latents_dir = sample_dir / str(gather_cfg.latents_dir_name)
+    pred_noises_dir = sample_dir / str(gather_cfg.pred_noises_dir_name)
 
     if sample_dir.exists() and not gather_cfg.overwrite:
         logger.info("Skipping existing sample: {}", sample_dir)
@@ -250,10 +224,13 @@ def save_sample(
     if gather_cfg.save_latents:
         latents_dir.mkdir(parents=True, exist_ok=True)
 
+    if gather_cfg.save_noises:
+        pred_noises_dir.mkdir(parents=True, exist_ok=True)
+
     prompt = record["prompt"]
     seed = gather_cfg.seed + sample_idx
 
-    final_latent, trajectory, timestep_values = sample_with_trajectory(
+    final_latent, trajectory, pred_noises, timestep_values = sample_with_trajectory(
         pipe=pipe,
         prompt=prompt,
         negative_prompt=gather_cfg.negative_prompt,
@@ -272,6 +249,10 @@ def save_sample(
     if gather_cfg.save_latents:
         latents_format = save_latent_trajectory(trajectory, latents_dir, gather_cfg)
 
+    if gather_cfg.save_pred_noises:
+        for i, noise in enumerate(pred_noises):
+            torch.save(noise, pred_noises_dir / f"noise_{i:03d}.pt")
+
     if gather_cfg.save_prompt:
         with (sample_dir / "prompt.json").open("w", encoding="utf-8") as f:
             json.dump(record, f, indent=2, ensure_ascii=False)
@@ -286,6 +267,7 @@ def save_sample(
         "width": model_cfg.width,
         "negative_prompt": gather_cfg.negative_prompt,
         "trajectory_length": len(trajectory),
+        "pred_noises_length": len(pred_noises),
     }
     if latents_format is not None:
         meta["latents_format"] = latents_format

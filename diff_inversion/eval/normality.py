@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
-from scipy.stats import shapiro
 import torch
 import torch.distributions as dist
+from scipy.stats import shapiro
 from tqdm import tqdm
 
 

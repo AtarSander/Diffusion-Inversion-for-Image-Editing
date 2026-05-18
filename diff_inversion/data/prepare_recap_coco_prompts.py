@@ -1,8 +1,8 @@
 """Prepare Recap-COCO prompt splits from the downloaded parquet dataset."""
 
 import json
-from pathlib import Path
 import random
+from pathlib import Path
 from typing import Any, Dict, List, Set, Tuple
 
 import hydra

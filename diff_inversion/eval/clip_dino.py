@@ -1,8 +1,8 @@
 from collections.abc import Sequence
 
+import torch
 from loguru import logger
 from PIL import Image
-import torch
 from torchvision import transforms
 from torchvision.transforms import InterpolationMode
 from transformers import AutoModel, AutoProcessor

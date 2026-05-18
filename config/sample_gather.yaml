@@ -21,5 +21,6 @@ latents_dir_name: latents
 latents_format: stacked_pt
 latents_file_name: trajectory.pt
 per_step_latent_template: x_{step_idx:03d}.pt
+pred_noises_dir_name: pred_noises
 final_image_name: final.png
 run_config_name: run_config.json
