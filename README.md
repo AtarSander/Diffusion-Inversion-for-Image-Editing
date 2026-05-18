@@ -53,5 +53,19 @@ A short description of the project.
     └── plots.py                <- Code to create visualizations
 ```
 
+## SLURM / Hydra Submitit integration
+
+This project now includes a Hydra Submitit launcher config for SLURM in `config/hydra/launcher/submitit_slurm.yaml`.
+
+A helper launch script is provided at `scripts/launch_sdxl_submitit_array.sh`.
+
+To start an 8-job sweep, adjust `TOTAL_SAMPLES`, `JOBS`, and the SLURM settings in the launcher config, then run:
+
+```bash
+bash scripts/launch_sdxl_submitit_array.sh
+```
+
+If you need a different partition or memory configuration, override the launcher settings on the command line or edit `config/hydra/launcher/submitit_slurm.yaml`.
+
 --------
 
