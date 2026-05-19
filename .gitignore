@@ -195,3 +195,4 @@ cython_debug/
 .codex
 
 outputs
+slurm_runs
