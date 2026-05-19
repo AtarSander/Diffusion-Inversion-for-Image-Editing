@@ -1,0 +1,21 @@
+defaults:
+  - model: sdxl
+  - _self_
+
+root_dirs:
+  - /net/tscratch/people/plgatarsander/ZZSN_data/processed/sdxl_trajectories_stacked/train
+  - /net/tscratch/people/plgatarsander/ZZSN_data/processed/sdxl_trajectories_stacked/val
+  - /net/tscratch/people/plgatarsander/ZZSN_data/processed/sdxl_trajectories_stacked/test
+
+sample_glob: sample_*
+start_index: 0
+num_samples: null
+overwrite: false
+batch_size: 4
+negative_prompt: ""
+
+latents_dir_name: latents
+latents_file_name: trajectory.pt
+conditioning_file_name: conditioning.pt
+targets_dir_name: targets
+target_eps_file_name: target_eps.pt

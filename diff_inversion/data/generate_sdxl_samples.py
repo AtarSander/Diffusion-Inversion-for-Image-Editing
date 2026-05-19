@@ -96,7 +96,14 @@ def sample_with_trajectory(
     height: int,
     width: int,
     seed: int,
-) -> Tuple[torch.Tensor, List[torch.Tensor], List[torch.Tensor], List[int]]:
+) -> Tuple[
+    torch.Tensor,
+    List[torch.Tensor],
+    List[torch.Tensor],
+    List[torch.Tensor],
+    Dict[str, torch.Tensor],
+    List[int],
+]:
     """Run DDIM sampling and keep the full latent trajectory."""
     device = pipe.device
 
@@ -122,6 +129,7 @@ def sample_with_trajectory(
 
     trajectory: List[torch.Tensor] = [latents.detach().cpu()]
     pred_noises: List[torch.Tensor] = []
+    target_eps: List[torch.Tensor] = []
     timestep_values: List[int] = [
         int(timesteps[0].item()) if hasattr(timesteps[0], "item") else int(timesteps[0])
     ]
@@ -152,6 +160,7 @@ def sample_with_trajectory(
         )[0]
 
         noise_uncond, noise_text = noise_pred.chunk(2)
+        target_eps.append(noise_text.detach().cpu())
         noise_pred = noise_uncond + guidance_scale * (noise_text - noise_uncond)
 
         latents = pipe.scheduler.step(
@@ -165,7 +174,43 @@ def sample_with_trajectory(
         pred_noises.append(noise_pred.detach().cpu())
         timestep_values.append(int(t.item()) if hasattr(t, "item") else int(t))
 
-    return latents, trajectory, pred_noises, timestep_values
+    return latents, trajectory, pred_noises, target_eps, cond, timestep_values
+
+
+def save_training_cache(
+    conditioning: Dict[str, torch.Tensor],
+    target_eps: List[torch.Tensor] | torch.Tensor,
+    sample_dir: Path,
+    cfg: DictConfig,
+) -> tuple[Path, Path, int]:
+    """Persist cached conditioning and target noise for LoRA inversion training."""
+    conditioning_path = sample_dir / str(
+        OmegaConf.select(cfg, "conditioning_file_name", default="conditioning.pt")
+    )
+    targets_dir = sample_dir / str(
+        OmegaConf.select(cfg, "targets_dir_name", default="targets")
+    )
+    target_eps_path = targets_dir / str(
+        OmegaConf.select(cfg, "target_eps_file_name", default="target_eps.pt")
+    )
+    targets_dir.mkdir(parents=True, exist_ok=True)
+
+    torch.save(
+        {
+            "prompt_embeds": conditioning["prompt_embeds"].detach().cpu(),
+            "pooled_prompt_embeds": conditioning["pooled_prompt_embeds"].detach().cpu(),
+            "add_time_ids": conditioning["add_time_ids"].detach().cpu(),
+        },
+        conditioning_path,
+    )
+
+    if isinstance(target_eps, torch.Tensor):
+        target_eps_tensor = target_eps.detach().cpu()
+    else:
+        target_eps_tensor = torch.cat([eps.detach().cpu() for eps in target_eps], dim=0)
+    torch.save(target_eps_tensor, target_eps_path)
+
+    return conditioning_path, target_eps_path, int(target_eps_tensor.shape[0])
 
 
 def save_latent_trajectory(
@@ -224,21 +269,28 @@ def save_sample(
     if gather_cfg.save_latents:
         latents_dir.mkdir(parents=True, exist_ok=True)
 
-    if gather_cfg.save_noises:
+    save_pred_noises = bool(OmegaConf.select(gather_cfg, "save_pred_noises", default=False))
+    save_training_cache_enabled = bool(
+        OmegaConf.select(gather_cfg, "save_training_cache", default=True)
+    )
+
+    if save_pred_noises:
         pred_noises_dir.mkdir(parents=True, exist_ok=True)
 
     prompt = record["prompt"]
     seed = gather_cfg.seed + sample_idx
 
-    final_latent, trajectory, pred_noises, timestep_values = sample_with_trajectory(
-        pipe=pipe,
-        prompt=prompt,
-        negative_prompt=gather_cfg.negative_prompt,
-        num_inference_steps=model_cfg.num_inference_steps,
-        guidance_scale=model_cfg.guidance_scale,
-        height=model_cfg.height,
-        width=model_cfg.width,
-        seed=seed,
+    final_latent, trajectory, pred_noises, target_eps, conditioning, timestep_values = (
+        sample_with_trajectory(
+            pipe=pipe,
+            prompt=prompt,
+            negative_prompt=gather_cfg.negative_prompt,
+            num_inference_steps=model_cfg.num_inference_steps,
+            guidance_scale=model_cfg.guidance_scale,
+            height=model_cfg.height,
+            width=model_cfg.width,
+            seed=seed,
+        )
     )
 
     if gather_cfg.save_final_image:
@@ -249,9 +301,24 @@ def save_sample(
     if gather_cfg.save_latents:
         latents_format = save_latent_trajectory(trajectory, latents_dir, gather_cfg)
 
-    if gather_cfg.save_pred_noises:
+    if save_pred_noises:
         for i, noise in enumerate(pred_noises):
             torch.save(noise, pred_noises_dir / f"noise_{i:03d}.pt")
+
+    training_cache_meta = None
+    if save_training_cache_enabled:
+        conditioning_path, target_eps_path, target_eps_length = save_training_cache(
+            conditioning,
+            target_eps,
+            sample_dir,
+            gather_cfg,
+        )
+        training_cache_meta = {
+            "conditioning_file": conditioning_path.name,
+            "targets_dir": target_eps_path.parent.name,
+            "target_eps_file": target_eps_path.name,
+            "target_eps_length": target_eps_length,
+        }
 
     if gather_cfg.save_prompt:
         with (sample_dir / "prompt.json").open("w", encoding="utf-8") as f:
@@ -271,6 +338,8 @@ def save_sample(
     }
     if latents_format is not None:
         meta["latents_format"] = latents_format
+    if training_cache_meta is not None:
+        meta["training_cache"] = training_cache_meta
     if gather_cfg.save_meta:
         with (sample_dir / "meta.json").open("w", encoding="utf-8") as f:
             json.dump(meta, f, indent=2, ensure_ascii=False)
