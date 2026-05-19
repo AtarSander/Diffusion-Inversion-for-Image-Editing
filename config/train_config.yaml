@@ -1,4 +1,5 @@
 defaults:
   - data: recap_coco
   - model: sdxl
+  - train: sdxl_lora
   - _self_

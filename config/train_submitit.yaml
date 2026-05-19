@@ -1,0 +1,4 @@
+defaults:
+  - train_config
+  - override /hydra/launcher: plgrid_train_submitit_slurm
+  - _self_
