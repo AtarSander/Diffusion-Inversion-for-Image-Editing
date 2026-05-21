@@ -47,6 +47,14 @@ validation_preview:
   num_samples: 2
   output_dir: null
   use_lora_for_reconstruction: false
+  plain_threshold: 0.025
+  log_predicted_noise: true
+  noise_inversion_steps:
+    - 0
+    - 24
+    - 49
+  log_inverted_noise: true
+  calculate_lpips: false
 
 wandb:
   mode: disabled
