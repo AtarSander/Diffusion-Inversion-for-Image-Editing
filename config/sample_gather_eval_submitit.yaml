@@ -7,9 +7,9 @@ job_id: 0
 job_specs:
   - start_index: 0
     num_samples: 1522
-    prompts_jsonl: /net/tscratch/people/plgatarsander/ZZSN_data/processed/recap_coco/val.jsonl
-    output_dir: /net/tscratch/people/plgatarsander/ZZSN_data/processed/sdxl_trajectories_stacked/val
+    prompts_jsonl: /net/tscratch/people/plgmichalsadowski/ZZSN_data/processed/recap_coco/val.jsonl
+    output_dir: /net/tscratch/people/plgmichalsadowski/ZZSN_data/processed/sdxl_trajectories_stacked/val
   - start_index: 0
     num_samples: 1523
-    prompts_jsonl: /net/tscratch/people/plgatarsander/ZZSN_data/processed/recap_coco/test.jsonl
-    output_dir: /net/tscratch/people/plgatarsander/ZZSN_data/processed/sdxl_trajectories_stacked/test
+    prompts_jsonl: /net/tscratch/people/plgmichalsadowski/ZZSN_data/processed/recap_coco/test.jsonl
+    output_dir: /net/tscratch/people/plgmichalsadowski/ZZSN_data/processed/sdxl_trajectories_stacked/test

@@ -1,48 +1,40 @@
-"""Validation preview rendering for SDXL inversion LoRA training."""
+"""Optional validation previews for SDXL inversion LoRA training."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 from pathlib import Path
 from typing import Any
 
+import torch
 from hydra.utils import to_absolute_path
 from loguru import logger
-from omegaconf import DictConfig
-from PIL import Image, ImageChops, ImageDraw
-import torch
+from omegaconf import DictConfig, OmegaConf
+from PIL import Image, ImageDraw
 
 from diff_inversion.data.generate_sdxl_samples import (
     decode_latent_to_pil,
     encode_prompt_sdxl,
 )
-from diff_inversion.eval.previews import channel_grid_image, fit_panel, write_noise_images
-from diff_inversion.eval.sample_metrics import (
-    image_pair_metrics,
-    load_rgb_tensor,
-    pair_metrics,
+from diff_inversion.eval.previews import (
+    channel_grid_image,
+    fit_panel,
+    pca_rgb_image,
+    write_image_comparison,
+    write_noise_images,
 )
+from diff_inversion.eval.sample_metrics import image_pair_metrics, load_rgb_tensor, pair_metrics
 from diff_inversion.modeling.sdxl_sampling import (
     invert_latent_sdxl,
     reconstruct_latent_sdxl,
 )
 
 
-@dataclass
-class PreviewResult:
-    reconstruction: Image.Image
-    reconstructed_image: Image.Image
-    inverted_noise: torch.Tensor
-    noise_predictions: list[tuple[int, Image.Image]]
-    metrics: dict[str, float]
-
-
-def should_run_validation_preview(cfg: DictConfig, epoch: int) -> bool:
-    if not bool(cfg.validation_preview.enabled):
+def should_run_validation_preview(cfg: DictConfig, global_step: int) -> bool:
+    if not bool(OmegaConf.select(cfg, "validation_preview.enabled", default=False)):
         return False
-    frequency = int(cfg.validation_preview.every_epochs)
-    return frequency > 0 and (epoch + 1) % frequency == 0
+    every_steps = int(OmegaConf.select(cfg, "validation_preview.every_steps", default=0))
+    return every_steps > 0 and global_step > 0 and global_step % every_steps == 0
 
 
 @torch.no_grad()
@@ -52,138 +44,90 @@ def log_validation_preview(
     cfg: DictConfig,
     tracker: Any | None,
     checkpoint_dir: Path,
-    epoch: int,
     global_step: int,
 ) -> None:
-    sample_dirs = _validation_preview_sample_dirs(cfg)
+    sample_dirs = _sample_dirs(cfg)
     if not sample_dirs:
-        logger.warning("Validation preview skipped: no sample directories found")
+        logger.warning("Validation preview skipped: no validation sample directories found")
         return
 
-    preview_dir = _validation_preview_output_dir(cfg, checkpoint_dir, epoch)
+    preview_dir = _preview_dir(cfg, checkpoint_dir, global_step)
     preview_dir.mkdir(parents=True, exist_ok=True)
 
     original_scheduler = pipe.scheduler
     was_training = pipe.unet.training
     pipe.unet.eval()
-    wandb_reconstruction_images = []
-    wandb_noise_images = []
-    wandb_inverted_noise_images = []
+
     metric_rows: list[dict[str, float]] = []
+    reconstruction_images = []
+    noise_prediction_images = []
+    inverted_noise_images = []
 
     try:
         for sample_dir in sample_dirs:
             try:
-                result = _render_validation_preview(
+                row, images = _render_sample_preview(
                     pipe=pipe,
                     cfg=cfg,
                     sample_dir=sample_dir,
+                    preview_dir=preview_dir,
                     original_scheduler=original_scheduler,
                 )
             except Exception as exc:
                 logger.warning("Validation preview failed for {}: {}", sample_dir, exc)
                 continue
 
-            output_path = preview_dir / f"{sample_dir.name}.png"
-            reconstructed_path = preview_dir / f"{sample_dir.name}_reconstructed.png"
-            result.reconstruction.save(output_path)
-            result.reconstructed_image.save(reconstructed_path)
-            logger.info("Saved validation preview: {}", output_path)
-
-            image_metrics = image_pair_metrics(
-                reference_path=sample_dir / "final.png",
-                candidate_path=reconstructed_path,
-                plain_threshold=float(cfg.validation_preview.plain_threshold),
-            )
-            if bool(cfg.validation_preview.calculate_lpips):
-                image_metrics["lpips"] = _lpips_distance(
-                    sample_dir / "final.png",
-                    reconstructed_path,
-                    device=pipe.device,
-                )
-            for key, value in image_metrics.items():
-                if isinstance(value, bool) or value is None:
-                    continue
-                result.metrics[f"reconstruction/{key}"] = float(value)
-            metric_rows.append(result.metrics)
-
-            for inversion_step, noise_image in result.noise_predictions:
-                noise_path = preview_dir / (
-                    f"{sample_dir.name}_noise_pred_step_{inversion_step:03d}.png"
-                )
-                noise_image.save(noise_path)
-
-            if bool(cfg.validation_preview.log_inverted_noise):
-                inverted_noise_path = preview_dir / f"{sample_dir.name}_inverted_noise.png"
-                write_noise_images(
-                    inverted_noise_path,
-                    initial_noise=_load_initial_noise(cfg, sample_dir),
-                    inverted_noise=_squeeze_saved_batch(result.inverted_noise),
-                    final_image_path=sample_dir / "final.png",
-                )
-
+            metric_rows.append(row)
             if tracker is not None:
-                wandb_image = _make_wandb_image(
-                    result.reconstruction,
-                    caption=f"epoch {epoch + 1}: {sample_dir.name}",
+                _append_wandb_images(
+                    reconstruction_images,
+                    images["reconstruction"],
+                    f"step {global_step}: {sample_dir.name}",
                 )
-                if wandb_image is not None:
-                    wandb_reconstruction_images.append(wandb_image)
-
-                for inversion_step, noise_image in result.noise_predictions:
-                    wandb_noise_image = _make_wandb_image(
-                        noise_image,
-                        caption=(
-                            f"epoch {epoch + 1}: {sample_dir.name}, "
-                            f"inversion_step={inversion_step}"
-                        ),
-                    )
-                    if wandb_noise_image is not None:
-                        wandb_noise_images.append(wandb_noise_image)
-
-                if bool(cfg.validation_preview.log_inverted_noise):
-                    inverted_image = _make_inverted_noise_preview(
-                        cfg=cfg,
-                        sample_dir=sample_dir,
-                        inverted_noise=result.inverted_noise,
-                    )
-                    wandb_inverted_noise_image = _make_wandb_image(
-                        inverted_image,
-                        caption=f"epoch {epoch + 1}: {sample_dir.name}, inverted noise",
-                    )
-                    if wandb_inverted_noise_image is not None:
-                        wandb_inverted_noise_images.append(wandb_inverted_noise_image)
+                _append_wandb_images(
+                    noise_prediction_images,
+                    images["noise_prediction"],
+                    f"step {global_step}: {sample_dir.name}, noise prediction",
+                )
+                _append_wandb_images(
+                    inverted_noise_images,
+                    images["inverted_noise"],
+                    f"step {global_step}: {sample_dir.name}, inverted noise",
+                )
     finally:
         pipe.scheduler = original_scheduler
         _set_lora_enabled(pipe, True)
         pipe.unet.train(was_training)
 
-    scalar_payload = _mean_metrics(metric_rows)
-    log_payload: dict[str, Any] = dict(scalar_payload)
-    if tracker is not None:
-        if wandb_reconstruction_images:
-            log_payload["val/preview"] = wandb_reconstruction_images
-        if wandb_noise_images:
-            log_payload["val/noise_prediction_preview"] = wandb_noise_images
-        if wandb_inverted_noise_images:
-            log_payload["val/inverted_noise_preview"] = wandb_inverted_noise_images
+    payload: dict[str, Any] = _mean_metrics(metric_rows)
+    if reconstruction_images:
+        payload["val_preview/reconstruction"] = reconstruction_images
+    if noise_prediction_images:
+        payload["val_preview/noise_prediction"] = noise_prediction_images
+    if inverted_noise_images:
+        payload["val_preview/inverted_noise"] = inverted_noise_images
 
-    if log_payload:
-        logger.info("Validation preview metrics: {}", scalar_payload)
-        if tracker is not None:
-            tracker.log(log_payload, step=global_step)
+    if payload and tracker is not None:
+        tracker.log(payload, step=global_step)
+    if metric_rows:
+        logger.info("Validation preview metrics: {}", _mean_metrics(metric_rows))
 
 
-def _render_validation_preview(
+def _render_sample_preview(
     *,
     pipe,
     cfg: DictConfig,
     sample_dir: Path,
+    preview_dir: Path,
     original_scheduler,
-) -> PreviewResult:
+) -> tuple[dict[str, float], dict[str, list[Path]]]:
+    trajectory = _load_trajectory(cfg, sample_dir)
+    target_eps = _load_target_eps(cfg, sample_dir)
+    timesteps = _read_json(sample_dir / "timesteps.json")
+    final_image_path = sample_dir / str(
+        OmegaConf.select(cfg, "validation_preview.final_image_name", default="final.png")
+    )
     prompt = _read_prompt(sample_dir)
-    final_latent = _load_final_latent(pipe, cfg, sample_dir)
-    final_image = Image.open(sample_dir / "final.png").convert("RGB")
     cond = encode_prompt_sdxl(
         pipe=pipe,
         prompt=prompt,
@@ -192,28 +136,73 @@ def _render_validation_preview(
         width=int(cfg.model.width),
     )
 
-    _set_lora_enabled(pipe, True)
-    noise_predictions = []
-    noise_metrics = {}
-    if bool(cfg.validation_preview.log_predicted_noise):
-        noise_predictions, noise_metrics = _predict_noise_previews(
+    images: dict[str, list[Path]] = {
+        "reconstruction": [],
+        "noise_prediction": [],
+        "inverted_noise": [],
+    }
+    metrics: dict[str, float] = {}
+
+    if bool(OmegaConf.select(cfg, "validation_preview.log_predicted_noise", default=True)):
+        noise_images, noise_metrics = _write_noise_prediction_previews(
             pipe=pipe,
             cfg=cfg,
             sample_dir=sample_dir,
-            prompt=prompt,
+            preview_dir=preview_dir,
+            trajectory=trajectory,
+            target_eps=target_eps,
+            timesteps=timesteps,
         )
+        images["noise_prediction"].extend(noise_images)
+        metrics.update(noise_metrics)
 
+    _set_lora_enabled(pipe, True)
     inverted_noise = invert_latent_sdxl(
         pipe=pipe,
-        final_latent=final_latent,
+        final_latent=_squeeze_batch(trajectory[-1]).unsqueeze(0),
         cond=cond,
         scheduler_config=original_scheduler.config,
         num_inference_steps=int(cfg.model.num_inference_steps),
         guidance_scale=float(cfg.model.guidance_scale),
     )
+    metrics.update(
+        {
+            f"inverted_noise/{key}": value
+            for key, value in pair_metrics(
+                _squeeze_batch(trajectory[0]).float(),
+                _squeeze_batch(inverted_noise.detach().cpu()).float(),
+            ).items()
+        }
+    )
+
+    if bool(OmegaConf.select(cfg, "validation_preview.log_inverted_noise", default=True)):
+        inverted_preview = preview_dir / f"{sample_dir.name}_inverted_noise.png"
+        noise_paths = write_noise_images(
+            inverted_preview,
+            initial_noise=_squeeze_batch(trajectory[0]).float(),
+            inverted_noise=_squeeze_batch(inverted_noise.detach().cpu()).float(),
+            final_image_path=final_image_path,
+        )
+        images["inverted_noise"].append(inverted_preview)
+        for key in (
+            "pca_input_noise_image_path",
+            "pca_inverted_noise_image_path",
+            "pca_abs_error_image_path",
+        ):
+            if key in noise_paths:
+                images["inverted_noise"].append(Path(noise_paths[key]))
 
     pipe.scheduler = original_scheduler
-    _set_lora_enabled(pipe, bool(cfg.validation_preview.use_lora_for_reconstruction))
+    _set_lora_enabled(
+        pipe,
+        bool(
+            OmegaConf.select(
+                cfg,
+                "validation_preview.use_lora_for_reconstruction",
+                default=False,
+            )
+        ),
+    )
     reconstructed_latent, _ = reconstruct_latent_sdxl(
         pipe=pipe,
         noise_latent=inverted_noise,
@@ -226,79 +215,84 @@ def _render_validation_preview(
         reconstructed_latent.to(device=pipe.device),
     ).convert("RGB")
 
-    if reconstructed_image.size != final_image.size:
-        reconstructed_image = reconstructed_image.resize(final_image.size)
-    abs_error = ImageChops.difference(final_image, reconstructed_image)
-    reconstruction = _make_preview_grid(final_image, reconstructed_image, abs_error)
+    reconstructed_path = preview_dir / f"{sample_dir.name}_reconstructed.png"
+    reconstructed_image.save(reconstructed_path)
 
-    metrics = {
-        **noise_metrics,
-        **_inverted_noise_metrics(cfg, sample_dir, inverted_noise),
-    }
-    return PreviewResult(
-        reconstruction=reconstruction,
-        reconstructed_image=reconstructed_image,
-        inverted_noise=inverted_noise.detach().cpu(),
-        noise_predictions=noise_predictions,
-        metrics=metrics,
-    )
+    if final_image_path.exists():
+        comparison_path = preview_dir / f"{sample_dir.name}_reconstruction.png"
+        write_image_comparison(
+            comparison_path,
+            final_image_path=final_image_path,
+            reconstructed_image_path=reconstructed_path,
+            plain_threshold=float(
+                OmegaConf.select(cfg, "validation_preview.plain_threshold", default=0.03)
+            ),
+        )
+        images["reconstruction"].append(comparison_path)
+        image_metrics = image_pair_metrics(
+            reference_path=final_image_path,
+            candidate_path=reconstructed_path,
+            plain_threshold=float(
+                OmegaConf.select(cfg, "validation_preview.plain_threshold", default=0.03)
+            ),
+        )
+        if bool(OmegaConf.select(cfg, "validation_preview.calculate_lpips", default=False)):
+            image_metrics["lpips"] = _lpips_distance(
+                reference_path=final_image_path,
+                candidate_path=reconstructed_path,
+                device=pipe.device,
+            )
+        metrics.update(_prefix_numeric("reconstruction", image_metrics))
+
+    return metrics, images
 
 
 @torch.no_grad()
-def _predict_noise_previews(
+def _write_noise_prediction_previews(
     *,
     pipe,
     cfg: DictConfig,
     sample_dir: Path,
-    prompt: str,
-) -> tuple[list[tuple[int, Image.Image]], dict[str, float]]:
-    latent_paths = sorted((sample_dir / str(cfg.data.latents_dir_name)).glob("x_*.pt"))
-    pred_noise_paths = sorted((sample_dir / str(cfg.data.pred_noises_dir_name)).glob("noise_*.pt"))
-    timesteps = _read_json(sample_dir / "timesteps.json")
-    if len(latent_paths) < 2 or len(pred_noise_paths) != len(latent_paths) - 1:
-        return [], {}
-
-    cond = encode_prompt_sdxl(
-        pipe=pipe,
-        prompt=prompt,
-        negative_prompt="",
-        height=int(cfg.model.height),
-        width=int(cfg.model.width),
-        do_classifier_free_guidance=False,
-    )
-    prompt_embeds = cond["prompt_embeds"].to(device=pipe.device, dtype=pipe.unet.dtype)
-    pooled_prompt_embeds = cond["pooled_prompt_embeds"].to(
+    preview_dir: Path,
+    trajectory: torch.Tensor,
+    target_eps: torch.Tensor,
+    timesteps: list[int],
+) -> tuple[list[Path], dict[str, float]]:
+    cond = torch.load(_conditioning_path(cfg, sample_dir), map_location="cpu")
+    prompt_embeds = _ensure_batch(cond["prompt_embeds"]).to(
         device=pipe.device,
         dtype=pipe.unet.dtype,
     )
-    add_time_ids = cond["add_time_ids"].to(device=pipe.device, dtype=pipe.unet.dtype)
+    pooled_prompt_embeds = _ensure_batch(cond["pooled_prompt_embeds"]).to(
+        device=pipe.device,
+        dtype=pipe.unet.dtype,
+    )
+    add_time_ids = _ensure_batch(cond["add_time_ids"]).to(
+        device=pipe.device,
+        dtype=pipe.unet.dtype,
+    )
 
-    images: list[tuple[int, Image.Image]] = []
-    rows: list[dict[str, float]] = []
-    num_steps = len(pred_noise_paths)
-    for inversion_step in list(cfg.validation_preview.noise_inversion_steps):
+    num_steps = int(target_eps.shape[0])
+    preview_paths: list[Path] = []
+    metric_rows: list[dict[str, float]] = []
+    for inversion_step in list(
+        OmegaConf.select(cfg, "validation_preview.noise_inversion_steps", default=[0, 10, 25, 49])
+    ):
         inversion_step = int(inversion_step)
         if inversion_step < 0 or inversion_step >= num_steps:
             continue
 
         step_idx = num_steps - 1 - inversion_step
-        input_latent = torch.load(
-            latent_paths[step_idx + 1],
-            map_location="cpu",
-            weights_only=True,
-        ).to(
+        timestep = _transition_timestep(timesteps, step_idx, int(trajectory.shape[0]))
+        latent = _squeeze_batch(trajectory[step_idx + 1]).unsqueeze(0).to(
             device=pipe.device,
             dtype=pipe.unet.dtype,
         )
-        input_latent = _squeeze_saved_batch(input_latent).unsqueeze(0)
-        target_eps = _squeeze_saved_batch(
-            torch.load(pred_noise_paths[step_idx], map_location="cpu", weights_only=True)
-        ).float()
-        timestep = torch.tensor([int(timesteps[step_idx])], device=pipe.device)
-
+        scheduler_timestep = torch.tensor([timestep], device=pipe.device)
+        model_input = pipe.scheduler.scale_model_input(latent, scheduler_timestep)
         pred_eps = pipe.unet(
-            input_latent,
-            timestep,
+            model_input,
+            scheduler_timestep,
             encoder_hidden_states=prompt_embeds,
             added_cond_kwargs={
                 "text_embeds": pooled_prompt_embeds,
@@ -306,49 +300,112 @@ def _predict_noise_previews(
             },
             return_dict=False,
         )[0]
-        pred_eps = _squeeze_saved_batch(pred_eps.detach().cpu())
-        image = _make_noise_prediction_grid(target_eps, pred_eps)
-        images.append((inversion_step, image))
 
-        row = {
-            f"noise_pred/inversion_step_{inversion_step:03d}/{key}": value
-            for key, value in pair_metrics(target_eps.float(), pred_eps.float()).items()
-        }
-        rows.append(row)
+        target = _squeeze_batch(target_eps[step_idx]).float()
+        predicted = _squeeze_batch(pred_eps.detach().cpu()).float()
+        preview_path = preview_dir / (
+            f"{sample_dir.name}_noise_pred_inv_step_{inversion_step:03d}.png"
+        )
+        _write_noise_prediction_grid(preview_path, target, predicted)
+        preview_paths.append(preview_path)
+        metric_rows.append(
+            {
+                f"noise_prediction/inversion_step_{inversion_step:03d}/{key}": value
+                for key, value in pair_metrics(target, predicted).items()
+            }
+        )
 
-    return images, _average_metric_rows(rows)
+    return preview_paths, _average_metrics(metric_rows)
 
 
-def _validation_preview_sample_dirs(cfg: DictConfig) -> list[Path]:
-    if not cfg.data.val_root_dir:
+def _write_noise_prediction_grid(
+    output_path: Path,
+    target_eps: torch.Tensor,
+    pred_eps: torch.Tensor,
+) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    error = (pred_eps - target_eps).abs()
+    combined = torch.cat([target_eps.flatten(), pred_eps.flatten()])
+    vmin = float(combined.quantile(0.01).item())
+    vmax = float(combined.quantile(0.99).item())
+    error_vmax = float(error.quantile(0.99).item())
+
+    pca_target, components = pca_rgb_image(target_eps)
+    pca_pred, _ = pca_rgb_image(pred_eps, components=components)
+    pca_error, _ = pca_rgb_image(error)
+    panels = [
+        ("target eps", channel_grid_image(target_eps, vmin, vmax)),
+        ("pred eps", channel_grid_image(pred_eps, vmin, vmax)),
+        ("abs error", channel_grid_image(error, 0.0, max(error_vmax, 1e-8))),
+        ("target eps PCA", pca_target),
+        ("pred eps PCA", pca_pred),
+        ("abs error PCA", pca_error),
+    ]
+
+    panel_size = panels[0][1].size
+    label_height = 20
+    canvas = Image.new(
+        "RGB",
+        (panel_size[0] * len(panels), panel_size[1] + label_height),
+        color="white",
+    )
+    draw = ImageDraw.Draw(canvas)
+    for idx, (label, image) in enumerate(panels):
+        x = idx * panel_size[0]
+        draw.text((x + 4, 4), label, fill="black")
+        canvas.paste(fit_panel(image, panel_size), (x, label_height))
+    canvas.save(output_path)
+
+
+def _sample_dirs(cfg: DictConfig) -> list[Path]:
+    val_root = OmegaConf.select(cfg, "data.val_root_dir")
+    if not val_root:
         return []
-    val_root = _resolve_path(cfg.data.val_root_dir)
-    sample_dirs = sorted(path for path in val_root.glob("sample_*") if path.is_dir())
-    return sample_dirs[: int(cfg.validation_preview.num_samples)]
+    limit = int(OmegaConf.select(cfg, "validation_preview.num_samples", default=2))
+    sample_dirs = sorted(
+        path for path in _resolve_path(val_root).glob("sample_*") if path.is_dir()
+    )
+    return sample_dirs[:limit]
 
 
-def _validation_preview_output_dir(
-    cfg: DictConfig,
-    checkpoint_dir: Path,
-    epoch: int,
-) -> Path:
-    output_dir = cfg.validation_preview.output_dir
+def _preview_dir(cfg: DictConfig, checkpoint_dir: Path, global_step: int) -> Path:
+    output_dir = OmegaConf.select(cfg, "validation_preview.output_dir")
     if output_dir:
-        return _resolve_path(output_dir) / f"epoch_{epoch + 1:03d}"
-    return checkpoint_dir / "previews" / f"epoch_{epoch + 1:03d}"
+        return _resolve_path(output_dir) / f"step_{global_step:07d}"
+    return checkpoint_dir / "previews" / f"step_{global_step:07d}"
 
 
-def _load_final_latent(pipe, cfg: DictConfig, sample_dir: Path) -> torch.Tensor:
-    latent_paths = sorted((sample_dir / str(cfg.data.latents_dir_name)).glob("x_*.pt"))
+def _load_trajectory(cfg: DictConfig, sample_dir: Path) -> torch.Tensor:
+    latents_dir = sample_dir / str(
+        OmegaConf.select(cfg, "data.latents_dir_name", default="latents")
+    )
+    trajectory_path = latents_dir / str(
+        OmegaConf.select(cfg, "data.latents_file_name", default="trajectory.pt")
+    )
+    if trajectory_path.exists():
+        return torch.load(trajectory_path, map_location="cpu")
+
+    latent_paths = sorted(latents_dir.glob("x_*.pt"))
     if not latent_paths:
-        raise FileNotFoundError(f"No latent files found in {sample_dir}")
-    latent = torch.load(latent_paths[-1], map_location="cpu", weights_only=True)
-    return latent.to(device=pipe.device, dtype=pipe.unet.dtype)
+        raise FileNotFoundError(f"No latent trajectory found in {latents_dir}")
+    return torch.stack([torch.load(path, map_location="cpu") for path in latent_paths], dim=0)
+
+
+def _load_target_eps(cfg: DictConfig, sample_dir: Path) -> torch.Tensor:
+    path = sample_dir / str(OmegaConf.select(cfg, "data.targets_dir_name", default="targets"))
+    path = path / str(OmegaConf.select(cfg, "data.target_eps_file_name", default="target_eps.pt"))
+    return torch.load(path, map_location="cpu")
+
+
+def _conditioning_path(cfg: DictConfig, sample_dir: Path) -> Path:
+    return sample_dir / str(
+        OmegaConf.select(cfg, "data.conditioning_file_name", default="conditioning.pt")
+    )
 
 
 def _read_prompt(sample_dir: Path) -> str:
     with (sample_dir / "prompt.json").open("r", encoding="utf-8") as f:
-        return str(json.load(f)["prompt"])
+        return str(json.load(f).get("prompt", ""))
 
 
 def _read_json(path: Path) -> Any:
@@ -356,173 +413,96 @@ def _read_json(path: Path) -> Any:
         return json.load(f)
 
 
-def _squeeze_saved_batch(tensor: torch.Tensor) -> torch.Tensor:
-    if tensor.ndim == 4 and tensor.shape[0] == 1:
-        return tensor.squeeze(0)
+def _transition_timestep(timesteps: list[int], step_idx: int, trajectory_length: int) -> int:
+    if len(timesteps) == trajectory_length:
+        return int(timesteps[step_idx + 1])
+    if len(timesteps) == trajectory_length - 1:
+        return int(timesteps[step_idx])
+    raise ValueError(
+        "Unexpected timestep count for trajectory: "
+        f"got {len(timesteps)}, expected {trajectory_length} or {trajectory_length - 1}"
+    )
+
+
+def _squeeze_batch(tensor: torch.Tensor) -> torch.Tensor:
+    while tensor.ndim >= 4 and tensor.shape[0] == 1:
+        tensor = tensor.squeeze(0)
     return tensor
 
 
-def _load_initial_noise(cfg: DictConfig, sample_dir: Path) -> torch.Tensor:
-    return _squeeze_saved_batch(
-        torch.load(
-            sample_dir / str(cfg.data.latents_dir_name) / "x_000.pt",
-            map_location="cpu",
-            weights_only=True,
-        )
-    ).float()
-
-
-def _inverted_noise_metrics(
-    cfg: DictConfig,
-    sample_dir: Path,
-    inverted_noise: torch.Tensor,
-) -> dict[str, float]:
-    initial_noise = _load_initial_noise(cfg, sample_dir)
-    inverted_noise = _squeeze_saved_batch(inverted_noise.detach().cpu()).float()
-
-    return {
-        f"inverted_noise/{key}": value
-        for key, value in pair_metrics(initial_noise, inverted_noise).items()
-    }
-
-
-def _make_noise_prediction_grid(target_eps: torch.Tensor, pred_eps: torch.Tensor) -> Image.Image:
-    target_eps = _squeeze_saved_batch(target_eps).float().cpu()
-    pred_eps = _squeeze_saved_batch(pred_eps).float().cpu()
-    error = (pred_eps - target_eps).abs()
-
-    combined = torch.cat([target_eps.flatten(), pred_eps.flatten()])
-    vmin = float(combined.quantile(0.01).item())
-    vmax = float(combined.quantile(0.99).item())
-    error_vmax = float(error.quantile(0.99).item())
-
-    panels = [
-        ("target eps", channel_grid_image(target_eps, vmin, vmax)),
-        ("pred eps", channel_grid_image(pred_eps, vmin, vmax)),
-        ("abs error", channel_grid_image(error, 0.0, max(error_vmax, 1e-8))),
-    ]
-    return _make_labeled_grid(panels)
-
-
-def _make_inverted_noise_preview(
-    cfg: DictConfig,
-    sample_dir: Path,
-    inverted_noise: torch.Tensor,
-) -> Image.Image:
-    initial_noise = _load_initial_noise(cfg, sample_dir)
-    inverted_noise = _squeeze_saved_batch(inverted_noise.detach().cpu()).float()
-    error = (inverted_noise - initial_noise).abs()
-    combined = torch.cat([initial_noise.flatten(), inverted_noise.flatten()])
-    vmin = float(combined.quantile(0.01).item())
-    vmax = float(combined.quantile(0.99).item())
-    error_vmax = float(error.quantile(0.99).item())
-
-    input_image = channel_grid_image(initial_noise, vmin, vmax)
-    panels = []
-    final_image_path = sample_dir / "final.png"
-    if final_image_path.exists():
-        with Image.open(final_image_path) as image:
-            panels.append(("final", fit_panel(image.convert("RGB"), input_image.size)))
-    panels.extend(
-        [
-            ("initial noise", input_image),
-            ("inverted noise", channel_grid_image(inverted_noise, vmin, vmax)),
-            ("abs error", channel_grid_image(error, 0.0, max(error_vmax, 1e-8))),
-        ]
-    )
-    return _make_labeled_grid(panels)
-
-
-def _make_labeled_grid(panels: list[tuple[str, Image.Image]]) -> Image.Image:
-    label_height = 24
-    panel_width, panel_height = panels[0][1].size
-    grid = Image.new(
-        "RGB",
-        (panel_width * len(panels), panel_height + label_height),
-        "white",
-    )
-    draw = ImageDraw.Draw(grid)
-    for idx, (label, image) in enumerate(panels):
-        x = idx * panel_width
-        draw.text((x + 6, 6), label, fill=(0, 0, 0))
-        grid.paste(image.convert("RGB"), (x, label_height))
-    return grid
-
-
-def _make_preview_grid(
-    final_image: Image.Image,
-    reconstructed_image: Image.Image,
-    abs_error: Image.Image,
-) -> Image.Image:
-    width, height = final_image.size
-    label_height = 28
-    grid = Image.new("RGB", (width * 3, height + label_height), "white")
-    draw = ImageDraw.Draw(grid)
-    panels = [
-        ("final", final_image),
-        ("reconstructed", reconstructed_image),
-        ("abs_error", abs_error),
-    ]
-    for idx, (label, image) in enumerate(panels):
-        x = idx * width
-        draw.text((x + 8, 8), label, fill=(0, 0, 0))
-        grid.paste(image, (x, label_height))
-    return grid
+def _ensure_batch(tensor: torch.Tensor) -> torch.Tensor:
+    if tensor.ndim > 0 and tensor.shape[0] == 1:
+        return tensor
+    return tensor.unsqueeze(0)
 
 
 def _set_lora_enabled(pipe, enabled: bool) -> None:
-    if enabled and hasattr(pipe.unet, "enable_adapters"):
-        pipe.unet.enable_adapters()
-    elif not enabled and hasattr(pipe.unet, "disable_adapters"):
-        pipe.unet.disable_adapters()
+    toggled = False
+    for module in pipe.unet.modules():
+        if module is pipe.unet:
+            continue
+        if hasattr(module, "enable_adapters"):
+            module.enable_adapters(enabled)
+            toggled = True
+    if not toggled:
+        logger.warning("No LoRA adapter layers exposed enable_adapters(); preview toggle skipped")
 
 
-def _make_wandb_image(image: Image.Image, caption: str):
-    try:
-        import wandb
-    except ModuleNotFoundError:
-        return None
-    return wandb.Image(image, caption=caption)
-
-
-def _mean_metrics(rows: list[dict[str, float]]) -> dict[str, float]:
-    return {f"val_preview/{key}": value for key, value in _average_metric_rows(rows).items()}
-
-
-def _average_metric_rows(rows: list[dict[str, float]]) -> dict[str, float]:
-    grouped: dict[str, list[float]] = {}
-    for row in rows:
-        for key, value in row.items():
-            if isinstance(value, bool) or value is None:
-                continue
-            numeric_value = float(value)
-            if torch.isfinite(torch.tensor(numeric_value)).item():
-                grouped.setdefault(key, []).append(numeric_value)
-    return {key: sum(values) / len(values) for key, values in grouped.items() if values}
+def _prefix_numeric(prefix: str, metrics: dict[str, Any]) -> dict[str, float]:
+    return {
+        f"{prefix}/{key}": float(value)
+        for key, value in metrics.items()
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+    }
 
 
 def _lpips_distance(reference_path: Path, candidate_path: Path, device) -> float | None:
     try:
         from diff_inversion.eval.diversity import lpips_calculate_distances
     except ModuleNotFoundError as exc:
-        logger.warning("LPIPS is not available; skipping validation preview LPIPS: {}", exc)
+        logger.warning("LPIPS unavailable for validation preview: {}", exc)
         return None
 
     try:
         with Image.open(reference_path) as reference_image:
             reference_size = reference_image.size
-
         reference = load_rgb_tensor(reference_path).unsqueeze(0)
         candidate = load_rgb_tensor(candidate_path, size=reference_size).unsqueeze(0)
         distance = lpips_calculate_distances(reference, candidate, device=torch.device(device))
-    except ModuleNotFoundError as exc:
-        logger.warning("LPIPS is not available; skipping validation preview LPIPS: {}", exc)
-        return None
     except Exception as exc:
-        logger.warning("LPIPS disabled for validation preview: {}", exc)
+        logger.warning("LPIPS failed for validation preview: {}", exc)
         return None
 
     return float(distance.squeeze().item())
+
+
+def _mean_metrics(rows: list[dict[str, float]]) -> dict[str, float]:
+    return {f"val_preview/{key}": value for key, value in _average_metrics(rows).items()}
+
+
+def _average_metrics(rows: list[dict[str, float]]) -> dict[str, float]:
+    grouped: dict[str, list[float]] = {}
+    for row in rows:
+        for key, value in row.items():
+            value_t = torch.tensor(float(value))
+            if torch.isfinite(value_t).item():
+                grouped.setdefault(key, []).append(float(value))
+    return {key: sum(values) / len(values) for key, values in grouped.items() if values}
+
+
+def _wandb_image(path: Path, caption: str):
+    try:
+        import wandb
+    except ModuleNotFoundError:
+        return None
+    return wandb.Image(str(path), caption=caption)
+
+
+def _append_wandb_images(target: list[Any], paths: list[Path], caption: str) -> None:
+    for path in paths:
+        image = _wandb_image(path, caption)
+        if image is not None:
+            target.append(image)
 
 
 def _resolve_path(path: str | Path) -> Path:

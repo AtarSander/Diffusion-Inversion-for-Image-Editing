@@ -3,7 +3,7 @@ defaults:
   - model: sdxl
   - _self_
 
-output_dir: /net/tscratch/people/plgatarsander/ZZSN_data/processed/sdxl_trajectories
+output_dir: /net/tscratch/people/plgmichalsadowski/ZZSN_data/processed/sdxl_trajectories
 num_samples: 27396
 start_index: 0
 seed: 1234
@@ -12,7 +12,6 @@ overwrite: false
 
 save_final_image: true
 save_latents: true
-save_pred_noises: true
 save_prompt: true
 save_meta: true
 save_timesteps: true

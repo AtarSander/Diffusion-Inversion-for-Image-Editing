@@ -1,248 +1,188 @@
-"""Train a UNet LoRA adapter on saved SDXL latent trajectories."""
-
-from __future__ import annotations
-
-import math
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from diffusers import StableDiffusionXLPipeline
 import hydra
-from hydra.utils import to_absolute_path
+import torch
+import torch.nn.functional as F
+import wandb
+from diffusers import StableDiffusionXLPipeline
+from diffusers.optimization import get_scheduler
 from loguru import logger
 from omegaconf import DictConfig, OmegaConf
-from peft import LoraConfig, set_peft_model_state_dict
+from peft import LoraConfig, inject_adapter_in_model, set_peft_model_state_dict
 from peft.utils import get_peft_model_state_dict
-import torch
-from torch.utils.data import DataLoader, WeightedRandomSampler
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from diff_inversion.data.generate_sdxl_samples import (
-    encode_prompt_sdxl,
-    make_pipe,
-)
 from diff_inversion.data.latent_trajectory_dataset import LatentTrajectoryDataset
-from diff_inversion.modeling.validation_preview import (
-    log_validation_preview,
-    should_run_validation_preview,
-)
+from diff_inversion.utils import make_pipe
 
 
-def _cfg_to_container(cfg: Any) -> Any:
-    return OmegaConf.to_container(cfg, resolve=True) if isinstance(cfg, DictConfig) else cfg
-
-
-def _resolve_path(path: str | Path) -> Path:
-    return Path(to_absolute_path(str(path))).resolve()
-
-
-def _lora_kwargs(lora_cfg: DictConfig) -> dict[str, Any]:
-    raw = _cfg_to_container(lora_cfg)
-    ignored = {"checkpoint_path", "adapter_name"}
-    return {key: value for key, value in raw.items() if key not in ignored and value is not None}
-
-
-def _init_wandb(cfg: DictConfig):
-    wandb_cfg = cfg.wandb
-    if wandb_cfg.mode == "disabled":
-        return None
-
-    try:
-        import wandb
-    except ModuleNotFoundError:
-        logger.warning("W&B is not installed; training will continue without W&B logging")
-        return None
-
-    run = wandb.init(
-        project=wandb_cfg.project,
-        entity=wandb_cfg.entity,
-        group=wandb_cfg.group,
-        name=wandb_cfg.run_name or cfg.run_name,
-        tags=_cfg_to_container(wandb_cfg.tags),
-        mode=wandb_cfg.mode,
-        config=_cfg_to_container(cfg),
-    )
-    return run
-
-
-class SDXLInversionLoraTrainer:
+class SDXLInversionTrainer:
     def __init__(
         self,
         pipe: StableDiffusionXLPipeline,
-        cfg: DictConfig,
-        tracker: Any | None,
-    ) -> None:
+        lora_config: LoraConfig,
+        tracker: Any,
+        checkpoint_dir: Path | str,
+        learning_rate: float,
+        weight_decay: float,
+        lr_scheduler_config: DictConfig | None,
+        gradient_accumulation_steps: int,
+        num_inference_steps: int,
+        height: int,
+        width: int,
+        save_every_steps: int,
+        eval_every_steps: int,
+        log_every_steps: int,
+        max_val_batches: int | None,
+        max_grad_norm: float | None = None,
+        gradient_checkpointing: bool = False,
+        validation_preview_config: DictConfig | None = None,
+    ):
         self.pipe = pipe
-        self.cfg = cfg
+        self.lora_config = lora_config
+        self.model = pipe.unet
         self.tracker = tracker
-        self.device = pipe.device
-        self.unet = pipe.unet
-        self.adapter_name = str(cfg.lora.adapter_name)
-        self.checkpoint_dir = _resolve_path(cfg.checkpoint_dir)
-        self.global_step = 0
-        self.skipped_nonfinite_steps = 0
+        self.checkpoint_dir = Path(checkpoint_dir)
+        self.gradient_accumulation_steps = max(1, int(gradient_accumulation_steps))
+        self.save_every_steps = int(save_every_steps)
+        self.eval_every_steps = int(eval_every_steps)
+        self.log_every_steps = int(log_every_steps)
+        self.max_val_batches = max_val_batches
+        self.max_grad_norm = max_grad_norm
+        self.lr_scheduler_config = lr_scheduler_config
+        self.lr_scheduler = None
+        self.validation_preview_config = validation_preview_config
+        self.height = int(height)
+        self.width = int(width)
 
-        self._prepare_models()
-        self._prepare_lora()
-        self.trainable_params = [param for param in self.unet.parameters() if param.requires_grad]
+        self._freeze_pipeline_components()
+        inject_adapter_in_model(lora_config, self.model, adapter_name="inversion")
+        self._freeze_non_lora_parameters()
+        self._cast_trainable_parameters(torch.float32)
+
+        if gradient_checkpointing and hasattr(self.model, "enable_gradient_checkpointing"):
+            self.model.enable_gradient_checkpointing()
+
+        self.trainable_parameters = [p for p in self.model.parameters() if p.requires_grad]
+        if not self.trainable_parameters:
+            raise RuntimeError("No LoRA parameters were marked trainable.")
         self.optimizer = torch.optim.AdamW(
-            self.trainable_params,
-            lr=float(cfg.training.learning_rate),
-            weight_decay=float(cfg.training.weight_decay),
+            self.trainable_parameters,
+            lr=float(learning_rate),
+            weight_decay=float(weight_decay),
         )
 
-    def _prepare_models(self) -> None:
-        self.unet.requires_grad_(False)
-        self.unet.train()
-
-        if self.pipe.text_encoder is not None:
-            self.pipe.text_encoder.requires_grad_(False)
-            self.pipe.text_encoder.eval()
-        if self.pipe.text_encoder_2 is not None:
-            self.pipe.text_encoder_2.requires_grad_(False)
-            self.pipe.text_encoder_2.eval()
-        if self.pipe.vae is not None:
-            self.pipe.vae.requires_grad_(False)
-            self.pipe.vae.eval()
-
-        if bool(self.cfg.training.gradient_checkpointing):
-            self.unet.enable_gradient_checkpointing()
-
-    def _prepare_lora(self) -> None:
-        logger.info("Adding UNet LoRA adapter '{}'", self.adapter_name)
-        lora_config = LoraConfig(**_lora_kwargs(self.cfg.lora))
-        self.unet.add_adapter(lora_config, adapter_name=self.adapter_name)
-
-        checkpoint_path = self.cfg.lora.checkpoint_path
-        if checkpoint_path:
-            checkpoint = _resolve_path(checkpoint_path)
-            logger.info("Loading LoRA checkpoint from {}", checkpoint)
-            state_dict = torch.load(checkpoint, map_location="cpu", weights_only=False)
-            set_peft_model_state_dict(self.unet, state_dict, adapter_name=self.adapter_name)
-
-        if hasattr(self.unet, "enable_adapters"):
-            self.unet.enable_adapters()
-
-        if bool(self.cfg.training.cast_trainable_params_to_float32):
-            self._cast_trainable_params_to_float32()
-
-        trainable = sum(param.numel() for param in self.unet.parameters() if param.requires_grad)
-        total = sum(param.numel() for param in self.unet.parameters())
+        self.pipe.scheduler.set_timesteps(num_inference_steps, device=self.model.device)
         logger.info(
-            "Trainable UNet parameters: {:,} / {:,} ({:.4f}%)",
-            trainable,
-            total,
-            100 * trainable / total,
+            "LoRA trainable parameters: {:,}",
+            sum(p.numel() for p in self.trainable_parameters),
         )
 
-    def _cast_trainable_params_to_float32(self) -> None:
-        for param in self.unet.parameters():
-            if param.requires_grad:
-                param.data = param.data.float()
-        logger.info("Casted trainable UNet parameters to float32")
+    def train(self, train_loader: DataLoader, val_loader: DataLoader, max_train_steps: int):
+        self.global_step = 0
+        micro_step = 0
+        recent_losses: list[float] = []
+        self.lr_scheduler = self._build_lr_scheduler(max_train_steps)
 
-    def fit(self, train_loader: DataLoader, val_loader: DataLoader | None) -> None:
-        epochs = int(self.cfg.training.epochs)
-        for epoch in range(epochs):
-            train_metrics = self.train_epoch(train_loader, epoch)
-            self._log(train_metrics)
+        self.optimizer.zero_grad(set_to_none=True)
+        progress = tqdm(total=max_train_steps, desc="Training steps")
 
-            if val_loader is not None:
-                val_metrics = self.validation_epoch(val_loader, epoch)
-                self._log(val_metrics)
-                if should_run_validation_preview(self.cfg, epoch):
-                    log_validation_preview(
-                        pipe=self.pipe,
-                        cfg=self.cfg,
-                        tracker=self.tracker,
-                        checkpoint_dir=self.checkpoint_dir,
-                        epoch=epoch,
-                        global_step=self.global_step,
+        while self.global_step < max_train_steps:
+            for batch in train_loader:
+                loss = self.forward_loss(batch)
+                if not torch.isfinite(loss):
+                    raise FloatingPointError(self._non_finite_loss_message(batch, loss))
+
+                (loss / self.gradient_accumulation_steps).backward()
+                recent_losses.append(float(loss.detach().cpu()))
+                micro_step += 1
+
+                if micro_step % self.gradient_accumulation_steps != 0:
+                    continue
+
+                if self.max_grad_norm is not None:
+                    torch.nn.utils.clip_grad_norm_(
+                        self.trainable_parameters,
+                        self.max_grad_norm,
+                        error_if_nonfinite=True,
                     )
 
-            save_epoch_frequency = int(self.cfg.training.save_every_epochs)
-            if save_epoch_frequency > 0 and (epoch + 1) % save_epoch_frequency == 0:
-                self.save_checkpoint(f"checkpoint_epoch_{epoch + 1}.pt")
+                self.optimizer.step()
+                if self.lr_scheduler is not None:
+                    self.lr_scheduler.step()
+                self.optimizer.zero_grad(set_to_none=True)
+                self.global_step += 1
+                progress.update(1)
 
+                if self._should_run(self.log_every_steps):
+                    train_loss = sum(recent_losses) / len(recent_losses)
+                    self.tracker.log(
+                        {
+                            "train/loss": train_loss,
+                            "train/lr": self.optimizer.param_groups[0]["lr"],
+                        },
+                        step=self.global_step,
+                    )
+                    recent_losses = []
+
+                if self._should_run(self.eval_every_steps):
+                    self.tracker.log(
+                        self.validation_epoch(val_loader),
+                        step=self.global_step,
+                    )
+                    self._run_validation_preview()
+
+                if self._should_run(self.save_every_steps):
+                    self.save_checkpoint(f"checkpoint_step_{self.global_step}.pt")
+
+                if self.global_step >= max_train_steps:
+                    break
+
+        progress.close()
         self.save_checkpoint("checkpoint_final.pt")
-        if self.tracker is not None:
-            self.tracker.finish()
+        self.tracker.finish()
 
-    def train_epoch(self, train_loader: DataLoader, epoch: int) -> dict[str, float]:
-        self.unet.train()
-        losses: list[float] = []
-        progress = tqdm(train_loader, desc=f"Training epoch {epoch + 1}", leave=False)
+    def forward_loss(self, batch: dict[str, Any]) -> torch.Tensor:
+        x_clean = batch["x_clean"].to(device=self.model.device, dtype=self.model.dtype)
+        timestep = batch["timestep"].to(device=self.model.device)
+        target_eps = batch["target_eps"].to(device=self.model.device, dtype=self.model.dtype)
+        prompt_embeds = batch["prompt_embeds"].to(
+            device=self.model.device,
+            dtype=self.model.dtype,
+        )
+        pooled_prompt_embeds = batch["pooled_prompt_embeds"].to(
+            device=self.model.device,
+            dtype=self.model.dtype,
+        )
+        add_time_ids = batch["add_time_ids"].to(device=self.model.device, dtype=self.model.dtype)
 
-        for batch in progress:
-            loss, step_metrics = self.training_step(
-                batch,
-                collect_metrics=bool(
-                    self.cfg.logging.timestep_stats or self.cfg.logging.prediction_stats
-                ),
-                metrics_prefix="train",
-            )
-            loss_value = float(loss.detach().cpu())
-            if not math.isfinite(loss_value):
-                self.optimizer.zero_grad(set_to_none=True)
-                self._handle_nonfinite_batch(
-                    reason="loss",
-                    value=loss_value,
-                    step_metrics=step_metrics,
-                )
-                continue
+        scheduler_timesteps = self._scheduler_timesteps(timestep, batch_size=x_clean.shape[0])
 
-            loss.backward()
+        student_eps = self.predict_noise(
+            x_clean,
+            scheduler_timesteps,
+            prompt_embeds,
+            pooled_prompt_embeds,
+            add_time_ids,
+        )
 
-            max_grad_norm = float(self.cfg.training.max_grad_norm)
-            if max_grad_norm > 0:
-                grad_norm = torch.nn.utils.clip_grad_norm_(self.trainable_params, max_grad_norm)
-                grad_norm_value = float(grad_norm.detach().cpu())
-            else:
-                grad_norm_value = self._grad_norm()
+        return F.mse_loss(student_eps.float(), target_eps.float())
 
-            if not math.isfinite(grad_norm_value):
-                self._handle_nonfinite_batch(
-                    reason="grad_norm",
-                    value=grad_norm_value,
-                    step_metrics=step_metrics,
-                )
-                self.optimizer.zero_grad(set_to_none=True)
-                continue
-
-            self.optimizer.step()
-            self.optimizer.zero_grad(set_to_none=True)
-            losses.append(loss_value)
-            self.global_step += 1
-            progress.set_postfix(loss=f"{loss_value:.6f}")
-
-            log_frequency = int(self.cfg.logging.log_every_steps)
-            if log_frequency > 0 and self.global_step % log_frequency == 0:
-                log_metrics = self._build_step_log(loss_value, grad_norm_value, step_metrics)
-                if log_metrics:
-                    self._log(log_metrics)
-            save_step_frequency = int(self.cfg.training.save_every_steps)
-            if save_step_frequency > 0 and self.global_step % save_step_frequency == 0:
-                self.save_checkpoint(f"checkpoint_step_{self.global_step}.pt")
-
-        return {
-            "train/loss": sum(losses) / len(losses) if losses else float("nan"),
-            "epoch": float(epoch + 1),
-            "global_step": float(self.global_step),
-            "train/skipped_nonfinite_steps": float(self.skipped_nonfinite_steps),
-        }
-
-    def training_step(
+    def predict_noise(
         self,
-        batch: dict[str, Any],
-        collect_metrics: bool = False,
-        metrics_prefix: str = "train",
-    ) -> tuple[torch.Tensor, dict[str, float]]:
-        input_latents, timesteps, target_eps = self._latent_batch_to_device(batch)
-        prompt_embeds, pooled_prompt_embeds, add_time_ids = self._encode_prompts(batch["prompt"])
-
-        noise_pred = self.unet(
-            input_latents,
-            timesteps,
+        latents: torch.Tensor,
+        scheduler_timesteps: torch.Tensor,
+        prompt_embeds: torch.Tensor,
+        pooled_prompt_embeds: torch.Tensor,
+        add_time_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        model_input = self.pipe.scheduler.scale_model_input(latents, scheduler_timesteps)
+        return self.model(
+            model_input,
+            scheduler_timesteps,
             encoder_hidden_states=prompt_embeds,
             added_cond_kwargs={
                 "text_embeds": pooled_prompt_embeds,
@@ -250,294 +190,278 @@ class SDXLInversionLoraTrainer:
             },
             return_dict=False,
         )[0]
-        loss = torch.nn.functional.mse_loss(noise_pred.float(), target_eps.float())
-        if not collect_metrics:
-            return loss, {}
 
-        metrics: dict[str, float] = {}
-        with torch.no_grad():
-            if self.cfg.logging.timestep_stats:
-                inversion_steps = batch["inversion_step_idx"].float()
-                metrics.update(
-                    {
-                        f"{metrics_prefix}/timestep_mean": float(
-                            timesteps.float().mean().detach().cpu()
-                        ),
-                        f"{metrics_prefix}/timestep_min": float(timesteps.min().detach().cpu()),
-                        f"{metrics_prefix}/timestep_max": float(timesteps.max().detach().cpu()),
-                        f"{metrics_prefix}/inversion_step_mean": float(
-                            inversion_steps.mean().cpu()
-                        ),
-                        f"{metrics_prefix}/inversion_step_min": float(inversion_steps.min().cpu()),
-                        f"{metrics_prefix}/inversion_step_max": float(inversion_steps.max().cpu()),
-                    }
-                )
+    @torch.no_grad()
+    def validation_epoch(self, val_loader: DataLoader) -> dict[str, float]:
+        self.model.eval()
+        losses = []
 
-            if self.cfg.logging.prediction_stats:
-                pred_flat = noise_pred.float().flatten(start_dim=1)
-                target_flat = target_eps.float().flatten(start_dim=1)
-                cosine = torch.nn.functional.cosine_similarity(pred_flat, target_flat, dim=1)
-                metrics.update(
-                    {
-                        f"{metrics_prefix}/pred_mean": float(
-                            noise_pred.float().mean().detach().cpu()
-                        ),
-                        f"{metrics_prefix}/pred_std": float(
-                            noise_pred.float().std().detach().cpu()
-                        ),
-                        f"{metrics_prefix}/target_mean": float(
-                            target_eps.float().mean().detach().cpu()
-                        ),
-                        f"{metrics_prefix}/target_std": float(
-                            target_eps.float().std().detach().cpu()
-                        ),
-                        f"{metrics_prefix}/pred_target_mae": float(
-                            torch.nn.functional.l1_loss(noise_pred.float(), target_eps.float())
-                            .detach()
-                            .cpu()
-                        ),
-                        f"{metrics_prefix}/pred_target_cosine": float(
-                            cosine.mean().detach().cpu()
-                        ),
-                    }
-                )
-        return loss, metrics
+        for batch_idx, batch in enumerate(tqdm(val_loader, desc="Validation")):
+            if self.max_val_batches is not None and batch_idx >= self.max_val_batches:
+                break
+            loss = self.forward_loss(batch)
+            if not torch.isfinite(loss):
+                raise FloatingPointError(self._non_finite_loss_message(batch, loss, "validation"))
+            losses.append(float(loss.detach().cpu()))
 
-    def _build_step_log(
+        self.model.train()
+        return {"val/loss": sum(losses) / len(losses)} if losses else {"val/loss": float("nan")}
+
+    @torch.no_grad()
+    def encode_prompts(
         self,
-        loss_value: float,
-        grad_norm_value: float,
-        step_metrics: dict[str, float],
-    ) -> dict[str, float]:
-        metrics: dict[str, float] = {}
-
-        if self.cfg.logging.basic:
-            metrics.update(
-                {
-                    "train/loss_step": loss_value,
-                    "train/global_step": self.global_step,
-                    "train/skipped_nonfinite_steps": self.skipped_nonfinite_steps,
-                }
-            )
-
-        if self.cfg.logging.loss_log10:
-            metrics["train/loss_log10"] = self._safe_log10(loss_value)
-
-        if self.cfg.logging.gradients:
-            metrics["train/grad_norm"] = grad_norm_value
-
-        if self.cfg.logging.lora:
-            metrics["train/lora_param_norm"] = self._param_norm()
-
-        if self.cfg.logging.learning_rate:
-            metrics["train/learning_rate"] = self.optimizer.param_groups[0]["lr"]
-
-        metrics.update(step_metrics)
-        return metrics
-
-    @torch.no_grad()
-    def validation_epoch(self, val_loader: DataLoader, epoch: int) -> dict[str, float]:
-        self.unet.eval()
-        losses: list[float] = []
-        early_losses: list[float] = []
-        other_losses: list[float] = []
-        metric_values: dict[str, list[float]] = {}
-
-        for batch in tqdm(val_loader, desc=f"Validation epoch {epoch + 1}", leave=False):
-            loss, step_metrics = self.training_step(
-                batch,
-                collect_metrics=bool(
-                    self.cfg.logging.timestep_stats or self.cfg.logging.prediction_stats
-                ),
-                metrics_prefix="val",
-            )
-            loss_value = float(loss.detach().cpu())
-            if not math.isfinite(loss_value):
-                continue
-
-            losses.append(loss_value)
-            if self._is_early_inversion_batch(batch):
-                early_losses.append(loss_value)
-            else:
-                other_losses.append(loss_value)
-
-            for key, value in step_metrics.items():
-                if math.isfinite(value):
-                    metric_values.setdefault(key, []).append(value)
-
-        self.unet.train()
-        val_loss = self._mean_or_nan(losses)
-        metrics = {
-            "val/loss": val_loss,
-            "val/loss_log10": self._safe_log10(val_loss),
-            "val/early_inversion_loss": self._mean_or_nan(early_losses),
-            "val/other_inversion_loss": self._mean_or_nan(other_losses),
-            "epoch": float(epoch + 1),
-            "global_step": float(self.global_step),
-        }
-        for key, values in metric_values.items():
-            metrics[key] = sum(values) / len(values)
-        return metrics
-
-    def _latent_batch_to_device(
-        self, batch: dict[str, Any]
+        prompts: str | list[str] | tuple[str, ...],
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        dtype = self.unet.dtype
-        return (
-            batch["input_latent"].to(device=self.device, dtype=dtype),
-            batch["timestep"].to(device=self.device),
-            batch["target_eps"].to(device=self.device, dtype=dtype),
-        )
+        if isinstance(prompts, str):
+            prompt_list = [prompts]
+        else:
+            prompt_list = list(prompts)
 
-    @torch.no_grad()
-    def _encode_prompts(
-        self, prompts: list[str] | tuple[str, ...]
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        cond = encode_prompt_sdxl(
-            pipe=self.pipe,
-            prompt=list(prompts),
-            negative_prompt=[""] * len(prompts),
-            height=int(self.cfg.model.height),
-            width=int(self.cfg.model.width),
+        prompt_embeds, _, pooled_prompt_embeds, _ = self.pipe.encode_prompt(
+            prompt=prompt_list,
+            prompt_2=prompt_list,
+            device=self.pipe._execution_device,
+            num_images_per_prompt=1,
             do_classifier_free_guidance=False,
         )
+        add_time_ids = self.pipe._get_add_time_ids(
+            original_size=(self.height, self.width),
+            crops_coords_top_left=(0, 0),
+            target_size=(self.height, self.width),
+            dtype=prompt_embeds.dtype,
+            text_encoder_projection_dim=self.pipe.text_encoder_2.config.projection_dim,
+        ).to(device=self.model.device)
+        add_time_ids = add_time_ids.repeat(len(prompt_list), 1)
+
         return (
-            cond["prompt_embeds"].to(device=self.device, dtype=self.unet.dtype),
-            cond["pooled_prompt_embeds"].to(device=self.device, dtype=self.unet.dtype),
-            cond["add_time_ids"].to(device=self.device, dtype=self.unet.dtype),
+            prompt_embeds.to(device=self.model.device, dtype=self.model.dtype),
+            pooled_prompt_embeds.to(device=self.model.device, dtype=self.model.dtype),
+            add_time_ids,
         )
 
-    def _log(self, metrics: dict[str, float]) -> None:
-        logger.info("{}", metrics)
-        if self.tracker is not None:
-            self.tracker.log(metrics, step=self.global_step)
-
-    def _is_early_inversion_batch(self, batch: dict[str, Any]) -> bool:
-        early_steps = torch.ceil(
-            batch["num_steps"].float() * float(self.cfg.data.early_inversion_fraction)
-        )
-        return bool(torch.all(batch["inversion_step_idx"].float() < early_steps).item())
-
-    def _handle_nonfinite_batch(
-        self,
-        reason: str,
-        value: float,
-        step_metrics: dict[str, float],
-    ) -> None:
-        self.skipped_nonfinite_steps += 1
-        metrics = {
-            "train/nonfinite_batch": 1.0,
-            "train/nonfinite_value": value,
-            "train/skipped_nonfinite_steps": float(self.skipped_nonfinite_steps),
-            "train/global_step": float(self.global_step),
-            **step_metrics,
-        }
-        logger.warning(
-            "Skipping non-finite {}={} at global_step={}", reason, value, self.global_step
-        )
-        self._log(metrics)
-
-        if not bool(self.cfg.training.skip_nonfinite_batches):
-            raise FloatingPointError(f"Non-finite training {reason}: {value}")
-
-        max_skips = int(self.cfg.training.max_nonfinite_batches)
-        if max_skips >= 0 and self.skipped_nonfinite_steps > max_skips:
-            raise FloatingPointError(
-                f"Exceeded max_nonfinite_batches={max_skips}; latest {reason}={value}"
-            )
-
-    def _grad_norm(self) -> float:
-        squared_norm = 0.0
-        for param in self.trainable_params:
-            if param.grad is None:
-                continue
-            grad = param.grad.detach().float()
-            squared_norm += float(torch.sum(grad * grad).cpu())
-        return math.sqrt(squared_norm)
-
-    def _param_norm(self) -> float:
-        squared_norm = 0.0
-        for param in self.trainable_params:
-            value = param.detach().float()
-            squared_norm += float(torch.sum(value * value).cpu())
-        return math.sqrt(squared_norm)
-
-    @staticmethod
-    def _safe_log10(value: float) -> float:
-        return math.log10(max(value, 1e-20))
-
-    @staticmethod
-    def _mean_or_nan(values: list[float]) -> float:
-        return sum(values) / len(values) if values else float("nan")
-
-    def save_checkpoint(self, filename: str) -> None:
-        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    def save_checkpoint(self, filename: str):
         save_path = self.checkpoint_dir / filename
-        torch.save(
-            get_peft_model_state_dict(self.unet, adapter_name=self.adapter_name),
-            save_path,
-        )
-        logger.success("Saved LoRA checkpoint: {}", save_path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(get_peft_model_state_dict(self.model, adapter_name="inversion"), save_path)
+        logger.info("Checkpoint saved to {}", save_path)
 
+    def load_checkpoint(self, filename: str):
+        checkpoint_path = self.checkpoint_dir / filename
+        if not checkpoint_path.exists():
+            logger.warning("Checkpoint path does not exist: {}", checkpoint_path)
+            return
+        state_dict = torch.load(checkpoint_path, map_location="cpu")
+        set_peft_model_state_dict(self.model, state_dict, adapter_name="inversion")
+        logger.info("Checkpoint loaded from {}", checkpoint_path)
 
-def _make_loader(dataset: LatentTrajectoryDataset, cfg: DictConfig, shuffle: bool) -> DataLoader:
-    sampler = None
-    if shuffle and bool(cfg.oversample_early_inversion_steps):
-        weights = dataset.early_inversion_weights(
-            early_fraction=float(cfg.early_inversion_fraction),
-            early_weight=float(cfg.early_inversion_weight),
+    def _freeze_pipeline_components(self) -> None:
+        for component in (self.pipe.text_encoder, self.pipe.text_encoder_2, self.pipe.vae):
+            if component is not None:
+                component.requires_grad_(False)
+                component.eval()
+
+    def _freeze_non_lora_parameters(self) -> None:
+        for name, parameter in self.model.named_parameters():
+            parameter.requires_grad_("lora" in name.lower())
+
+    def _cast_trainable_parameters(self, dtype: torch.dtype) -> None:
+        for parameter in self.model.parameters():
+            if parameter.requires_grad:
+                parameter.data = parameter.data.to(dtype=dtype)
+
+    def _build_lr_scheduler(self, max_train_steps: int):
+        if self.lr_scheduler_config is None:
+            return None
+
+        scheduler_name = str(self.lr_scheduler_config.get("name", "constant"))
+        warmup_steps = int(self.lr_scheduler_config.get("warmup_steps", 0))
+        num_cycles = int(self.lr_scheduler_config.get("num_cycles", 1))
+        power = float(self.lr_scheduler_config.get("power", 1.0))
+        scheduler = get_scheduler(
+            scheduler_name,
+            optimizer=self.optimizer,
+            num_warmup_steps=warmup_steps,
+            num_training_steps=max_train_steps,
+            num_cycles=num_cycles,
+            power=power,
         )
-        sampler = WeightedRandomSampler(weights, num_samples=len(weights), replacement=True)
-        shuffle = False
         logger.info(
-            "Using weighted sampler: first {:.1%} inversion steps have {:.2f}x weight",
-            float(cfg.early_inversion_fraction),
-            float(cfg.early_inversion_weight),
+            "Using LR scheduler: {} warmup_steps={} num_training_steps={}",
+            scheduler_name,
+            warmup_steps,
+            max_train_steps,
+        )
+        return scheduler
+
+    def _non_finite_loss_message(
+        self,
+        batch: dict[str, Any],
+        loss: torch.Tensor,
+        phase: str = "training",
+    ) -> str:
+        sample_idx = self._batch_scalar(batch.get("sample_idx"))
+        step_idx = self._batch_scalar(batch.get("step_idx"))
+        timestep = self._batch_scalar(batch.get("timestep"))
+        return (
+            f"Non-finite {phase} loss "
+            f"loss={float(loss.detach().cpu())} "
+            f"global_step={getattr(self, 'global_step', 'unknown')} "
+            f"sample_idx={sample_idx} step_idx={step_idx} timestep={timestep}. "
+            "Stopping before logging NaNs to W&B."
         )
 
-    return DataLoader(
-        dataset,
-        batch_size=int(cfg.batch_size),
-        shuffle=shuffle,
-        sampler=sampler,
-        num_workers=int(cfg.num_workers),
-        pin_memory=bool(cfg.pin_memory),
-    )
+    @staticmethod
+    def _batch_scalar(value: Any) -> Any:
+        if value is None:
+            return None
+        if torch.is_tensor(value):
+            value = value.flatten()
+            return value[0].item() if value.numel() else None
+        if isinstance(value, (list, tuple)):
+            return value[0] if value else None
+        return value
+
+    @contextmanager
+    def _teacher_mode(self):
+        was_training = self.model.training
+        self.model.eval()
+        self._set_lora_enabled(False)
+        try:
+            yield
+        finally:
+            self._set_lora_enabled(True)
+            if was_training:
+                self.model.train()
+
+    def _set_lora_enabled(self, enabled: bool) -> None:
+        toggled = False
+        for module in self.model.modules():
+            if module is self.model:
+                continue
+            if hasattr(module, "enable_adapters"):
+                module.enable_adapters(enabled)
+                toggled = True
+
+        if not toggled:
+            raise AttributeError("No injected LoRA adapter layers expose enable_adapters().")
+
+    def _scheduler_timesteps(self, timestep: torch.Tensor, batch_size: int) -> torch.Tensor:
+        timestep = timestep.flatten()
+        if timestep.numel() == 1:
+            return timestep.expand(batch_size)
+        if timestep.numel() != batch_size:
+            raise ValueError(
+                "Timestep batch shape does not match latent batch shape: "
+                f"got {timestep.numel()} timesteps for batch_size={batch_size}."
+            )
+        return timestep
+
+    def _should_run(self, interval: int) -> bool:
+        return interval > 0 and self.global_step > 0 and self.global_step % interval == 0
+
+    def _run_validation_preview(self) -> None:
+        if self.validation_preview_config is None:
+            return
+
+        from diff_inversion.modeling.validation_preview import (
+            log_validation_preview,
+            should_run_validation_preview,
+        )
+
+        if not should_run_validation_preview(self.validation_preview_config, self.global_step):
+            return
+
+        log_validation_preview(
+            pipe=self.pipe,
+            cfg=self.validation_preview_config,
+            tracker=self.tracker,
+            checkpoint_dir=self.checkpoint_dir,
+            global_step=self.global_step,
+        )
+
+
+def get_lora_config(lora_config: DictConfig) -> LoraConfig:
+    return LoraConfig(**lora_config)
 
 
 @hydra.main(config_path="../../config", config_name="train_config", version_base=None)
 def main(cfg: DictConfig) -> None:
-    logger.info("Training SDXL inversion LoRA for {}", cfg.model.model_id)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    if cfg.model.require_cuda and device != "cuda":
-        raise RuntimeError("This training script is intended to run on CUDA.")
+    logger.info("Training {}", cfg.model.model_id)
+    model_cfg = cfg.model
+    lora_cfg = cfg.lora
 
-    torch.manual_seed(int(cfg.training.seed))
-    pipe = make_pipe(cfg.model, device)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if model_cfg.require_cuda and device != "cuda":
+        raise RuntimeError("This script is intended to run on CUDA.")
+
+    pipe = make_pipe(model_cfg, device)
+    lora_config = get_lora_config(lora_cfg)
+
+    run = wandb.init(
+        project=cfg.wandb.project,
+        name=cfg.run_name,
+        mode=cfg.wandb.mode,
+        config=OmegaConf.to_container(cfg, resolve=True),
+    )
+
+    trainer = SDXLInversionTrainer(
+        pipe=pipe,
+        lora_config=lora_config,
+        tracker=run,
+        checkpoint_dir=cfg.checkpoint_dir,
+        learning_rate=cfg.learning_rate,
+        weight_decay=cfg.weight_decay,
+        lr_scheduler_config=cfg.get("lr_scheduler"),
+        gradient_accumulation_steps=cfg.gradient_accumulation_steps,
+        num_inference_steps=model_cfg.num_inference_steps,
+        height=model_cfg.height,
+        width=model_cfg.width,
+        save_every_steps=cfg.save_every_steps,
+        eval_every_steps=cfg.eval_every_steps,
+        log_every_steps=cfg.log_every_steps,
+        max_val_batches=cfg.max_val_batches,
+        max_grad_norm=cfg.max_grad_norm,
+        gradient_checkpointing=cfg.gradient_checkpointing,
+        validation_preview_config=(
+            cfg if OmegaConf.select(cfg, "validation_preview.enabled", default=False) else None
+        ),
+    )
 
     train_dataset = LatentTrajectoryDataset(
-        root_dir=_resolve_path(cfg.data.root_dir),
-        latents_dir_name=str(cfg.data.latents_dir_name),
-        pred_noises_dir_name=str(cfg.data.pred_noises_dir_name),
+        cfg.data.root_dir,
+        latents_file_name=cfg.data.latents_file_name,
+        conditioning_file_name=cfg.data.conditioning_file_name,
+        targets_dir_name=cfg.data.targets_dir_name,
+        target_eps_file_name=cfg.data.target_eps_file_name,
+        require_training_cache=cfg.data.require_training_cache,
     )
-    val_dataset = None
-    if cfg.data.val_root_dir:
-        val_dataset = LatentTrajectoryDataset(
-            root_dir=_resolve_path(cfg.data.val_root_dir),
-            latents_dir_name=str(cfg.data.latents_dir_name),
-            pred_noises_dir_name=str(cfg.data.pred_noises_dir_name),
-        )
-
-    logger.info("Train items: {}", len(train_dataset))
-    if val_dataset is not None:
-        logger.info("Validation items: {}", len(val_dataset))
-
-    tracker = _init_wandb(cfg)
-    trainer = SDXLInversionLoraTrainer(pipe=pipe, cfg=cfg, tracker=tracker)
-    trainer.fit(
-        train_loader=_make_loader(train_dataset, cfg.data, shuffle=True),
-        val_loader=_make_loader(val_dataset, cfg.data, shuffle=False) if val_dataset else None,
+    val_dataset = LatentTrajectoryDataset(
+        cfg.data.val_root_dir,
+        latents_file_name=cfg.data.latents_file_name,
+        conditioning_file_name=cfg.data.conditioning_file_name,
+        targets_dir_name=cfg.data.targets_dir_name,
+        target_eps_file_name=cfg.data.target_eps_file_name,
+        require_training_cache=cfg.data.require_training_cache,
     )
+    logger.info("Loaded {:,} train transitions", len(train_dataset))
+    logger.info("Loaded {:,} val transitions", len(val_dataset))
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=cfg.data.batch_size,
+        shuffle=True,
+        num_workers=cfg.data.num_workers,
+        pin_memory=cfg.data.pin_memory,
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=cfg.data.batch_size,
+        shuffle=False,
+        num_workers=cfg.data.num_workers,
+        pin_memory=cfg.data.pin_memory,
+    )
+
+    trainer.train(train_loader, val_loader, max_train_steps=cfg.max_train_steps)
 
 
 if __name__ == "__main__":

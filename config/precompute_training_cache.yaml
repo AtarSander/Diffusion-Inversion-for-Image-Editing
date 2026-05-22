@@ -3,9 +3,9 @@ defaults:
   - _self_
 
 root_dirs:
-  - /net/tscratch/people/plgatarsander/ZZSN_data/processed/sdxl_trajectories_stacked/train
-  - /net/tscratch/people/plgatarsander/ZZSN_data/processed/sdxl_trajectories_stacked/val
-  - /net/tscratch/people/plgatarsander/ZZSN_data/processed/sdxl_trajectories_stacked/test
+  - /net/tscratch/people/plgmichalsadowski/ZZSN_data/processed/sdxl_trajectories_stacked/train
+  - /net/tscratch/people/plgmichalsadowski/ZZSN_data/processed/sdxl_trajectories_stacked/val
+  - /net/tscratch/people/plgmichalsadowski/ZZSN_data/processed/sdxl_trajectories_stacked/test
 
 sample_glob: sample_*
 start_index: 0
