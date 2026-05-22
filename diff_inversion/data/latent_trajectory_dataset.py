@@ -1,5 +1,9 @@
+"""Dataset for SDXL latent trajectories saved by ``generate_sdxl_samples``."""
+
+from __future__ import annotations
+
 import json
-from bisect import bisect_right
+import math
 from pathlib import Path
 from typing import Any
 
@@ -8,174 +12,127 @@ from torch.utils.data import Dataset
 
 
 class LatentTrajectoryDataset(Dataset):
+    """Flatten saved sample trajectories into per-denoising-step training items."""
+
     def __init__(
         self,
         root_dir: str | Path,
-        latents_file_name: str = "trajectory.pt",
-        conditioning_file_name: str = "conditioning.pt",
-        targets_dir_name: str = "targets",
-        target_eps_file_name: str = "target_eps.pt",
-        require_training_cache: bool = True,
-    ):
+        latents_dir_name: str = "latents",
+        pred_noises_dir_name: str = "pred_noises",
+    ) -> None:
         self.root_dir = Path(root_dir)
-        self.latents_file_name = latents_file_name
-        self.conditioning_file_name = conditioning_file_name
-        self.targets_dir_name = targets_dir_name
-        self.target_eps_file_name = target_eps_file_name
-        self.require_training_cache = require_training_cache
-        self.samples: list[dict[str, Any]] = []
-        self.cumulative_lengths: list[int] = []
+        self.latents_dir_name = latents_dir_name
+        self.pred_noises_dir_name = pred_noises_dir_name
+        self.items: list[dict[str, Any]] = []
+
+        if not self.root_dir.exists():
+            raise FileNotFoundError(f"Trajectory root does not exist: {self.root_dir}")
 
         for sample_dir in sorted(self.root_dir.glob("sample_*")):
-            latents_dir = sample_dir / "latents"
-            timesteps_path = sample_dir / "timesteps.json"
-            if not latents_dir.exists() or not timesteps_path.exists():
-                continue
+            self._add_sample(sample_dir)
 
-            prompt_path = sample_dir / "prompt.json"
-            meta = self._load_json(sample_dir / "meta.json")
-            conditioning_path = sample_dir / self.conditioning_file_name
-            target_eps_path = sample_dir / self.targets_dir_name / self.target_eps_file_name
-            self._validate_training_cache(sample_dir, conditioning_path, target_eps_path)
+        if not self.items:
+            raise ValueError(f"No complete trajectory items found in {self.root_dir}")
 
-            trajectory_path = latents_dir / self.latents_file_name
-            if trajectory_path.exists():
-                trajectory_length = int(meta.get("trajectory_length", 0))
-                if trajectory_length <= 0:
-                    trajectory_length = int(torch.load(trajectory_path, map_location="cpu").shape[0])
-                self._add_sample(
-                    {
-                        "format": "stacked_pt",
-                        "trajectory_path": trajectory_path,
-                        "trajectory_length": trajectory_length,
-                        "timesteps_path": timesteps_path,
-                        "prompt_path": prompt_path,
-                        "conditioning_path": conditioning_path,
-                        "target_eps_path": target_eps_path,
-                        "sample_idx": meta.get("sample_idx"),
-                    }
-                )
-                continue
+    def _add_sample(self, sample_dir: Path) -> None:
+        latents_dir = sample_dir / self.latents_dir_name
+        pred_noises_dir = sample_dir / self.pred_noises_dir_name
+        timesteps_path = sample_dir / "timesteps.json"
+        prompt_path = sample_dir / "prompt.json"
 
-            latent_paths = sorted(latents_dir.glob("x_*.pt"))
-            if len(latent_paths) >= 2:
-                self._add_sample(
-                    {
-                        "format": "per_step_pt",
-                        "latent_paths": latent_paths,
-                        "trajectory_length": len(latent_paths),
-                        "timesteps_path": timesteps_path,
-                        "prompt_path": prompt_path,
-                        "conditioning_path": conditioning_path,
-                        "target_eps_path": target_eps_path,
-                        "sample_idx": meta.get("sample_idx"),
-                    }
-                )
+        if not (
+            latents_dir.exists()
+            and pred_noises_dir.exists()
+            and timesteps_path.exists()
+            and prompt_path.exists()
+        ):
+            return
 
-    def __len__(self) -> int:
-        return self.cumulative_lengths[-1] if self.cumulative_lengths else 0
+        latent_paths = sorted(latents_dir.glob("x_*.pt"))
+        pred_noise_paths = sorted(pred_noises_dir.glob("noise_*.pt"))
+        if len(latent_paths) < 2 or len(pred_noise_paths) != len(latent_paths) - 1:
+            return
 
-    def __getitem__(self, idx: int) -> dict[str, Any]:
-        sample, step_idx = self._locate(idx)
+        timesteps = self._read_json(timesteps_path)
+        if not isinstance(timesteps, list) or len(timesteps) < len(pred_noise_paths):
+            return
 
-        if sample["format"] == "stacked_pt":
-            trajectory = torch.load(sample["trajectory_path"], map_location="cpu")
-            x_clean = trajectory[step_idx + 1]
-        else:
-            x_clean = torch.load(sample["latent_paths"][step_idx + 1], map_location="cpu")
+        prompt_record = self._read_json(prompt_path)
+        prompt = str(prompt_record.get("prompt", "")) if isinstance(prompt_record, dict) else ""
+        if not prompt:
+            return
 
-        timestep = self._transition_timestep(
-            self._timesteps(sample),
-            step_idx,
-            sample["trajectory_length"],
-        )
-        conditioning = torch.load(sample["conditioning_path"], map_location="cpu")
-        target_eps = torch.load(sample["target_eps_path"], map_location="cpu")[step_idx]
-
-        return {
-            "x_clean": self._squeeze_latent(x_clean),
-            "timestep": torch.tensor(timestep, dtype=torch.long),
-            "prompt_embeds": self._squeeze_batch_dim(conditioning["prompt_embeds"]),
-            "pooled_prompt_embeds": self._squeeze_batch_dim(
-                conditioning["pooled_prompt_embeds"]
-            ),
-            "add_time_ids": self._squeeze_batch_dim(conditioning["add_time_ids"]),
-            "target_eps": self._squeeze_latent(target_eps),
-            "sample_idx": sample["sample_idx"],
-            "step_idx": step_idx,
-        }
+        sample_idx = self._sample_idx_from_dir(sample_dir)
+        if sample_idx is None:
+            return
+        num_steps = len(pred_noise_paths)
+        for step_idx, noise_path in enumerate(pred_noise_paths):
+            # During generation, noise_i is predicted from latent_i before the DDIM step.
+            # During inversion, latent_{i+1} is the earlier available state, so this pair
+            # teaches the adapter to recover the next-step prediction from that state.
+            inversion_step_idx = num_steps - 1 - step_idx
+            self.items.append(
+                {
+                    "input_latent_path": latent_paths[step_idx + 1],
+                    "target_eps_path": noise_path,
+                    "timestep": int(timesteps[step_idx]),
+                    "prompt": prompt,
+                    "sample_idx": sample_idx,
+                    "step_idx": step_idx,
+                    "inversion_step_idx": inversion_step_idx,
+                    "num_steps": num_steps,
+                }
+            )
 
     @staticmethod
-    def _load_json(path: Path) -> dict[str, Any]:
-        if not path.exists():
-            return {}
+    def _read_json(path: Path) -> Any:
         with path.open("r", encoding="utf-8") as f:
             return json.load(f)
 
     @staticmethod
-    def _squeeze_latent(latent: torch.Tensor) -> torch.Tensor:
-        if latent.ndim == 4 and latent.shape[0] == 1:
-            return latent[0]
-        return latent
+    def _sample_idx_from_dir(sample_dir: Path) -> int | None:
+        try:
+            return int(sample_dir.name.removeprefix("sample_"))
+        except ValueError:
+            return None
+
+    def __len__(self) -> int:
+        return len(self.items)
+
+    def __getitem__(self, idx: int) -> dict[str, Any]:
+        item = self.items[idx]
+        input_latent = torch.load(
+            item["input_latent_path"], map_location="cpu", weights_only=False
+        )
+        target_eps = torch.load(item["target_eps_path"], map_location="cpu", weights_only=False)
+
+        return {
+            "input_latent": self._squeeze_saved_batch(input_latent),
+            "target_eps": self._squeeze_saved_batch(target_eps),
+            "timestep": torch.tensor(item["timestep"], dtype=torch.long),
+            "prompt": item["prompt"],
+            "sample_idx": item["sample_idx"],
+            "step_idx": item["step_idx"],
+            "inversion_step_idx": item["inversion_step_idx"],
+            "num_steps": item["num_steps"],
+        }
 
     @staticmethod
-    def _squeeze_batch_dim(tensor: torch.Tensor) -> torch.Tensor:
-        if tensor.ndim > 0 and tensor.shape[0] == 1:
-            return tensor[0]
+    def _squeeze_saved_batch(tensor: torch.Tensor) -> torch.Tensor:
+        if tensor.ndim == 4 and tensor.shape[0] == 1:
+            return tensor.squeeze(0)
         return tensor
 
-    @staticmethod
-    def _transition_timestep(timesteps: list[int], step_idx: int, trajectory_length: int) -> int:
-        if len(timesteps) == trajectory_length:
-            return int(timesteps[step_idx + 1])
-        if len(timesteps) == trajectory_length - 1:
-            return int(timesteps[step_idx])
-        raise ValueError(
-            "Unexpected timestep count for trajectory: "
-            f"got {len(timesteps)}, expected {trajectory_length} or {trajectory_length - 1}"
-        )
+    def early_inversion_weights(self, early_fraction: float, early_weight: float) -> torch.Tensor:
+        """Return sampler weights that favor the first fraction of inversion steps."""
+        if not 0 < early_fraction <= 1:
+            raise ValueError(f"early_fraction must be in (0, 1], got {early_fraction}")
+        if early_weight <= 0:
+            raise ValueError(f"early_weight must be positive, got {early_weight}")
 
-    def _validate_training_cache(
-        self,
-        sample_dir: Path,
-        conditioning_path: Path,
-        target_eps_path: Path,
-    ) -> None:
-        if not self.require_training_cache:
-            return
-        missing_paths = [
-            str(path) for path in (conditioning_path, target_eps_path) if not path.exists()
-        ]
-        if missing_paths:
-            raise FileNotFoundError(
-                "Missing cached training tensors for "
-                f"{sample_dir}: {', '.join(missing_paths)}. "
-                "Run diff_inversion/data/precompute_training_cache.py first."
-            )
-
-    def _add_sample(self, sample: dict[str, Any]) -> None:
-        num_transitions = sample["trajectory_length"] - 1
-        if num_transitions <= 0:
-            return
-        sample["num_transitions"] = num_transitions
-        self.samples.append(sample)
-        total = num_transitions if not self.cumulative_lengths else (
-            self.cumulative_lengths[-1] + num_transitions
-        )
-        self.cumulative_lengths.append(total)
-
-    def _locate(self, idx: int) -> tuple[dict[str, Any], int]:
-        sample_pos = bisect_right(self.cumulative_lengths, idx)
-        sample_start = 0 if sample_pos == 0 else self.cumulative_lengths[sample_pos - 1]
-        return self.samples[sample_pos], idx - sample_start
-
-    def _timesteps(self, sample: dict[str, Any]) -> list[int]:
-        if "timesteps" not in sample:
-            with sample["timesteps_path"].open("r", encoding="utf-8") as f:
-                sample["timesteps"] = json.load(f)
-        return sample["timesteps"]
-
-    def _prompt(self, sample: dict[str, Any]) -> str:
-        if "prompt" not in sample:
-            sample["prompt"] = self._load_json(sample["prompt_path"]).get("prompt", "")
-        return sample["prompt"]
+        weights = []
+        for item in self.items:
+            early_steps = max(1, math.ceil(item["num_steps"] * early_fraction))
+            weight = early_weight if item["inversion_step_idx"] < early_steps else 1.0
+            weights.append(weight)
+        return torch.tensor(weights, dtype=torch.double)

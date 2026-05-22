@@ -12,6 +12,7 @@ overwrite: false
 
 save_final_image: true
 save_latents: true
+save_pred_noises: true
 save_prompt: true
 save_meta: true
 save_timesteps: true
