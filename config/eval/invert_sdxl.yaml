@@ -1,3 +1,5 @@
+# @package _global_
+
 input_dir: data/processed/sdxl_trajectories
 overwrite: false
 

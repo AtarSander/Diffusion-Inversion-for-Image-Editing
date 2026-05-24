@@ -7,13 +7,22 @@ from pathlib import Path
 from typing import Any
 
 import hydra
+import torch
 from hydra.utils import to_absolute_path
 from loguru import logger
 from omegaconf import DictConfig, OmegaConf
 from PIL import Image
-import torch
 
 from diff_inversion.eval.diversity import lpips_calculate_distances
+from diff_inversion.eval.inversion_diagnostics import (
+    latent_location_matrix,
+    prediction_error_rows,
+    select_evenly,
+    summarize_prediction_error_rows,
+    write_latent_location_plot,
+    write_prediction_error_plot,
+    write_rows_csv,
+)
 from diff_inversion.eval.previews import write_image_comparison, write_noise_images
 from diff_inversion.eval.reporting import (
     log_to_wandb,
@@ -49,6 +58,16 @@ def _resolve_path(path: str | Path) -> Path:
     return Path(to_absolute_path(str(path))).resolve()
 
 
+def _config_get(config: Any, key: str, default: Any = None) -> Any:
+    if config is None:
+        return default
+    if isinstance(config, dict):
+        return config.get(key, default)
+    if isinstance(config, DictConfig):
+        return OmegaConf.select(config, key, default=default)
+    return getattr(config, key, default)
+
+
 def _as_sample_tensor(tensor: torch.Tensor) -> torch.Tensor:
     if tensor.ndim == 4 and tensor.shape[0] == 1:
         return tensor[0]
@@ -70,15 +89,32 @@ def _load_noise_paths(sample_dir: Path) -> list[Path]:
     return sorted(pred_noises_dir.glob("noise_*.pt"))
 
 
+def _load_latent_steps(sample_dir: Path) -> list[torch.Tensor]:
+    latents_dir = sample_dir / "latents"
+    latent_paths = sorted(latents_dir.glob("x_*.pt"))
+    if latent_paths:
+        return [_as_sample_tensor(_load_tensor(path)) for path in latent_paths]
+
+    trajectory_path = latents_dir / "trajectory.pt"
+    if not trajectory_path.exists():
+        raise FileNotFoundError(f"No latent tensors found in {latents_dir}")
+
+    trajectory = _load_tensor(trajectory_path)
+    if trajectory.ndim == 5 and trajectory.shape[1] == 1:
+        return [trajectory[idx, 0] for idx in range(trajectory.shape[0])]
+    if trajectory.ndim == 4:
+        return [trajectory[idx] for idx in range(trajectory.shape[0])]
+
+    raise ValueError(
+        "Expected stacked trajectory with shape [T,1,C,H,W] or [T,C,H,W], "
+        f"got {tuple(trajectory.shape)}"
+    )
+
+
 def _load_sample(
     sample_dir: Path,
 ) -> tuple[list[torch.Tensor], list[torch.Tensor], torch.Tensor | None, dict[str, Any]]:
-    latents_dir = sample_dir / "latents"
-    latent_paths = sorted(latents_dir.glob("x_*.pt"))
-    if not latent_paths:
-        raise FileNotFoundError(f"No latent tensors found in {latents_dir}")
-
-    steps = [_as_sample_tensor(_load_tensor(path)) for path in latent_paths]
+    steps = _load_latent_steps(sample_dir)
     pred_noise_paths = _load_noise_paths(sample_dir)
     pred_noises = [_as_sample_tensor(_load_tensor(path)) for path in pred_noise_paths]
     inverted_noise = _load_optional_sample_tensor(sample_dir / "inverted_noise.pt")
@@ -268,6 +304,18 @@ def _add_lpips_metrics(
         logger.warning("LPIPS disabled: {}", exc)
 
 
+def _matrix_rows(matrix: torch.Tensor) -> list[dict[str, float | int]]:
+    rows = []
+    for interpolation_idx in range(matrix.shape[0]):
+        row: dict[str, float | int] = {"interpolation_idx": interpolation_idx}
+        for denoising_idx in range(matrix.shape[1]):
+            row[f"denoising_{denoising_idx:03d}"] = float(
+                matrix[interpolation_idx, denoising_idx].item()
+            )
+        rows.append(row)
+    return rows
+
+
 def run_evaluation(
     input_dir: Path,
     output_dir: Path,
@@ -281,6 +329,7 @@ def run_evaluation(
     save_normality_plots: bool,
     calculate_lpips: bool,
     lpips_device: str,
+    inversion_diagnostics: Any | None = None,
 ) -> dict[str, Any]:
     sample_dirs = sorted(path for path in input_dir.glob("sample_*") if path.is_dir())
     if not sample_dirs:
@@ -304,6 +353,29 @@ def run_evaluation(
     noise_comparison_dir = output_dir / "noise_comparisons"
     normality_dir = output_dir / "normality"
     image_comparison_dir = output_dir / "image_comparisons"
+    diagnostics_enabled = bool(_config_get(inversion_diagnostics, "enabled", False))
+    diagnostic_sample_dirs = set(
+        select_evenly(sample_dirs, _config_get(inversion_diagnostics, "max_samples", 128))
+        if diagnostics_enabled
+        else []
+    )
+    diagnostics_max_elements = int(_config_get(inversion_diagnostics, "max_elements", 8192))
+    diagnostics_num_interpolation_points = _config_get(
+        inversion_diagnostics,
+        "latent_location_num_interpolation_points",
+        None,
+    )
+    diagnostics_target_eps_file_name = str(
+        _config_get(inversion_diagnostics, "target_eps_file_name", "target_eps.pt")
+    )
+    diagnostics_plain_threshold = _config_get(inversion_diagnostics, "plain_threshold", None)
+    if diagnostics_plain_threshold is None:
+        diagnostics_plain_threshold = plain_threshold
+    diagnostics_save_plots = bool(_config_get(inversion_diagnostics, "save_plots", True))
+    diagnostics_dir = output_dir / "inversion_diagnostics"
+    diagnostic_latent_location_matrices = []
+    diagnostic_prediction_rows = []
+    diagnostic_warnings = []
 
     for sample_dir in sample_dirs:
         steps, pred_noises, inverted_noise, metadata = _load_sample(sample_dir)
@@ -346,6 +418,34 @@ def run_evaluation(
             inverted_noises.append(inverted_noise)
             noise_comparisons.append(noise_comparison)
             normality_comparisons.append(normality_comparison)
+
+            if diagnostics_enabled and sample_dir in diagnostic_sample_dirs:
+                try:
+                    diagnostic_latent_location_matrices.append(
+                        latent_location_matrix(
+                            steps=steps,
+                            inverted_noise=inverted_noise,
+                            max_elements=diagnostics_max_elements,
+                            num_interpolation_points=diagnostics_num_interpolation_points,
+                        )
+                    )
+                    diagnostic_prediction_rows.extend(
+                        prediction_error_rows(
+                            sample_dir=sample_dir,
+                            steps=steps,
+                            metadata=metadata,
+                            target_eps_file_name=diagnostics_target_eps_file_name,
+                            plain_threshold=float(diagnostics_plain_threshold),
+                        )
+                    )
+                except Exception as exc:
+                    warning = f"{sample_dir.name}: {exc}"
+                    diagnostic_warnings.append(warning)
+                    logger.warning(
+                        "Inversion diagnostics skipped for {}: {}",
+                        sample_dir.name,
+                        exc,
+                    )
 
         image_comparison = _add_image_metrics(
             sample_name=sample_dir.name,
@@ -419,6 +519,45 @@ def run_evaluation(
             normality_comparisons,
         )
 
+    diagnostic_results: dict[str, Any] = {
+        "enabled": diagnostics_enabled,
+        "max_samples": _config_get(inversion_diagnostics, "max_samples", 128),
+        "selected_samples": len(diagnostic_sample_dirs) if diagnostics_enabled else 0,
+        "evaluated_samples": len(diagnostic_latent_location_matrices),
+    }
+    if diagnostic_warnings:
+        diagnostic_results["warnings"] = diagnostic_warnings
+    if diagnostic_latent_location_matrices:
+        mean_latent_location = torch.stack(diagnostic_latent_location_matrices).mean(dim=0)
+        latent_location_csv = diagnostics_dir / "latent_location_heatmap.csv"
+        write_rows_csv(latent_location_csv, _matrix_rows(mean_latent_location))
+        diagnostic_results["latent_location"] = {
+            "num_samples": len(diagnostic_latent_location_matrices),
+            "matrix_shape": list(mean_latent_location.shape),
+            "csv_path": latent_location_csv.as_posix(),
+        }
+        if diagnostics_save_plots:
+            heatmap_path = diagnostics_dir / "latent_location_heatmap.png"
+            write_latent_location_plot(heatmap_path, mean_latent_location)
+            diagnostic_results["latent_location"]["plot_path"] = heatmap_path.as_posix()
+    if diagnostic_prediction_rows:
+        prediction_rows_csv = diagnostics_dir / "prediction_error_samples.csv"
+        write_rows_csv(prediction_rows_csv, diagnostic_prediction_rows)
+        prediction_summary_rows = summarize_prediction_error_rows(diagnostic_prediction_rows)
+        prediction_summary_csv = diagnostics_dir / "prediction_error_by_step.csv"
+        write_rows_csv(prediction_summary_csv, prediction_summary_rows)
+        diagnostic_results["prediction_error"] = {
+            "num_rows": len(diagnostic_prediction_rows),
+            "num_summary_rows": len(prediction_summary_rows),
+            "samples_csv_path": prediction_rows_csv.as_posix(),
+            "summary_csv_path": prediction_summary_csv.as_posix(),
+            "by_step": prediction_summary_rows,
+        }
+        if diagnostics_save_plots:
+            prediction_plot_path = diagnostics_dir / "prediction_error_by_step.png"
+            write_prediction_error_plot(prediction_plot_path, prediction_summary_rows)
+            diagnostic_results["prediction_error"]["plot_path"] = prediction_plot_path.as_posix()
+
     return {
         "input_dir": input_dir.as_posix(),
         "num_samples": len(sample_dirs),
@@ -430,9 +569,11 @@ def run_evaluation(
             "If present, reconstructed.png is compared against final.png.",
             "LPIPS uses the AlexNet v0.1 perceptual metric when available.",
             "Plain-area reconstruction metrics use final.png local pixel differences.",
+            "Inversion diagnostics include latent-location and prediction-error metrics.",
             "Editing metrics need paired edited images.",
         ],
         "aggregate": aggregate,
+        "inversion_diagnostics": diagnostic_results,
         "samples": per_sample,
         "noise_comparisons": noise_comparisons,
         "normality_comparisons": normality_comparisons,
@@ -440,7 +581,7 @@ def run_evaluation(
     }
 
 
-@hydra.main(config_path="../../config/eval", config_name="run", version_base=None)
+@hydra.main(config_path="../../config", config_name="eval/run", version_base=None)
 def main(cfg: DictConfig) -> None:
     logger.info("Evaluation config:\n{}", OmegaConf.to_yaml(cfg))
     input_dir = _resolve_path(cfg.input_dir)
@@ -459,6 +600,7 @@ def main(cfg: DictConfig) -> None:
         save_normality_plots=cfg.save_normality_plots,
         calculate_lpips=cfg.calculate_lpips,
         lpips_device=cfg.lpips_device,
+        inversion_diagnostics=cfg.inversion_diagnostics,
     )
     write_outputs(results, output_dir)
     log_to_wandb(results, output_dir, cfg)

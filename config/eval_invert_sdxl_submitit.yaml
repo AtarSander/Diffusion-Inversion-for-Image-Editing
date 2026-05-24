@@ -1,0 +1,4 @@
+defaults:
+  - eval/invert_sdxl
+  - override /hydra/launcher: plgrid_submitit_slurm
+  - _self_

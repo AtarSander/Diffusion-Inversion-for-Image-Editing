@@ -119,7 +119,7 @@ def reconstruct_sample(
     logger.success("Saved reconstruction for {}", sample_dir)
 
 
-@hydra.main(config_path="../../config/eval", config_name="reconstruct_sdxl", version_base=None)
+@hydra.main(config_path="../../config", config_name="eval/reconstruct_sdxl", version_base=None)
 def main(cfg: DictConfig) -> None:
     logger.info("Reconstruction config:\n{}", OmegaConf.to_yaml(cfg))
     input_dir = _resolve_path(cfg.input_dir)

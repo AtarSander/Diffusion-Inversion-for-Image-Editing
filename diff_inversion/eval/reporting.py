@@ -187,7 +187,12 @@ def log_to_wandb(results: dict[str, Any], output_dir: Path, config: Any) -> None
             artifact.add_file(summary_json.as_posix())
         if summary_md.exists():
             artifact.add_file(summary_md.as_posix())
-        for dirname in ("noise_comparisons", "normality", "image_comparisons"):
+        for dirname in (
+            "noise_comparisons",
+            "normality",
+            "image_comparisons",
+            "inversion_diagnostics",
+        ):
             artifact_dir = output_dir / dirname
             if artifact_dir.exists():
                 artifact.add_dir(artifact_dir.as_posix(), name=dirname)
@@ -230,6 +235,16 @@ def write_outputs(results: dict[str, Any], output_dir: Path) -> None:
     if image_comparisons:
         _write_rows(output_dir / "image_comparisons", "image_comparisons", image_comparisons)
 
+    inversion_diagnostics = results.get("inversion_diagnostics") or {}
+    prediction_error = inversion_diagnostics.get("prediction_error") or {}
+    prediction_by_step = prediction_error.get("by_step") or []
+    if prediction_by_step:
+        _write_rows(
+            output_dir / "inversion_diagnostics",
+            "prediction_error_by_step",
+            prediction_by_step,
+        )
+
     aggregate = results["aggregate"]
     markdown_path = output_dir / "evaluation_summary.md"
     with markdown_path.open("w", encoding="utf-8") as f:
@@ -242,11 +257,32 @@ def write_outputs(results: dict[str, Any], output_dir: Path) -> None:
             f.write("- Normality artifacts: `normality/`\n\n")
         if image_comparisons:
             f.write("- Image reconstruction artifacts: `image_comparisons/`\n\n")
+        if inversion_diagnostics.get("enabled"):
+            f.write("- Inversion diagnostics: `inversion_diagnostics/`\n\n")
         f.write("## Aggregate\n\n")
         for name, metrics in aggregate.items():
             f.write(f"### {name}\n\n")
             for key, value in metrics.items():
                 f.write(f"- `{key}`: {value}\n")
+            f.write("\n")
+        if inversion_diagnostics.get("enabled"):
+            f.write("## Inversion Diagnostics\n\n")
+            f.write(f"- Selected samples: {inversion_diagnostics.get('selected_samples')}\n")
+            f.write(f"- Evaluated samples: {inversion_diagnostics.get('evaluated_samples')}\n")
+            latent_location = inversion_diagnostics.get("latent_location") or {}
+            if latent_location:
+                f.write(
+                    "- Latent-location heatmap: "
+                    f"`{latent_location.get('plot_path') or latent_location.get('csv_path')}`\n"
+                )
+            if prediction_error:
+                f.write(
+                    "- Prediction error by step: "
+                    f"`{prediction_error.get('plot_path') or prediction_error.get('summary_csv_path')}`\n"
+                )
+            warnings = inversion_diagnostics.get("warnings") or []
+            if warnings:
+                f.write(f"- Warnings: {len(warnings)} samples skipped\n")
             f.write("\n")
         f.write("## Notes\n\n")
         for note in results["notes"]:

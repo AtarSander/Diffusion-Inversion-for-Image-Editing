@@ -55,11 +55,25 @@ def _sample_dirs(input_dir: Path) -> list[Path]:
     return sorted(path for path in input_dir.glob("sample_*") if path.is_dir())
 
 
-def _final_latent_path(sample_dir: Path) -> Path:
+def _load_final_latent(sample_dir: Path) -> torch.Tensor:
     latent_paths = sorted((sample_dir / "latents").glob("x_*.pt"))
-    if not latent_paths:
+    if latent_paths:
+        return _load_tensor(latent_paths[-1])
+
+    trajectory_path = sample_dir / "latents" / "trajectory.pt"
+    if not trajectory_path.exists():
         raise FileNotFoundError(f"No generated latents found in {sample_dir / 'latents'}")
-    return latent_paths[-1]
+
+    trajectory = _load_tensor(trajectory_path)
+    if trajectory.ndim == 5 and trajectory.shape[1] == 1:
+        return trajectory[-1]
+    if trajectory.ndim == 4:
+        return trajectory[-1].unsqueeze(0)
+
+    raise ValueError(
+        "Expected stacked trajectory with shape [T,1,C,H,W] or [T,C,H,W], "
+        f"got {tuple(trajectory.shape)}"
+    )
 
 
 @torch.no_grad()
@@ -84,7 +98,7 @@ def invert_sample(
         raise FileNotFoundError(f"Prompt metadata not found: {prompt_path}")
     prompt = _read_json(prompt_path)["prompt"]
 
-    final_latent = _load_tensor(_final_latent_path(sample_dir)).to(
+    final_latent = _load_final_latent(sample_dir).to(
         device=pipe.device,
         dtype=pipe.unet.dtype,
     )
@@ -162,7 +176,7 @@ def invert_sample(
     logger.success("Saved inversion for {}", sample_dir)
 
 
-@hydra.main(config_path="../../config/eval", config_name="invert_sdxl", version_base=None)
+@hydra.main(config_path="../../config", config_name="eval/invert_sdxl", version_base=None)
 def main(cfg: DictConfig) -> None:
     logger.info("Inversion config:\n{}", OmegaConf.to_yaml(cfg))
     input_dir = _resolve_path(cfg.input_dir)
