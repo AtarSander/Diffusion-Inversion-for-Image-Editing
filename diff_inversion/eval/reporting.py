@@ -142,9 +142,14 @@ def log_to_wandb(results: dict[str, Any], output_dir: Path, config: Any) -> None
             "patch_size": _config_get(config, "patch_size"),
             "top_k": _config_get(config, "top_k"),
             "max_elements": _config_get(config, "max_elements"),
+            "save_noise_previews": _config_get(config, "save_noise_previews"),
+            "max_preview_samples": _config_get(config, "max_preview_samples"),
             "plain_threshold": _config_get(config, "plain_threshold"),
             "normality_sample_size": _config_get(config, "normality_sample_size"),
             "qq_num_quantiles": _config_get(config, "qq_num_quantiles"),
+            "calculate_lpips": _config_get(config, "calculate_lpips"),
+            "lpips_device": _config_get(config, "lpips_device"),
+            "lpips_batch_size": _config_get(config, "lpips_batch_size"),
         }
         run = wandb.init(
             project=_config_get(wandb_cfg, "project"),
@@ -165,6 +170,7 @@ def log_to_wandb(results: dict[str, Any], output_dir: Path, config: Any) -> None
 
         aggregate_metrics = flatten_metrics(results["aggregate"], prefix="aggregate")
         aggregate_metrics["num_samples"] = results["num_samples"]
+        aggregate_metrics["num_preview_samples"] = results["num_preview_samples"]
         wandb.log(aggregate_metrics)
 
         rows = build_samples_table_rows(results)

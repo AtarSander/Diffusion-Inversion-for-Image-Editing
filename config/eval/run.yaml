@@ -8,6 +8,7 @@ top_k: 20
 max_elements: 200000
 
 save_noise_previews: true
+max_preview_samples: 100
 plain_threshold: 0.025
 
 normality_sample_size: 5000
@@ -16,6 +17,7 @@ save_normality_plots: true
 
 calculate_lpips: true
 lpips_device: auto
+lpips_batch_size: 64
 
 inversion_diagnostics:
   enabled: true

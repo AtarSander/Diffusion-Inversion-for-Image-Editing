@@ -274,32 +274,43 @@ def _add_lpips_metrics(
     image_comparisons: list[dict[str, Any]],
     per_sample: dict[str, Any],
     device_name: str,
+    batch_size: int,
 ) -> None:
     if not image_comparisons:
         return
 
     try:
-        references = []
-        candidates = []
-        for row in image_comparisons:
-            final_image_path = Path(str(row["final_image_path"]))
-            reconstructed_image_path = Path(str(row["reconstructed_image_path"]))
-            with Image.open(final_image_path) as image:
-                reference_size = image.size
-            references.append(load_rgb_tensor(final_image_path))
-            candidates.append(load_rgb_tensor(reconstructed_image_path, size=reference_size))
-
         device = _lpips_device(device_name)
-        logger.info("Calculating LPIPS on {}", device)
-        distances = lpips_calculate_distances(
-            torch.stack(references),
-            torch.stack(candidates),
-            device=device,
-        )
-        for row, distance in zip(image_comparisons, distances, strict=True):
-            lpips_value = float(distance.item())
-            row["lpips"] = lpips_value
-            per_sample[row["sample"]]["reconstruction_image"]["lpips"] = lpips_value
+        logger.info("Calculating LPIPS on {} with batch_size={}", device, batch_size)
+        from lpips import LPIPS
+
+        loss_fn_alex = LPIPS(net="alex", version="0.1").to(device)
+        for start in range(0, len(image_comparisons), batch_size):
+            batch_rows = image_comparisons[start : start + batch_size]
+            references = []
+            candidates = []
+            for row in batch_rows:
+                final_image_path = Path(str(row["final_image_path"]))
+                reconstructed_image_path = Path(str(row["reconstructed_image_path"]))
+                with Image.open(final_image_path) as image:
+                    reference_size = image.size
+                references.append(load_rgb_tensor(final_image_path))
+                candidates.append(load_rgb_tensor(reconstructed_image_path, size=reference_size))
+
+            distances = lpips_calculate_distances(
+                torch.stack(references),
+                torch.stack(candidates),
+                device=device,
+                batch_size=batch_size,
+                loss_fn_alex=loss_fn_alex,
+            )
+            for row, distance in zip(batch_rows, distances, strict=True):
+                lpips_value = float(distance.item())
+                row["lpips"] = lpips_value
+                per_sample[row["sample"]]["reconstruction_image"]["lpips"] = lpips_value
+
+            if device.type == "cuda":
+                torch.cuda.empty_cache()
     except Exception as exc:
         logger.warning("LPIPS disabled: {}", exc)
 
@@ -323,12 +334,14 @@ def run_evaluation(
     top_k: int,
     max_elements: int,
     save_noise_previews: bool,
+    max_preview_samples: int | None,
     plain_threshold: float,
     normality_sample_size: int,
     qq_num_quantiles: int,
     save_normality_plots: bool,
     calculate_lpips: bool,
     lpips_device: str,
+    lpips_batch_size: int,
     inversion_diagnostics: Any | None = None,
 ) -> dict[str, Any]:
     sample_dirs = sorted(path for path in input_dir.glob("sample_*") if path.is_dir())
@@ -353,6 +366,7 @@ def run_evaluation(
     noise_comparison_dir = output_dir / "noise_comparisons"
     normality_dir = output_dir / "normality"
     image_comparison_dir = output_dir / "image_comparisons"
+    preview_sample_dirs = set(select_evenly(sample_dirs, max_preview_samples))
     diagnostics_enabled = bool(_config_get(inversion_diagnostics, "enabled", False))
     diagnostic_sample_dirs = set(
         select_evenly(sample_dirs, _config_get(inversion_diagnostics, "max_samples", 128))
@@ -378,6 +392,8 @@ def run_evaluation(
     diagnostic_warnings = []
 
     for sample_dir in sample_dirs:
+        save_sample_previews = save_noise_previews and sample_dir in preview_sample_dirs
+        save_sample_normality_plots = save_normality_plots and sample_dir in preview_sample_dirs
         steps, pred_noises, inverted_noise, metadata = _load_sample(sample_dir)
         sample_results = {
             "metadata": metadata,
@@ -409,8 +425,8 @@ def run_evaluation(
                 max_elements=max_elements,
                 normality_sample_size=normality_sample_size,
                 qq_num_quantiles=qq_num_quantiles,
-                save_noise_previews=save_noise_previews,
-                save_normality_plots=save_normality_plots,
+                save_noise_previews=save_sample_previews,
+                save_normality_plots=save_sample_normality_plots,
                 noise_comparison_dir=noise_comparison_dir,
                 normality_dir=normality_dir,
                 sample_results=sample_results,
@@ -452,7 +468,7 @@ def run_evaluation(
             sample_dir=sample_dir,
             metadata=metadata,
             plain_threshold=plain_threshold,
-            save_previews=save_noise_previews,
+            save_previews=save_sample_previews,
             image_comparison_dir=image_comparison_dir,
             sample_results=sample_results,
         )
@@ -463,7 +479,12 @@ def run_evaluation(
         final_latents.append(steps[-1])
 
     if calculate_lpips:
-        _add_lpips_metrics(image_comparisons, per_sample, lpips_device)
+        _add_lpips_metrics(
+            image_comparisons,
+            per_sample,
+            lpips_device,
+            batch_size=lpips_batch_size,
+        )
 
     initial_batch = torch.stack(initial_latents)
     final_batch = torch.stack(final_latents)
@@ -561,6 +582,7 @@ def run_evaluation(
     return {
         "input_dir": input_dir.as_posix(),
         "num_samples": len(sample_dirs),
+        "num_preview_samples": len(preview_sample_dirs) if save_noise_previews else 0,
         "notes": [
             "This runner evaluates saved generation trajectories.",
             "If present, pred_noises are included as forward DDIM reference targets.",
@@ -594,12 +616,14 @@ def main(cfg: DictConfig) -> None:
         top_k=cfg.top_k,
         max_elements=cfg.max_elements,
         save_noise_previews=cfg.save_noise_previews,
+        max_preview_samples=cfg.max_preview_samples,
         plain_threshold=cfg.plain_threshold,
         normality_sample_size=cfg.normality_sample_size,
         qq_num_quantiles=cfg.qq_num_quantiles,
         save_normality_plots=cfg.save_normality_plots,
         calculate_lpips=cfg.calculate_lpips,
         lpips_device=cfg.lpips_device,
+        lpips_batch_size=cfg.lpips_batch_size,
         inversion_diagnostics=cfg.inversion_diagnostics,
     )
     write_outputs(results, output_dir)
