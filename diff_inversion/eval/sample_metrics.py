@@ -13,6 +13,15 @@ from diff_inversion.eval.correlation import get_top_k_corr_in_patches
 from diff_inversion.eval.normality import kl_div, normal_dist_test, plt_qq, stats_from_tensor
 
 
+def evenly_spaced_indices(num_items: int, max_items: int) -> torch.Tensor:
+    return (
+        torch.linspace(0, num_items - 1, max_items, dtype=torch.float64)
+        .round()
+        .long()
+        .clamp_(0, num_items - 1)
+    )
+
+
 def load_rgb_tensor(path: Path, size: tuple[int, int] | None = None) -> torch.Tensor:
     with Image.open(path) as image:
         image = image.convert("RGB")
@@ -99,7 +108,7 @@ def image_pair_metrics(
         "mse": float(mse.item()),
         "rmse": float(rmse.item()),
         "mae": float(reconstruction_error(reference, candidate)),
-        "psnr_db": float(calculate_psnr(reference_hwc, candidate_hwc)),
+        "psnr_db": float(calculate_psnr(reference, candidate)),
         "ssim": float(calculate_ssim(reference_hwc, candidate_hwc)),
         "max_abs_error": float(delta.abs().max().item()),
         "mean_signed_error": float(delta.mean().item()),
@@ -118,7 +127,7 @@ def image_pair_metrics(
 def flat_sample(tensor: torch.Tensor, max_elements: int) -> torch.Tensor:
     flat = tensor.detach().float().cpu().flatten()
     if flat.numel() > max_elements:
-        idx = torch.linspace(0, flat.numel() - 1, max_elements).long()
+        idx = evenly_spaced_indices(flat.numel(), max_elements)
         flat = flat[idx]
     return flat
 
@@ -211,8 +220,8 @@ def write_qq_plot(
 
 
 def safe_cosine(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-    a = torch.nn.functional.normalize(a.flatten(), dim=0)
-    b = torch.nn.functional.normalize(b.flatten(), dim=0)
+    a = torch.nn.functional.normalize(a.detach().float().flatten(), dim=0)
+    b = torch.nn.functional.normalize(b.detach().float().flatten(), dim=0)
     return torch.sum(a * b)
 
 
@@ -260,7 +269,7 @@ def error_distribution_metrics(
     delta = candidate - reference
     flat_abs = delta.abs().flatten()
     if flat_abs.numel() > max_elements:
-        idx = torch.linspace(0, flat_abs.numel() - 1, max_elements).long()
+        idx = evenly_spaced_indices(flat_abs.numel(), max_elements)
         flat_abs = flat_abs[idx]
     quantiles = torch.quantile(
         flat_abs,

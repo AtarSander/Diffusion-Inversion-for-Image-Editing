@@ -85,11 +85,25 @@ def build_samples_table_rows(
             )
         if "noise_normality" in sample:
             row.update(flatten_metrics(sample["noise_normality"], prefix="noise_normality"))
+        if "plain_region_noise_latent" in sample:
+            row.update(
+                flatten_metrics(
+                    sample["plain_region_noise_latent"],
+                    prefix="plain_region_noise_latent",
+                )
+            )
         if "reconstruction_image" in sample:
             row.update(
                 flatten_metrics(
                     sample["reconstruction_image"],
                     prefix="reconstruction_image",
+                )
+            )
+        if "clip_text_alignment" in sample:
+            row.update(
+                flatten_metrics(
+                    sample["clip_text_alignment"],
+                    prefix="clip_text_alignment",
                 )
             )
         rows.append(row)
@@ -107,10 +121,23 @@ def _config_get(config: Any, key: str, default: Any = None) -> Any:
     return getattr(config, key, default)
 
 
+def _plain_config(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _plain_config(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain_config(item) for item in value]
+    if isinstance(value, (float, int, str, bool)) or value is None:
+        return value
+    if hasattr(value, "items"):
+        return {key: _plain_config(item) for key, item in value.items()}
+    return str(value)
+
+
 def log_to_wandb(results: dict[str, Any], output_dir: Path, config: Any) -> None:
     wandb_cfg = _config_get(config, "wandb", {})
     wandb_mode = _config_get(wandb_cfg, "mode", "disabled")
     if wandb_mode == "disabled":
+        logger.info("W&B logging disabled")
         return
 
     try:
@@ -135,10 +162,13 @@ def log_to_wandb(results: dict[str, Any], output_dir: Path, config: Any) -> None
     os.environ.setdefault("WANDB_DATA_DIR", data_dir.as_posix())
 
     try:
+        logger.info("Logging evaluation to Weights & Biases")
         wandb_config = {
             "input_dir": results["input_dir"],
             "output_dir": output_dir.as_posix(),
             "num_samples": results["num_samples"],
+            "total_num_samples": results["total_num_samples"],
+            "max_samples": _config_get(config, "max_samples"),
             "patch_size": _config_get(config, "patch_size"),
             "top_k": _config_get(config, "top_k"),
             "max_elements": _config_get(config, "max_elements"),
@@ -150,6 +180,9 @@ def log_to_wandb(results: dict[str, Any], output_dir: Path, config: Any) -> None
             "calculate_lpips": _config_get(config, "calculate_lpips"),
             "lpips_device": _config_get(config, "lpips_device"),
             "lpips_batch_size": _config_get(config, "lpips_batch_size"),
+            "clip_text_alignment": _plain_config(
+                _config_get(config, "clip_text_alignment")
+            ),
         }
         run = wandb.init(
             project=_config_get(wandb_cfg, "project"),
@@ -170,6 +203,7 @@ def log_to_wandb(results: dict[str, Any], output_dir: Path, config: Any) -> None
 
         aggregate_metrics = flatten_metrics(results["aggregate"], prefix="aggregate")
         aggregate_metrics["num_samples"] = results["num_samples"]
+        aggregate_metrics["total_num_samples"] = results["total_num_samples"]
         aggregate_metrics["num_preview_samples"] = results["num_preview_samples"]
         wandb.log(aggregate_metrics)
 
@@ -180,6 +214,29 @@ def log_to_wandb(results: dict[str, Any], output_dir: Path, config: Any) -> None
             for row in rows:
                 table.add_data(*[row.get(column) for column in columns])
             wandb.log({"samples_table": table})
+
+        diagnostic_media = {}
+        diagnostics = results.get("inversion_diagnostics") or {}
+        latent_plot_path = (diagnostics.get("latent_location") or {}).get("plot_path")
+        if latent_plot_path and Path(str(latent_plot_path)).exists():
+            diagnostic_media["diagnostics_latent_location_heatmap"] = wandb.Image(
+                str(latent_plot_path)
+            )
+        prediction_error = diagnostics.get("prediction_error") or {}
+        prediction_plot_path = prediction_error.get("plot_path")
+        if prediction_plot_path and Path(str(prediction_plot_path)).exists():
+            diagnostic_media["diagnostics_prediction_error_by_step"] = wandb.Image(
+                str(prediction_plot_path)
+            )
+        prediction_rows = prediction_error.get("by_step") or []
+        if prediction_rows:
+            columns = sorted({key for row in prediction_rows for key in row})
+            table = wandb.Table(columns=columns)
+            for row in prediction_rows:
+                table.add_data(*[row.get(column) for column in columns])
+            diagnostic_media["diagnostics_prediction_error_table"] = table
+        if diagnostic_media:
+            wandb.log(diagnostic_media)
 
         summary_json = output_dir / "evaluation_summary.json"
         summary_md = output_dir / "evaluation_summary.md"
@@ -197,6 +254,8 @@ def log_to_wandb(results: dict[str, Any], output_dir: Path, config: Any) -> None
             "noise_comparisons",
             "normality",
             "image_comparisons",
+            "masked_noise_regions",
+            "clip_text_alignment",
             "inversion_diagnostics",
         ):
             artifact_dir = output_dir / dirname
@@ -225,6 +284,7 @@ def _write_rows(output_dir: Path, stem: str, rows: list[dict[str, Any]]) -> None
 
 
 def write_outputs(results: dict[str, Any], output_dir: Path) -> None:
+    logger.info("Writing evaluation outputs to {}", output_dir)
     json_path = output_dir / "evaluation_summary.json"
     with json_path.open("w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)
@@ -240,6 +300,22 @@ def write_outputs(results: dict[str, Any], output_dir: Path) -> None:
     image_comparisons = results.get("image_comparisons") or []
     if image_comparisons:
         _write_rows(output_dir / "image_comparisons", "image_comparisons", image_comparisons)
+
+    masked_noise_region_comparisons = results.get("masked_noise_region_comparisons") or []
+    if masked_noise_region_comparisons:
+        _write_rows(
+            output_dir / "masked_noise_regions",
+            "masked_noise_regions",
+            masked_noise_region_comparisons,
+        )
+
+    clip_text_alignments = results.get("clip_text_alignments") or []
+    if clip_text_alignments:
+        _write_rows(
+            output_dir / "clip_text_alignment",
+            "clip_text_alignment",
+            clip_text_alignments,
+        )
 
     inversion_diagnostics = results.get("inversion_diagnostics") or {}
     prediction_error = inversion_diagnostics.get("prediction_error") or {}
@@ -263,6 +339,10 @@ def write_outputs(results: dict[str, Any], output_dir: Path) -> None:
             f.write("- Normality artifacts: `normality/`\n\n")
         if image_comparisons:
             f.write("- Image reconstruction artifacts: `image_comparisons/`\n\n")
+        if masked_noise_region_comparisons:
+            f.write("- Masked noise-region artifacts: `masked_noise_regions/`\n\n")
+        if clip_text_alignments:
+            f.write("- CLIP text-alignment artifacts: `clip_text_alignment/`\n\n")
         if inversion_diagnostics.get("enabled"):
             f.write("- Inversion diagnostics: `inversion_diagnostics/`\n\n")
         f.write("## Aggregate\n\n")

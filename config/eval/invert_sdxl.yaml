@@ -8,6 +8,8 @@ lora:
   checkpoint_path: null
   adapter_name: inversion
   scale: 1.0
+  active_steps: null
+  active_fraction: null
   r: 16
   lora_alpha: 8
   lora_dropout: 0.0

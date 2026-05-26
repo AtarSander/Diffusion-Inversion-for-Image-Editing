@@ -31,7 +31,13 @@ def _squeeze_sample_dim(tensor: torch.Tensor) -> torch.Tensor:
 def select_evenly(items: list[Path], max_items: int | None) -> list[Path]:
     if max_items is None or max_items <= 0 or len(items) <= max_items:
         return items
-    indices = torch.linspace(0, len(items) - 1, max_items).round().long().tolist()
+    indices = (
+        torch.linspace(0, len(items) - 1, max_items, dtype=torch.float64)
+        .round()
+        .long()
+        .clamp_(0, len(items) - 1)
+        .tolist()
+    )
     return [items[idx] for idx in sorted(set(indices))]
 
 
@@ -54,7 +60,17 @@ def latent_location_matrix(
         )
 
     if flat_steps.shape[1] > max_elements:
-        element_indices = torch.linspace(0, flat_steps.shape[1] - 1, max_elements).long()
+        element_indices = (
+            torch.linspace(
+                0,
+                flat_steps.shape[1] - 1,
+                max_elements,
+                dtype=torch.float64,
+            )
+            .round()
+            .long()
+            .clamp_(0, flat_steps.shape[1] - 1)
+        )
         flat_steps = flat_steps[:, element_indices]
         flat_inverted = flat_inverted[element_indices]
 

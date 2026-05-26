@@ -29,7 +29,15 @@ def _lora_config_kwargs(lora_cfg: DictConfig | dict[str, Any]) -> dict[str, Any]
         if isinstance(lora_cfg, DictConfig)
         else lora_cfg
     )
-    ignored_keys = {"enabled", "checkpoint_path", "adapter_name", "scale", "mode"}
+    ignored_keys = {
+        "enabled",
+        "checkpoint_path",
+        "adapter_name",
+        "scale",
+        "mode",
+        "active_steps",
+        "active_fraction",
+    }
     return {
         key: value for key, value in raw.items() if key not in ignored_keys and value is not None
     }
@@ -59,7 +67,20 @@ def configure_unet_lora(pipe, lora_cfg: DictConfig | dict[str, Any] | None) -> b
     if scale is not None and hasattr(pipe, "set_adapters"):
         pipe.set_adapters([adapter_name], adapter_weights=[float(scale)])
 
-    if hasattr(pipe.unet, "enable_adapters"):
-        pipe.unet.enable_adapters()
+    set_unet_lora_enabled(pipe, True)
 
     return True
+
+
+def set_unet_lora_enabled(pipe, enabled: bool) -> bool:
+    toggled = False
+    for module in pipe.unet.modules():
+        if module is pipe.unet:
+            continue
+        if hasattr(module, "enable_adapters"):
+            module.enable_adapters(enabled)
+            toggled = True
+
+    if not toggled:
+        logger.warning("No LoRA adapter layers exposed enable_adapters(); toggle skipped")
+    return toggled

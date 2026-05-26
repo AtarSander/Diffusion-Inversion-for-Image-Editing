@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +19,7 @@ from diff_inversion.data.generate_sdxl_samples import (
     encode_prompt_sdxl,
     make_pipe,
 )
-from diff_inversion.eval.lora import configure_unet_lora
+from diff_inversion.eval.lora import configure_unet_lora, set_unet_lora_enabled
 from diff_inversion.modeling.sdxl_sampling import predict_noise_sdxl
 
 
@@ -76,12 +77,32 @@ def _load_final_latent(sample_dir: Path) -> torch.Tensor:
     )
 
 
+def _lora_active_steps(lora_cfg, total_steps: int) -> int | None:
+    if lora_cfg is None or not bool(OmegaConf.select(lora_cfg, "enabled", default=False)):
+        return None
+
+    active_steps = OmegaConf.select(lora_cfg, "active_steps", default=None)
+    if active_steps is not None:
+        return max(0, min(total_steps, int(active_steps)))
+
+    active_fraction = OmegaConf.select(lora_cfg, "active_fraction", default=None)
+    if active_fraction is None:
+        return None
+
+    fraction = float(active_fraction)
+    if not 0.0 <= fraction <= 1.0:
+        raise ValueError(f"lora.active_fraction must be in [0, 1], got {fraction}")
+    return max(0, min(total_steps, math.ceil(total_steps * fraction)))
+
+
 @torch.no_grad()
 def invert_sample(
     pipe,
     sample_dir: Path,
     model_cfg,
     negative_prompt: str,
+    lora_cfg,
+    lora_loaded: bool,
     overwrite: bool,
 ) -> None:
     inverted_noise_path = sample_dir / "inverted_noise.pt"
@@ -106,6 +127,7 @@ def invert_sample(
     original_scheduler = pipe.scheduler
     inverse_scheduler = DDIMInverseScheduler.from_config(original_scheduler.config)
     pipe.scheduler = inverse_scheduler
+    active_lora_steps = None
     try:
         cond = encode_prompt_sdxl(
             pipe=pipe,
@@ -115,6 +137,18 @@ def invert_sample(
             width=model_cfg.width,
         )
         inverse_scheduler.set_timesteps(model_cfg.num_inference_steps, device=pipe.device)
+        active_lora_steps = (
+            _lora_active_steps(lora_cfg, total_steps=len(inverse_scheduler.timesteps))
+            if lora_loaded
+            else None
+        )
+        if active_lora_steps is not None:
+            logger.info(
+                "Using LoRA for the first {}/{} inversion steps in {}",
+                active_lora_steps,
+                len(inverse_scheduler.timesteps),
+                sample_dir.name,
+            )
 
         latents = final_latent
         inversion_trajectory = [latents.detach().cpu()]
@@ -125,9 +159,16 @@ def invert_sample(
             else int(inverse_scheduler.timesteps[0])
         ]
 
-        for timestep in tqdm(
-            inverse_scheduler.timesteps, desc=f"Inverting {sample_dir.name}", leave=False
+        current_lora_enabled = None
+        for step_idx, timestep in enumerate(
+            tqdm(inverse_scheduler.timesteps, desc=f"Inverting {sample_dir.name}", leave=False)
         ):
+            if active_lora_steps is not None:
+                should_enable_lora = step_idx < active_lora_steps
+                if should_enable_lora != current_lora_enabled:
+                    set_unet_lora_enabled(pipe, should_enable_lora)
+                    current_lora_enabled = should_enable_lora
+
             noise_pred = predict_noise_sdxl(
                 pipe=pipe,
                 latents=latents,
@@ -147,6 +188,8 @@ def invert_sample(
                 int(timestep.item()) if hasattr(timestep, "item") else int(timestep)
             )
     finally:
+        if lora_loaded and active_lora_steps is not None:
+            set_unet_lora_enabled(pipe, True)
         pipe.scheduler = original_scheduler
 
     inversion_latents_dir.mkdir(parents=True, exist_ok=True)
@@ -168,6 +211,8 @@ def invert_sample(
                 "inverted_noise": inverted_noise_path.name,
                 "inversion_trajectory_length": len(inversion_trajectory),
                 "inversion_pred_noises_length": len(inversion_pred_noises),
+                "inversion_lora_enabled": bool(lora_loaded),
+                "inversion_lora_active_steps": active_lora_steps,
             }
         )
         with meta_path.open("w", encoding="utf-8") as f:
@@ -190,7 +235,7 @@ def main(cfg: DictConfig) -> None:
         raise RuntimeError("This script is intended to run on CUDA.")
 
     pipe = make_pipe(run_cfg.model, device)
-    configure_unet_lora(pipe, cfg.lora)
+    lora_loaded = configure_unet_lora(pipe, cfg.lora)
     negative_prompt = str(run_cfg.negative_prompt)
     for sample_dir in tqdm(samples, desc="Running DDIM inversion"):
         invert_sample(
@@ -198,6 +243,8 @@ def main(cfg: DictConfig) -> None:
             sample_dir=sample_dir,
             model_cfg=run_cfg.model,
             negative_prompt=negative_prompt,
+            lora_cfg=cfg.lora,
+            lora_loaded=lora_loaded,
             overwrite=bool(cfg.overwrite),
         )
 

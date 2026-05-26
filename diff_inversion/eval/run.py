@@ -13,6 +13,7 @@ from loguru import logger
 from omegaconf import DictConfig, OmegaConf
 from PIL import Image
 
+from diff_inversion.eval.clip_alignment import add_clip_text_alignment_metrics
 from diff_inversion.eval.diversity import lpips_calculate_distances
 from diff_inversion.eval.inversion_diagnostics import (
     latent_location_matrix,
@@ -23,6 +24,7 @@ from diff_inversion.eval.inversion_diagnostics import (
     write_prediction_error_plot,
     write_rows_csv,
 )
+from diff_inversion.eval.normality import kl_div2
 from diff_inversion.eval.previews import write_image_comparison, write_noise_images
 from diff_inversion.eval.reporting import (
     log_to_wandb,
@@ -38,6 +40,7 @@ from diff_inversion.eval.sample_metrics import (
     pair_metrics,
     patch_topk_corr,
     per_channel_pair_metrics,
+    plain_area_mask,
     tensor_stats,
     trajectory_metrics,
     write_qq_plot,
@@ -139,6 +142,17 @@ def _prompt_text(metadata: dict[str, Any]) -> str:
     return ""
 
 
+def _target_prompt_text(metadata: dict[str, Any]) -> str:
+    prompt_record = metadata.get("prompt")
+    if not isinstance(prompt_record, dict):
+        return ""
+    for key in ("target_prompt", "edit_prompt", "prompt_target"):
+        value = prompt_record.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
 def _add_inversion_metrics(
     sample_name: str,
     sample_dir: Path,
@@ -148,12 +162,13 @@ def _add_inversion_metrics(
     max_elements: int,
     normality_sample_size: int,
     qq_num_quantiles: int,
+    plain_threshold: float,
     save_noise_previews: bool,
     save_normality_plots: bool,
     noise_comparison_dir: Path,
     normality_dir: Path,
     sample_results: dict[str, Any],
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
     initial_noise = steps[0]
     inversion_error = pair_metrics(initial_noise, inverted_noise)
     inversion_error_stats = error_distribution_metrics(
@@ -183,6 +198,14 @@ def _add_inversion_metrics(
     sample_results["inversion_error_per_channel"] = inversion_error_per_channel
     sample_results["inversion_error_structure"] = inversion_error_structure
     sample_results["noise_normality"] = normality_metrics
+    region_metrics = _masked_noise_latent_region_metrics(
+        sample_dir=sample_dir,
+        initial_noise=initial_noise,
+        inverted_noise=inverted_noise,
+        plain_threshold=plain_threshold,
+    )
+    if region_metrics is not None:
+        sample_results["plain_region_noise_latent"] = region_metrics
 
     noise_comparison = {
         "sample": sample_name,
@@ -193,6 +216,10 @@ def _add_inversion_metrics(
         **{f"error_stats/{key}": value for key, value in inversion_error_stats.items()},
         **{f"error_structure/{key}": value for key, value in inversion_error_structure.items()},
     }
+    if region_metrics is not None:
+        noise_comparison.update(
+            {f"plain_region/{key}": value for key, value in region_metrics.items()}
+        )
     if save_noise_previews:
         noise_comparison.update(
             write_noise_images(
@@ -221,7 +248,47 @@ def _add_inversion_metrics(
                 title=f"{sample_name}: initial vs inverted noise",
             )
         )
-    return noise_comparison, normality_comparison
+    return noise_comparison, normality_comparison, region_metrics
+
+
+def _masked_mean_abs(tensor: torch.Tensor, mask: torch.Tensor) -> float | None:
+    if not bool(mask.any()):
+        return None
+    return float(tensor[:, mask].abs().mean().item())
+
+
+def _masked_std(tensor: torch.Tensor, mask: torch.Tensor) -> float | None:
+    if not bool(mask.any()):
+        return None
+    return float(tensor[:, mask].std(unbiased=False).item())
+
+
+def _masked_noise_latent_region_metrics(
+    sample_dir: Path,
+    initial_noise: torch.Tensor,
+    inverted_noise: torch.Tensor,
+    plain_threshold: float,
+) -> dict[str, float | None] | None:
+    final_image_path = sample_dir / "final.png"
+    if not final_image_path.exists():
+        return None
+
+    image = load_rgb_tensor(
+        final_image_path,
+        size=(int(initial_noise.shape[-1]), int(initial_noise.shape[-2])),
+    )
+    plain_mask = plain_area_mask(image, threshold=plain_threshold)
+    non_plain_mask = ~plain_mask
+    delta = inverted_noise - initial_noise
+    return {
+        "plain_abs_error": _masked_mean_abs(delta, plain_mask),
+        "non_plain_abs_error": _masked_mean_abs(delta, non_plain_mask),
+        "plain_initial_noise_std": _masked_std(initial_noise, plain_mask),
+        "non_plain_initial_noise_std": _masked_std(initial_noise, non_plain_mask),
+        "plain_inverted_noise_std": _masked_std(inverted_noise, plain_mask),
+        "non_plain_inverted_noise_std": _masked_std(inverted_noise, non_plain_mask),
+        "plain_pixel_fraction": float(plain_mask.float().mean().item()),
+    }
 
 
 def _add_image_metrics(
@@ -248,10 +315,14 @@ def _add_image_metrics(
     comparison = {
         "sample": sample_name,
         "prompt": _prompt_text(metadata),
+        "source_prompt": _prompt_text(metadata),
         "final_image_path": final_image_path.as_posix(),
         "reconstructed_image_path": reconstructed_image_path.as_posix(),
         **metrics,
     }
+    target_prompt = _target_prompt_text(metadata)
+    if target_prompt:
+        comparison["target_prompt"] = target_prompt
     if save_previews:
         comparison.update(
             write_image_comparison(
@@ -330,6 +401,7 @@ def _matrix_rows(matrix: torch.Tensor) -> list[dict[str, float | int]]:
 def run_evaluation(
     input_dir: Path,
     output_dir: Path,
+    max_samples: int | None,
     patch_size: int,
     top_k: int,
     max_elements: int,
@@ -342,6 +414,7 @@ def run_evaluation(
     calculate_lpips: bool,
     lpips_device: str,
     lpips_batch_size: int,
+    clip_text_alignment: Any | None = None,
     inversion_diagnostics: Any | None = None,
 ) -> dict[str, Any]:
     sample_dirs = sorted(path for path in input_dir.glob("sample_*") if path.is_dir())
@@ -350,9 +423,16 @@ def run_evaluation(
             f"No sample directories found in {input_dir}. "
             "Generate data first with `make generate_trajectories`."
         )
+    total_sample_count = len(sample_dirs)
+    sample_dirs = select_evenly(sample_dirs, max_samples)
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    logger.info("Evaluating {} samples from {}", len(sample_dirs), input_dir)
+    logger.info(
+        "Evaluating {} of {} samples from {}",
+        len(sample_dirs),
+        total_sample_count,
+        input_dir,
+    )
 
     per_sample = {}
     initial_latents = []
@@ -363,6 +443,8 @@ def run_evaluation(
     noise_comparisons = []
     normality_comparisons = []
     image_comparisons = []
+    clip_text_alignments = []
+    masked_noise_region_comparisons = []
     noise_comparison_dir = output_dir / "noise_comparisons"
     normality_dir = output_dir / "normality"
     image_comparison_dir = output_dir / "image_comparisons"
@@ -416,7 +498,7 @@ def run_evaluation(
             last_pred_noises.append(pred_noises[-1])
 
         if inverted_noise is not None:
-            noise_comparison, normality_comparison = _add_inversion_metrics(
+            noise_comparison, normality_comparison, region_metrics = _add_inversion_metrics(
                 sample_name=sample_dir.name,
                 sample_dir=sample_dir,
                 steps=steps,
@@ -425,6 +507,7 @@ def run_evaluation(
                 max_elements=max_elements,
                 normality_sample_size=normality_sample_size,
                 qq_num_quantiles=qq_num_quantiles,
+                plain_threshold=plain_threshold,
                 save_noise_previews=save_sample_previews,
                 save_normality_plots=save_sample_normality_plots,
                 noise_comparison_dir=noise_comparison_dir,
@@ -434,6 +517,10 @@ def run_evaluation(
             inverted_noises.append(inverted_noise)
             noise_comparisons.append(noise_comparison)
             normality_comparisons.append(normality_comparison)
+            if region_metrics is not None:
+                masked_noise_region_comparisons.append(
+                    {"sample": sample_dir.name, **region_metrics}
+                )
 
             if diagnostics_enabled and sample_dir in diagnostic_sample_dirs:
                 try:
@@ -485,6 +572,11 @@ def run_evaluation(
             lpips_device,
             batch_size=lpips_batch_size,
         )
+    clip_text_alignments = add_clip_text_alignment_metrics(
+        image_comparisons,
+        per_sample,
+        clip_text_alignment,
+    )
 
     initial_batch = torch.stack(initial_latents)
     final_batch = torch.stack(final_latents)
@@ -511,6 +603,23 @@ def run_evaluation(
             max_elements=max_elements,
         )
         aggregate["initial_vs_inverted_noise"] = pair_metrics(initial_batch, inverted_batch)
+        latent_normality_corr = patch_topk_corr(
+            inverted_batch,
+            patch_size,
+            top_k,
+        )
+        latent_normality_kl = kl_div2(initial_batch, inverted_batch)
+        latent_normality_reverse_kl = kl_div2(inverted_batch, initial_batch)
+        aggregate["inverted_noise_patch_topk_correlation"] = latent_normality_corr
+        aggregate["latent_normality"] = {
+            "corr": float(latent_normality_corr["mean"]),
+            "corr_std": float(latent_normality_corr["std"]),
+            "kl": float(latent_normality_kl),
+            "reverse_kl": float(latent_normality_reverse_kl),
+            "symmetric_kl": float(
+                (latent_normality_kl + latent_normality_reverse_kl) / 2
+            ),
+        }
         aggregate["initial_vs_inverted_noise_per_channel"] = per_channel_pair_metrics(
             initial_batch,
             inverted_batch,
@@ -535,9 +644,18 @@ def run_evaluation(
             image_comparisons,
             prefixes_to_skip=("reference_", "candidate_"),
         )
+    if clip_text_alignments:
+        aggregate["clip_text_alignment"] = summarize_numeric_rows(
+            clip_text_alignments,
+            prefixes_to_skip=("source_", "candidate_", "target_"),
+        )
     if normality_comparisons:
         aggregate["initial_vs_inverted_noise_normality"] = summarize_numeric_rows(
             normality_comparisons,
+        )
+    if masked_noise_region_comparisons:
+        aggregate["initial_vs_inverted_noise_by_plain_region"] = summarize_numeric_rows(
+            masked_noise_region_comparisons,
         )
 
     diagnostic_results: dict[str, Any] = {
@@ -579,19 +697,23 @@ def run_evaluation(
             write_prediction_error_plot(prediction_plot_path, prediction_summary_rows)
             diagnostic_results["prediction_error"]["plot_path"] = prediction_plot_path.as_posix()
 
+    logger.info("Evaluation metrics collected; returning results")
     return {
         "input_dir": input_dir.as_posix(),
         "num_samples": len(sample_dirs),
+        "total_num_samples": total_sample_count,
         "num_preview_samples": len(preview_sample_dirs) if save_noise_previews else 0,
         "notes": [
             "This runner evaluates saved generation trajectories.",
             "If present, pred_noises are included as forward DDIM reference targets.",
             "If present, inverted_noise is compared against initial latent noise x_T.",
             "If present, normality diagnostics compare initial and inverted noise.",
+            "Latent normality follows the paper metrics: patch top-k correlation and per-location Gaussian KL.",
             "If present, reconstructed.png is compared against final.png.",
             "LPIPS uses the AlexNet v0.1 perceptual metric when available.",
             "Plain-area reconstruction metrics use final.png local pixel differences.",
             "Inversion diagnostics include latent-location and prediction-error metrics.",
+            "CLIP target and directional metrics require target_prompt.",
             "Editing metrics need paired edited images.",
         ],
         "aggregate": aggregate,
@@ -600,6 +722,8 @@ def run_evaluation(
         "noise_comparisons": noise_comparisons,
         "normality_comparisons": normality_comparisons,
         "image_comparisons": image_comparisons,
+        "clip_text_alignments": clip_text_alignments,
+        "masked_noise_region_comparisons": masked_noise_region_comparisons,
     }
 
 
@@ -612,6 +736,7 @@ def main(cfg: DictConfig) -> None:
     results = run_evaluation(
         input_dir=input_dir,
         output_dir=output_dir,
+        max_samples=cfg.max_samples,
         patch_size=cfg.patch_size,
         top_k=cfg.top_k,
         max_elements=cfg.max_elements,
@@ -624,10 +749,14 @@ def main(cfg: DictConfig) -> None:
         calculate_lpips=cfg.calculate_lpips,
         lpips_device=cfg.lpips_device,
         lpips_batch_size=cfg.lpips_batch_size,
+        clip_text_alignment=cfg.clip_text_alignment,
         inversion_diagnostics=cfg.inversion_diagnostics,
     )
+    logger.info("Evaluation returned results; writing outputs")
     write_outputs(results, output_dir)
+    logger.info("Evaluation outputs written; logging to W&B")
     log_to_wandb(results, output_dir, cfg)
+    logger.info("Evaluation run finished")
 
 
 if __name__ == "__main__":
