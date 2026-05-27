@@ -24,7 +24,7 @@ from diff_inversion.eval.inversion_diagnostics import (
     write_prediction_error_plot,
     write_rows_csv,
 )
-from diff_inversion.eval.normality import kl_div2
+from diff_inversion.eval.normality import kl_div, kl_div2
 from diff_inversion.eval.previews import write_image_comparison, write_noise_images
 from diff_inversion.eval.reporting import (
     log_to_wandb,
@@ -608,8 +608,10 @@ def run_evaluation(
             patch_size,
             top_k,
         )
-        latent_normality_kl = kl_div2(initial_batch, inverted_batch)
-        latent_normality_reverse_kl = kl_div2(inverted_batch, initial_batch)
+        latent_normality_kl = kl_div(initial_batch, inverted_batch)
+        latent_normality_reverse_kl = kl_div(inverted_batch, initial_batch)
+        per_location_kl = kl_div2(initial_batch, inverted_batch)
+        per_location_reverse_kl = kl_div2(inverted_batch, initial_batch)
         aggregate["inverted_noise_patch_topk_correlation"] = latent_normality_corr
         aggregate["latent_normality"] = {
             "corr": float(latent_normality_corr["mean"]),
@@ -618,6 +620,11 @@ def run_evaluation(
             "reverse_kl": float(latent_normality_reverse_kl),
             "symmetric_kl": float(
                 (latent_normality_kl + latent_normality_reverse_kl) / 2
+            ),
+            "per_location_kl": float(per_location_kl),
+            "per_location_reverse_kl": float(per_location_reverse_kl),
+            "per_location_symmetric_kl": float(
+                (per_location_kl + per_location_reverse_kl) / 2
             ),
         }
         aggregate["initial_vs_inverted_noise_per_channel"] = per_channel_pair_metrics(
@@ -708,7 +715,7 @@ def run_evaluation(
             "If present, pred_noises are included as forward DDIM reference targets.",
             "If present, inverted_noise is compared against initial latent noise x_T.",
             "If present, normality diagnostics compare initial and inverted noise.",
-            "Latent normality follows the paper metrics: patch top-k correlation and per-location Gaussian KL.",
+            "Latent normality uses patch top-k correlation and global Gaussian KL, matching the authors' KL definition; per-location KL is also reported separately.",
             "If present, reconstructed.png is compared against final.png.",
             "LPIPS uses the AlexNet v0.1 perceptual metric when available.",
             "Plain-area reconstruction metrics use final.png local pixel differences.",
