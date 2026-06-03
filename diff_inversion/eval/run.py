@@ -295,13 +295,14 @@ def _add_image_metrics(
     sample_name: str,
     sample_dir: Path,
     metadata: dict[str, Any],
+    reconstruction_image_name: str,
     plain_threshold: float,
     save_previews: bool,
     image_comparison_dir: Path,
     sample_results: dict[str, Any],
 ) -> dict[str, Any] | None:
     final_image_path = sample_dir / "final.png"
-    reconstructed_image_path = sample_dir / "reconstructed.png"
+    reconstructed_image_path = sample_dir / reconstruction_image_name
     if not final_image_path.exists() or not reconstructed_image_path.exists():
         return None
 
@@ -316,8 +317,11 @@ def _add_image_metrics(
         "sample": sample_name,
         "prompt": _prompt_text(metadata),
         "source_prompt": _prompt_text(metadata),
+        "sample_dir_path": sample_dir.as_posix(),
         "final_image_path": final_image_path.as_posix(),
         "reconstructed_image_path": reconstructed_image_path.as_posix(),
+        "candidate_image_path": reconstructed_image_path.as_posix(),
+        "reconstruction_image_name": reconstruction_image_name,
         **metrics,
     }
     target_prompt = _target_prompt_text(metadata)
@@ -414,6 +418,7 @@ def run_evaluation(
     calculate_lpips: bool,
     lpips_device: str,
     lpips_batch_size: int,
+    reconstruction_image_name: str = "reconstructed.png",
     clip_text_alignment: Any | None = None,
     inversion_diagnostics: Any | None = None,
 ) -> dict[str, Any]:
@@ -554,6 +559,7 @@ def run_evaluation(
             sample_name=sample_dir.name,
             sample_dir=sample_dir,
             metadata=metadata,
+            reconstruction_image_name=reconstruction_image_name,
             plain_threshold=plain_threshold,
             save_previews=save_sample_previews,
             image_comparison_dir=image_comparison_dir,
@@ -716,7 +722,7 @@ def run_evaluation(
             "If present, inverted_noise is compared against initial latent noise x_T.",
             "If present, normality diagnostics compare initial and inverted noise.",
             "Latent normality uses patch top-k correlation and global Gaussian KL, matching the authors' KL definition; per-location KL is also reported separately.",
-            "If present, reconstructed.png is compared against final.png.",
+            f"If present, {reconstruction_image_name} is compared against final.png.",
             "LPIPS uses the AlexNet v0.1 perceptual metric when available.",
             "Plain-area reconstruction metrics use final.png local pixel differences.",
             "Inversion diagnostics include latent-location and prediction-error metrics.",
@@ -756,6 +762,7 @@ def main(cfg: DictConfig) -> None:
         calculate_lpips=cfg.calculate_lpips,
         lpips_device=cfg.lpips_device,
         lpips_batch_size=cfg.lpips_batch_size,
+        reconstruction_image_name=str(cfg.reconstruction_image_name),
         clip_text_alignment=cfg.clip_text_alignment,
         inversion_diagnostics=cfg.inversion_diagnostics,
     )

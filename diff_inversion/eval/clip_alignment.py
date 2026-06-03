@@ -89,6 +89,9 @@ def add_clip_text_alignment_metrics(
     target_prompt = _config_get(config, "target_prompt", None)
     if target_prompt is not None:
         target_prompt = str(target_prompt)
+    candidate_image_name = _config_get(config, "candidate_image_name", None)
+    if candidate_image_name is not None:
+        candidate_image_name = str(candidate_image_name)
     model_name = str(_config_get(config, "model_name", "openai/clip-vit-base-patch32"))
     device = resolve_device(str(_config_get(config, "device", "auto")))
     batch_size = int(_config_get(config, "batch_size", 64))
@@ -98,6 +101,24 @@ def add_clip_text_alignment_metrics(
         source_prompt = str(row.get("source_prompt") or row.get("prompt") or "")
         row_target_prompt = row.get("target_prompt") or target_prompt
         row_target_prompt = str(row_target_prompt) if row_target_prompt else ""
+        candidate_image_path = (
+            Path(str(row["candidate_image_path"]))
+            if "candidate_image_path" in row
+            else None
+        )
+        if candidate_image_name:
+            sample_dir = row.get("sample_dir_path")
+            if sample_dir:
+                candidate_image_path = Path(str(sample_dir)) / candidate_image_name
+        if candidate_image_path is None:
+            candidate_image_path = Path(str(row["reconstructed_image_path"]))
+        if not candidate_image_path.exists():
+            logger.warning(
+                "CLIP text alignment skipped for {}: missing candidate image {}",
+                row.get("sample"),
+                candidate_image_path,
+            )
+            continue
         if not source_prompt:
             continue
         rows.append(
@@ -106,7 +127,7 @@ def add_clip_text_alignment_metrics(
                 "source_prompt": source_prompt,
                 "target_prompt": row_target_prompt,
                 "source_image_path": row["final_image_path"],
-                "candidate_image_path": row["reconstructed_image_path"],
+                "candidate_image_path": candidate_image_path.as_posix(),
             }
         )
 

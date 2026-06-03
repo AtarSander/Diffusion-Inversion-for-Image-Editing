@@ -2,6 +2,8 @@
 
 input_dir: data/processed/sdxl_trajectories
 output_name: reconstructed.png
+prompt_field: prompt
+guidance_scale: null
 overwrite: false
 
 lora:

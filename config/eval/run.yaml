@@ -7,6 +7,7 @@ defaults:
 input_dir: data/processed/sdxl_trajectories
 output_dir: reports/eval
 max_samples: null
+reconstruction_image_name: reconstructed.png
 
 patch_size: 8
 top_k: 20
@@ -29,6 +30,9 @@ clip_text_alignment:
   model_name: ${clip.model_name}
   device: ${device}
   batch_size: ${batch_size}
+  # Defaults to the reconstruction candidate used by image metrics.
+  # For editing eval, set this to edited.png.
+  candidate_image_name: null
   # If target_prompt is null, only CLIP Source is computed.
   # Target and directional CLIP require a real edit/target prompt.
   target_prompt: null

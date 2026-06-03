@@ -38,6 +38,7 @@ def reconstruct_from_noise_sdxl(
     prompt: str,
     negative_prompt: str,
     model_cfg,
+    guidance_scale: float | None = None,
 ) -> tuple[torch.Tensor, list[int]]:
     """Run DDIM denoising from an inverted noise latent back to an image latent."""
     if inverted_noise.ndim == 3:
@@ -55,12 +56,14 @@ def reconstruct_from_noise_sdxl(
         height=model_cfg.height,
         width=model_cfg.width,
     )
+    if guidance_scale is None:
+        guidance_scale = float(model_cfg.guidance_scale)
     return reconstruct_latent_sdxl(
         pipe=pipe,
         noise_latent=inverted_noise,
         cond=cond,
         num_inference_steps=model_cfg.num_inference_steps,
-        guidance_scale=model_cfg.guidance_scale,
+        guidance_scale=guidance_scale,
         progress_desc="Reconstructing",
     )
 
@@ -72,6 +75,8 @@ def reconstruct_sample(
     model_cfg,
     negative_prompt: str,
     output_name: str,
+    prompt_field: str,
+    guidance_scale: float | None,
     overwrite: bool,
 ) -> None:
     inverted_noise_path = sample_dir / "inverted_noise.pt"
@@ -88,7 +93,8 @@ def reconstruct_sample(
     prompt_path = sample_dir / "prompt.json"
     if not prompt_path.exists():
         raise FileNotFoundError(f"Prompt metadata not found: {prompt_path}")
-    prompt = _read_json(prompt_path)["prompt"]
+    prompt_record = _read_json(prompt_path)
+    prompt = prompt_record.get(prompt_field) or prompt_record["prompt"]
 
     inverted_noise = _load_tensor(inverted_noise_path)
     reconstructed_latent, timestep_values = reconstruct_from_noise_sdxl(
@@ -97,6 +103,7 @@ def reconstruct_sample(
         prompt=prompt,
         negative_prompt=negative_prompt,
         model_cfg=model_cfg,
+        guidance_scale=guidance_scale,
     )
     image = decode_latent_to_pil(pipe, reconstructed_latent.to(device=pipe.device))
     image.save(output_path)
@@ -135,6 +142,8 @@ def main(cfg: DictConfig) -> None:
     pipe = make_pipe(run_cfg.model, device)
     configure_unet_lora(pipe, cfg.lora)
     negative_prompt = str(run_cfg.negative_prompt)
+    guidance_scale = OmegaConf.select(cfg, "guidance_scale", default=None)
+    guidance_scale = None if guidance_scale is None else float(guidance_scale)
     for sample_dir in tqdm(samples, desc="Running SDXL reconstruction"):
         reconstruct_sample(
             pipe=pipe,
@@ -142,6 +151,8 @@ def main(cfg: DictConfig) -> None:
             model_cfg=run_cfg.model,
             negative_prompt=negative_prompt,
             output_name=str(cfg.output_name),
+            prompt_field=str(cfg.prompt_field),
+            guidance_scale=guidance_scale,
             overwrite=bool(cfg.overwrite),
         )
 
