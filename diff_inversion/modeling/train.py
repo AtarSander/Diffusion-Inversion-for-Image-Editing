@@ -1,3 +1,5 @@
+import re
+import warnings
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -54,6 +56,7 @@ class SDXLInversionTrainer:
         self.max_grad_norm = max_grad_norm
         self.lr_scheduler_config = lr_scheduler_config
         self.lr_scheduler = None
+        self._pending_lr_scheduler_state = None
         self.validation_preview_config = validation_preview_config
         self.height = int(height)
         self.width = int(width)
@@ -81,14 +84,34 @@ class SDXLInversionTrainer:
             sum(p.numel() for p in self.trainable_parameters),
         )
 
-    def train(self, train_loader: DataLoader, val_loader: DataLoader, max_train_steps: int):
-        self.global_step = 0
+    def train(
+        self,
+        train_loader: DataLoader,
+        val_loader: DataLoader,
+        max_train_steps: int,
+        initial_global_step: int = 0,
+        save_training_state: bool = False,
+    ):
+        self.global_step = int(initial_global_step)
         micro_step = 0
         recent_losses: list[float] = []
         self.lr_scheduler = self._build_lr_scheduler(max_train_steps)
+        if self._pending_lr_scheduler_state is not None:
+            if self.lr_scheduler is None:
+                raise RuntimeError(
+                    "Cannot restore LR scheduler state because no scheduler is configured."
+                )
+            self.lr_scheduler.load_state_dict(self._pending_lr_scheduler_state)
+            logger.info(
+                "Restored LR scheduler state at global_step={} lr={:.8g}",
+                self.global_step,
+                self.optimizer.param_groups[0]["lr"],
+            )
+        else:
+            self._advance_lr_scheduler(self.global_step)
 
         self.optimizer.zero_grad(set_to_none=True)
-        progress = tqdm(total=max_train_steps, desc="Training steps")
+        progress = tqdm(total=max_train_steps, initial=self.global_step, desc="Training steps")
 
         while self.global_step < max_train_steps:
             for batch in train_loader:
@@ -137,12 +160,16 @@ class SDXLInversionTrainer:
 
                 if self._should_run(self.save_every_steps):
                     self.save_checkpoint(f"checkpoint_step_{self.global_step}.pt")
+                    if save_training_state:
+                        self.save_training_state(f"training_state_step_{self.global_step}.pt")
 
                 if self.global_step >= max_train_steps:
                     break
 
         progress.close()
         self.save_checkpoint("checkpoint_final.pt")
+        if save_training_state:
+            self.save_training_state("training_state_final.pt")
         self.tracker.finish()
 
     def forward_loss(self, batch: dict[str, Any]) -> torch.Tensor:
@@ -245,14 +272,59 @@ class SDXLInversionTrainer:
         torch.save(get_peft_model_state_dict(self.model, adapter_name="inversion"), save_path)
         logger.info("Checkpoint saved to {}", save_path)
 
-    def load_checkpoint(self, filename: str):
-        checkpoint_path = self.checkpoint_dir / filename
+    def save_training_state(self, filename: str):
+        save_path = self.checkpoint_dir / filename
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        state = {
+            "global_step": self.global_step,
+            "lora_state_dict": get_peft_model_state_dict(self.model, adapter_name="inversion"),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "lr_scheduler_state_dict": (
+                self.lr_scheduler.state_dict() if self.lr_scheduler is not None else None
+            ),
+            "torch_rng_state": torch.get_rng_state(),
+            "cuda_rng_state_all": (
+                torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+            ),
+        }
+        torch.save(state, save_path)
+        logger.info("Training state saved to {}", save_path)
+
+    def load_checkpoint(self, filename: str | Path):
+        checkpoint_path = Path(filename)
+        if not checkpoint_path.is_absolute():
+            checkpoint_path = self.checkpoint_dir / checkpoint_path
         if not checkpoint_path.exists():
-            logger.warning("Checkpoint path does not exist: {}", checkpoint_path)
-            return
+            raise FileNotFoundError(f"Checkpoint path does not exist: {checkpoint_path}")
         state_dict = torch.load(checkpoint_path, map_location="cpu")
+        if isinstance(state_dict, dict) and "lora_state_dict" in state_dict:
+            state_dict = state_dict["lora_state_dict"]
         set_peft_model_state_dict(self.model, state_dict, adapter_name="inversion")
         logger.info("Checkpoint loaded from {}", checkpoint_path)
+
+    def load_training_state(self, filename: str | Path) -> int:
+        checkpoint_path = Path(filename)
+        if not checkpoint_path.is_absolute():
+            checkpoint_path = self.checkpoint_dir / checkpoint_path
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(f"Training state checkpoint does not exist: {checkpoint_path}")
+
+        state = torch.load(checkpoint_path, map_location="cpu")
+        if not isinstance(state, dict) or "lora_state_dict" not in state:
+            raise ValueError(f"Not a full training-state checkpoint: {checkpoint_path}")
+
+        set_peft_model_state_dict(self.model, state["lora_state_dict"], adapter_name="inversion")
+        if "optimizer_state_dict" in state:
+            self.optimizer.load_state_dict(state["optimizer_state_dict"])
+        self._pending_lr_scheduler_state = state.get("lr_scheduler_state_dict")
+        if state.get("torch_rng_state") is not None:
+            torch.set_rng_state(state["torch_rng_state"])
+        if torch.cuda.is_available() and state.get("cuda_rng_state_all") is not None:
+            torch.cuda.set_rng_state_all(state["cuda_rng_state_all"])
+
+        global_step = int(state.get("global_step", 0))
+        logger.info("Training state loaded from {} at global_step={}", checkpoint_path, global_step)
+        return global_step
 
     def _freeze_pipeline_components(self) -> None:
         for component in (self.pipe.text_encoder, self.pipe.text_encoder_2, self.pipe.vae):
@@ -292,6 +364,24 @@ class SDXLInversionTrainer:
             max_train_steps,
         )
         return scheduler
+
+    def _advance_lr_scheduler(self, global_step: int) -> None:
+        if self.lr_scheduler is None or global_step <= 0:
+            return
+
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="Detected call of `lr_scheduler.step\\(\\)` before `optimizer.step\\(\\)`",
+            )
+            for _ in range(global_step):
+                self.lr_scheduler.step()
+
+        logger.info(
+            "Advanced LR scheduler to global_step={} lr={:.8g}",
+            global_step,
+            self.optimizer.param_groups[0]["lr"],
+        )
 
     def _non_finite_loss_message(
         self,
@@ -384,6 +474,26 @@ def get_lora_config(lora_config: DictConfig) -> LoraConfig:
     return LoraConfig(**lora_config)
 
 
+def infer_step_from_checkpoint_path(path: str | Path) -> int | None:
+    match = re.search(r"(?:checkpoint|training_state)_step_(\d+)\.pt$", Path(path).name)
+    return int(match.group(1)) if match else None
+
+
+def _resolve_resume_step(resume_cfg: DictConfig, checkpoint_path: Path) -> int:
+    configured_step = resume_cfg.get("global_step")
+    if configured_step is not None:
+        return int(configured_step)
+
+    inferred_step = infer_step_from_checkpoint_path(checkpoint_path)
+    if inferred_step is not None:
+        return inferred_step
+
+    raise ValueError(
+        "resume.global_step is required when the checkpoint filename does not contain "
+        "`checkpoint_step_<step>.pt` or `training_state_step_<step>.pt`."
+    )
+
+
 @hydra.main(config_path="../../config", config_name="train_config", version_base=None)
 def main(cfg: DictConfig) -> None:
     logger.info("Training {}", cfg.model.model_id)
@@ -401,6 +511,8 @@ def main(cfg: DictConfig) -> None:
         project=cfg.wandb.project,
         name=cfg.run_name,
         mode=cfg.wandb.mode,
+        id=cfg.wandb.get("id"),
+        resume=cfg.wandb.get("resume"),
         config=OmegaConf.to_container(cfg, resolve=True),
     )
 
@@ -426,6 +538,37 @@ def main(cfg: DictConfig) -> None:
             cfg if OmegaConf.select(cfg, "validation_preview.enabled", default=False) else None
         ),
     )
+
+    initial_global_step = 0
+    resume_cfg = cfg.get("resume")
+    if resume_cfg is not None and bool(resume_cfg.get("enabled", False)):
+        checkpoint_path_cfg = resume_cfg.get("checkpoint_path")
+        if not checkpoint_path_cfg:
+            raise ValueError("resume.checkpoint_path must be set when resume.enabled=true.")
+
+        checkpoint_path = Path(str(checkpoint_path_cfg))
+        resume_mode = str(resume_cfg.get("mode", "adapter"))
+        if resume_mode == "training_state":
+            initial_global_step = trainer.load_training_state(checkpoint_path)
+        elif resume_mode == "adapter":
+            trainer.load_checkpoint(checkpoint_path)
+            initial_global_step = _resolve_resume_step(resume_cfg, checkpoint_path)
+            logger.warning(
+                "Adapter-only resume from {} at global_step={}. "
+                "Optimizer moments are not restored; LR scheduler will be advanced to this step.",
+                checkpoint_path,
+                initial_global_step,
+            )
+        else:
+            raise ValueError(
+                f"Unknown resume.mode={resume_mode!r}; use 'adapter' or 'training_state'."
+            )
+
+        if initial_global_step >= int(cfg.max_train_steps):
+            raise ValueError(
+                "Resume step is not below max_train_steps: "
+                f"resume step={initial_global_step}, max_train_steps={cfg.max_train_steps}."
+            )
 
     train_dataset = LatentTrajectoryDataset(
         cfg.data.root_dir,
@@ -461,7 +604,13 @@ def main(cfg: DictConfig) -> None:
         pin_memory=cfg.data.pin_memory,
     )
 
-    trainer.train(train_loader, val_loader, max_train_steps=cfg.max_train_steps)
+    trainer.train(
+        train_loader,
+        val_loader,
+        max_train_steps=cfg.max_train_steps,
+        initial_global_step=initial_global_step,
+        save_training_state=bool(cfg.get("save_training_state", False)),
+    )
 
 
 if __name__ == "__main__":
