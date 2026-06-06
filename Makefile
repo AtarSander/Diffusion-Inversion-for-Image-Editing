@@ -7,6 +7,15 @@ PYTHON_VERSION = 3.11
 UV = uv
 UV_CACHE_DIR = $(CURDIR)/.uv-cache
 PYTHON_INTERPRETER = $(UV) run python
+TRAJ_OUTPUT_DIR ?= data/processed/sdxl_trajectories
+TRAJ_NUM_SAMPLES ?= 4
+TRAJ_START_INDEX ?= 0
+TRAJ_SEED ?= 1234
+TRAJ_GUIDANCE_SCALE ?= 1.0
+TRAJ_NUM_INFERENCE_STEPS ?= 50
+INVERT_OVERRIDES ?=
+RECON_OVERRIDES ?=
+EVAL_OVERRIDES ?=
 
 export UV_CACHE_DIR
 
@@ -57,9 +66,40 @@ data-prepare-recap-coco:
 .PHONY: data-recap-coco
 data-recap-coco: data-download-recap-coco data-prepare-recap-coco
 
-.PHONY: generate_trajectories
+## Generate baseline SDXL forward trajectories and predicted noises
+.PHONY: generate_trajectories generate-baseline-samples
 generate_trajectories:
-	$(UV) run python -m diff_inversion.data.generate_sdxl_samples
+	$(UV) run python -m diff_inversion.data.generate_sdxl_samples \
+		output_dir=$(TRAJ_OUTPUT_DIR) \
+		num_samples=$(TRAJ_NUM_SAMPLES) \
+		start_index=$(TRAJ_START_INDEX) \
+		seed=$(TRAJ_SEED) \
+		model.guidance_scale=$(TRAJ_GUIDANCE_SCALE) \
+		model.num_inference_steps=$(TRAJ_NUM_INFERENCE_STEPS)
+
+generate-baseline-samples: generate_trajectories
+
+
+## Run optional baseline DDIM inversion over generated SDXL trajectory samples
+.PHONY: invert-baseline-samples
+invert-baseline-samples:
+	$(UV) run python -m diff_inversion.eval.invert_sdxl $(INVERT_OVERRIDES)
+
+
+## Reconstruct baseline SDXL images from saved inverted DDIM noise
+.PHONY: reconstruct-baseline-samples
+reconstruct-baseline-samples:
+	$(UV) run python -m diff_inversion.eval.reconstruct_sdxl $(RECON_OVERRIDES)
+
+
+## Run lightweight evaluation over generated SDXL trajectory artifacts
+.PHONY: evaluate evaluate-wandb
+evaluate:
+	$(UV) run python -m diff_inversion.eval.run $(EVAL_OVERRIDES)
+
+## Run evaluation and log metrics to Weights & Biases
+evaluate-wandb:
+	$(UV) run python -m diff_inversion.eval.run wandb.mode=online $(EVAL_OVERRIDES)
 
 
 

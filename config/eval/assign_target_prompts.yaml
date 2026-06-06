@@ -1,0 +1,11 @@
+# @package _global_
+
+input_dir: data/processed/sdxl_trajectories
+
+# If null, target prompts are taken from the same input_dir by shifting source prompts.
+target_prompts_jsonl: null
+prompt_column: prompt
+target_offset: 1
+
+overwrite: false
+

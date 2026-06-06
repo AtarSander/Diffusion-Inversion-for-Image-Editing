@@ -3,7 +3,7 @@ defaults:
   - model: sdxl
   - _self_
 
-output_dir: /net/tscratch/people/plgatarsander/ZZSN_data/processed/sdxl_trajectories
+output_dir: /net/tscratch/people/plgmichalsadowski/ZZSN_data/processed/sdxl_trajectories
 num_samples: 27396
 start_index: 0
 seed: 1234

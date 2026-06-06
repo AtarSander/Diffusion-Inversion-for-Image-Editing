@@ -3,8 +3,8 @@ repo_type: dataset
 revision: main
 name: recap_coco
 split: train
-parquet_path: /net/tscratch/people/plgatarsander/ZZSN_data/raw/recap_coco/new_data.parquet
-prompts_jsonl: /net/tscratch/people/plgatarsander/ZZSN_data/processed/recap_coco/train.jsonl
+parquet_path: /net/tscratch/people/plgmichalsadowski/ZZSN_data/raw/recap_coco/new_data.parquet
+prompts_jsonl: /net/tscratch/people/plgmichalsadowski/ZZSN_data/processed/recap_coco/train.jsonl
 prompt_column: recaption
 keep_columns:
   - image_id
@@ -14,8 +14,8 @@ keep_columns:
 drop_columns:
   - image
 
-output_dir: /net/tscratch/people/plgatarsander/ZZSN_data/raw/recap_coco
-processed_dir: /net/tscratch/people/plgatarsander/ZZSN_data/processed/recap_coco
+output_dir: /net/tscratch/people/plgmichalsadowski/ZZSN_data/raw/recap_coco
+processed_dir: /net/tscratch/people/plgmichalsadowski/ZZSN_data/processed/recap_coco
 prepare_input_parquet: null
 prepare_output_dir: null
 deduplicate: true

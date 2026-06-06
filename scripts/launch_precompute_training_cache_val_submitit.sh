@@ -1,6 +1,6 @@
 #!/bin/bash
 
-PYTHON_BIN=/net/tscratch/people/plgatarsander/venv/bin/python3
+PYTHON_BIN=/net/tscratch/people/plgmichalsadowski/venv/bin/python3
 
 if [[ -x "$PYTHON_BIN" ]]; then
   exec "$PYTHON_BIN" diff_inversion/data/precompute_training_cache.py \

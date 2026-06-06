@@ -1,0 +1,56 @@
+# @package _global_
+
+defaults:
+  - clip_dino
+  - _self_
+
+input_dir: data/processed/sdxl_trajectories
+output_dir: reports/eval
+max_samples: null
+reconstruction_image_name: reconstructed.png
+
+patch_size: 8
+top_k: 20
+max_elements: 200000
+
+save_noise_previews: true
+max_preview_samples: 100
+plain_threshold: 0.025
+
+normality_sample_size: 5000
+qq_num_quantiles: 201
+save_normality_plots: true
+
+calculate_lpips: true
+lpips_device: auto
+lpips_batch_size: 64
+
+clip_text_alignment:
+  enabled: false
+  model_name: ${clip.model_name}
+  device: ${device}
+  batch_size: ${batch_size}
+  # Defaults to the reconstruction candidate used by image metrics.
+  # For editing eval, set this to edited.png.
+  candidate_image_name: null
+  # If target_prompt is null, only CLIP Source is computed.
+  # Target and directional CLIP require a real edit/target prompt.
+  target_prompt: null
+
+inversion_diagnostics:
+  enabled: true
+  max_samples: 128
+  max_elements: 8192
+  latent_location_num_interpolation_points: null
+  target_eps_file_name: target_eps.pt
+  plain_threshold: null
+  save_plots: true
+
+wandb:
+  mode: disabled
+  project: diff-inversion
+  entity: null
+  group: null
+  run_name: null
+  artifact_name: null
+  tags: null

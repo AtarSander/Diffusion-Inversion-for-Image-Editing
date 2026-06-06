@@ -5,33 +5,33 @@ defaults:
 
 job_id: 0
 job_specs:
-  - root_dir: /net/tscratch/people/plgatarsander/ZZSN_data/processed/sdxl_trajectories_stacked/train
+  - root_dir: /net/tscratch/people/plgmichalsadowski/ZZSN_data/processed/sdxl_trajectories_stacked/train
     start_index: 0
     num_samples: 3425
-  - root_dir: /net/tscratch/people/plgatarsander/ZZSN_data/processed/sdxl_trajectories_stacked/train
+  - root_dir: /net/tscratch/people/plgmichalsadowski/ZZSN_data/processed/sdxl_trajectories_stacked/train
     start_index: 3425
     num_samples: 3425
-  - root_dir: /net/tscratch/people/plgatarsander/ZZSN_data/processed/sdxl_trajectories_stacked/train
+  - root_dir: /net/tscratch/people/plgmichalsadowski/ZZSN_data/processed/sdxl_trajectories_stacked/train
     start_index: 6850
     num_samples: 3425
-  - root_dir: /net/tscratch/people/plgatarsander/ZZSN_data/processed/sdxl_trajectories_stacked/train
+  - root_dir: /net/tscratch/people/plgmichalsadowski/ZZSN_data/processed/sdxl_trajectories_stacked/train
     start_index: 10275
     num_samples: 3425
-  - root_dir: /net/tscratch/people/plgatarsander/ZZSN_data/processed/sdxl_trajectories_stacked/train
+  - root_dir: /net/tscratch/people/plgmichalsadowski/ZZSN_data/processed/sdxl_trajectories_stacked/train
     start_index: 13700
     num_samples: 3424
-  - root_dir: /net/tscratch/people/plgatarsander/ZZSN_data/processed/sdxl_trajectories_stacked/train
+  - root_dir: /net/tscratch/people/plgmichalsadowski/ZZSN_data/processed/sdxl_trajectories_stacked/train
     start_index: 17124
     num_samples: 3424
-  - root_dir: /net/tscratch/people/plgatarsander/ZZSN_data/processed/sdxl_trajectories_stacked/train
+  - root_dir: /net/tscratch/people/plgmichalsadowski/ZZSN_data/processed/sdxl_trajectories_stacked/train
     start_index: 20548
     num_samples: 3424
-  - root_dir: /net/tscratch/people/plgatarsander/ZZSN_data/processed/sdxl_trajectories_stacked/train
+  - root_dir: /net/tscratch/people/plgmichalsadowski/ZZSN_data/processed/sdxl_trajectories_stacked/train
     start_index: 23972
     num_samples: 3424
-  - root_dir: /net/tscratch/people/plgatarsander/ZZSN_data/processed/sdxl_trajectories_stacked/val
+  - root_dir: /net/tscratch/people/plgmichalsadowski/ZZSN_data/processed/sdxl_trajectories_stacked/val
     start_index: 0
     num_samples: 1522
-  - root_dir: /net/tscratch/people/plgatarsander/ZZSN_data/processed/sdxl_trajectories_stacked/test
+  - root_dir: /net/tscratch/people/plgmichalsadowski/ZZSN_data/processed/sdxl_trajectories_stacked/test
     start_index: 0
     num_samples: 1523

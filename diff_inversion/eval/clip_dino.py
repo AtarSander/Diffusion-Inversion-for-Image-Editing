@@ -31,6 +31,21 @@ def get_clip(model_name: str, device: str | torch.device = "auto"):
     return clip_processor, clip_model
 
 
+def output_to_feature_tensor(output) -> torch.Tensor:
+    if isinstance(output, torch.Tensor):
+        return output
+    for attr in ("image_embeds", "text_embeds", "pooler_output"):
+        value = getattr(output, attr, None)
+        if isinstance(value, torch.Tensor):
+            return value
+    last_hidden_state = getattr(output, "last_hidden_state", None)
+    if isinstance(last_hidden_state, torch.Tensor):
+        return last_hidden_state[:, 0, :]
+    if isinstance(output, (tuple, list)) and output and isinstance(output[0], torch.Tensor):
+        return output[0]
+    raise TypeError(f"Unsupported CLIP feature output type: {type(output)!r}")
+
+
 def get_dino(
     model_name: str,
     device: str | torch.device = "auto",
@@ -56,7 +71,7 @@ def get_clip_features(
     for batch_ids in range(0, len(imgs), batch_size):
         batch = imgs[batch_ids : batch_ids + batch_size]
         clip_batch_in = clip_processor(images=batch, return_tensors="pt").pixel_values.to(device)
-        feats = clip_model.get_image_features(clip_batch_in)
+        feats = output_to_feature_tensor(clip_model.get_image_features(clip_batch_in))
         outs.append(feats.detach().cpu())
     return torch.cat(outs)
 
