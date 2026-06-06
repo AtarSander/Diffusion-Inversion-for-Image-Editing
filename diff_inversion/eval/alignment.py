@@ -1,12 +1,17 @@
-import cv2
 import numpy as np
 import torch
 from skimage.metrics import structural_similarity as ssim
 from sklearn.cross_decomposition import CCA
 
 
-def calculate_psnr(img1, img2):
-    return cv2.PSNR(img1, img2)
+def calculate_psnr(img1, img2, data_range: float = 1.0):
+    img1_tensor = torch.as_tensor(img1, dtype=torch.float32)
+    img2_tensor = torch.as_tensor(img2, dtype=torch.float32)
+    mse = (img1_tensor - img2_tensor).pow(2).mean()
+    if mse.item() == 0:
+        return float("inf")
+    data_range_tensor = torch.tensor(data_range, dtype=mse.dtype, device=mse.device)
+    return float(20 * torch.log10(data_range_tensor) - 10 * torch.log10(mse))
 
 
 def calculate_ssim(img1, img2):

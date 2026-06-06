@@ -1,0 +1,23 @@
+# @package _global_
+
+input_dir: data/processed/sdxl_trajectories
+output_name: reconstructed.png
+prompt_field: prompt
+guidance_scale: null
+overwrite: false
+
+lora:
+  enabled: false
+  checkpoint_path: null
+  adapter_name: inversion
+  scale: 1.0
+  r: 16
+  lora_alpha: 8
+  lora_dropout: 0.0
+  bias: none
+  init_lora_weights: gaussian
+  target_modules:
+    - to_k
+    - to_q
+    - to_v
+    - to_out.0

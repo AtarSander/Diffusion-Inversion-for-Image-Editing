@@ -52,8 +52,10 @@ def lpips_calculate_distances(
     tensors2: Union[torch.Tensor, List[PIL.Image.Image]],
     device: torch.device,
     batch_size: int = 64,
+    loss_fn_alex: torch.nn.Module | None = None,
 ) -> torch.Tensor:
-    loss_fn_alex = lpips.LPIPS(net="alex", version="0.1").to(device)
+    if loss_fn_alex is None:
+        loss_fn_alex = lpips.LPIPS(net="alex", version="0.1").to(device)
     tensors1 = tensor_to_lpips_tensor(tensors1)
     tensors2 = tensor_to_lpips_tensor(tensors2)
 

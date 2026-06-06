@@ -1,7 +1,7 @@
 # @package _global_
 
 run_name: sdxl-inversion-lora-r16-lr5e-5-cosine-bf16
-checkpoint_dir: /net/tscratch/people/plgatarsander/ZZSN_data/checkpoints/sdxl_inversion_lora_r16_lr5e-5_cosine_bf16
+checkpoint_dir: /net/tscratch/people/plgmichalsadowski/ZZSN_data/checkpoints/sdxl_inversion_lora_r16_lr5e-5_cosine_bf16
 
 max_train_steps: 171225
 learning_rate: 5e-5
@@ -25,9 +25,26 @@ wandb:
   project: diff-inversion
   mode: online
 
+validation_preview:
+  enabled: false
+  every_steps: 5000
+  num_samples: 2
+  output_dir: null
+  final_image_name: final.png
+  plain_threshold: 0.03
+  calculate_lpips: false
+  log_predicted_noise: true
+  log_inverted_noise: true
+  use_lora_for_reconstruction: false
+  noise_inversion_steps:
+    - 0
+    - 10
+    - 25
+    - 49
+
 data:
-  root_dir: /net/tscratch/people/plgatarsander/ZZSN_data/processed/sdxl_trajectories_stacked/train
-  val_root_dir: /net/tscratch/people/plgatarsander/ZZSN_data/processed/sdxl_trajectories_stacked/val
+  root_dir: /net/tscratch/people/plgmichalsadowski/ZZSN_data/processed/sdxl_trajectories_stacked/train
+  val_root_dir: /net/tscratch/people/plgmichalsadowski/ZZSN_data/processed/sdxl_trajectories_stacked/val
   latents_file_name: trajectory.pt
   conditioning_file_name: conditioning.pt
   targets_dir_name: targets

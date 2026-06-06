@@ -39,6 +39,7 @@ class SDXLInversionTrainer:
         max_val_batches: int | None,
         max_grad_norm: float | None = None,
         gradient_checkpointing: bool = False,
+        validation_preview_config: DictConfig | None = None,
     ):
         self.pipe = pipe
         self.lora_config = lora_config
@@ -53,6 +54,7 @@ class SDXLInversionTrainer:
         self.max_grad_norm = max_grad_norm
         self.lr_scheduler_config = lr_scheduler_config
         self.lr_scheduler = None
+        self.validation_preview_config = validation_preview_config
         self.height = int(height)
         self.width = int(width)
 
@@ -131,6 +133,7 @@ class SDXLInversionTrainer:
                         self.validation_epoch(val_loader),
                         step=self.global_step,
                     )
+                    self._run_validation_preview()
 
                 if self._should_run(self.save_every_steps):
                     self.save_checkpoint(f"checkpoint_step_{self.global_step}.pt")
@@ -356,6 +359,26 @@ class SDXLInversionTrainer:
     def _should_run(self, interval: int) -> bool:
         return interval > 0 and self.global_step > 0 and self.global_step % interval == 0
 
+    def _run_validation_preview(self) -> None:
+        if self.validation_preview_config is None:
+            return
+
+        from diff_inversion.modeling.validation_preview import (
+            log_validation_preview,
+            should_run_validation_preview,
+        )
+
+        if not should_run_validation_preview(self.validation_preview_config, self.global_step):
+            return
+
+        log_validation_preview(
+            pipe=self.pipe,
+            cfg=self.validation_preview_config,
+            tracker=self.tracker,
+            checkpoint_dir=self.checkpoint_dir,
+            global_step=self.global_step,
+        )
+
 
 def get_lora_config(lora_config: DictConfig) -> LoraConfig:
     return LoraConfig(**lora_config)
@@ -399,6 +422,9 @@ def main(cfg: DictConfig) -> None:
         max_val_batches=cfg.max_val_batches,
         max_grad_norm=cfg.max_grad_norm,
         gradient_checkpointing=cfg.gradient_checkpointing,
+        validation_preview_config=(
+            cfg if OmegaConf.select(cfg, "validation_preview.enabled", default=False) else None
+        ),
     )
 
     train_dataset = LatentTrajectoryDataset(
