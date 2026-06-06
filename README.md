@@ -234,15 +234,6 @@ scripts/submit_sdxl_eval_chain.sh r32
 The chain script creates a separate output directory and runs
 inversion -> reconstruction -> report in order.
 
-Default checkpoints:
-
-```text
-/net/tscratch/people/plgatarsander/ZZSN_data/checkpoints/
-  sdxl_inversion_lora_r8_lr5e-5_cosine_bf16/checkpoint_step_15000.pt
-  sdxl_inversion_lora_r16_lr5e-5_cosine_bf16/checkpoint_step_15000.pt
-  sdxl_inversion_lora_r32_lr5e-5_cosine_bf16/checkpoint_step_15000.pt
-```
-
 Override input/output locations:
 
 ```bash
