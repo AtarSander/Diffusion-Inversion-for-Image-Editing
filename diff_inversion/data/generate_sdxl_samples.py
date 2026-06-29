@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Tuple
 
 import hydra
 import torch
-from diffusers import StableDiffusionXLPipeline
+from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
 from hydra.utils import to_absolute_path
 from loguru import logger
 from omegaconf import DictConfig, OmegaConf
@@ -30,7 +30,7 @@ def load_recap_prompt_records(jsonl_path: Path) -> List[Dict[str, Any]]:
 
 @torch.no_grad()
 def decode_latent_to_pil(
-    pipe: StableDiffusionXLPipeline, latents: torch.Tensor
+    pipe: StableDiffusionPipeline | StableDiffusionXLPipeline, latents: torch.Tensor
 ) -> Image.Image:
     """Decode a latent tensor into a PIL image."""
     pipe.vae.to(dtype=torch.float32)
@@ -45,50 +45,75 @@ def decode_latent_to_pil(
     return image
 
 
+def is_sdxl_pipeline(pipe: StableDiffusionPipeline | StableDiffusionXLPipeline) -> bool:
+    return getattr(pipe, "text_encoder_2", None) is not None
+
+
+def has_sdxl_conditioning(conditioning: Dict[str, torch.Tensor]) -> bool:
+    return "pooled_prompt_embeds" in conditioning and "add_time_ids" in conditioning
+
+
+def _pipeline_device(pipe: StableDiffusionPipeline | StableDiffusionXLPipeline) -> torch.device:
+    return getattr(pipe, "_execution_device", pipe.device)
+
+
 @torch.no_grad()
 def encode_prompt_sdxl(
-    pipe: StableDiffusionXLPipeline,
+    pipe: StableDiffusionPipeline | StableDiffusionXLPipeline,
     prompt: str,
     negative_prompt: str,
     height: int,
     width: int,
 ) -> Dict[str, torch.Tensor]:
-    """Encode prompt text and auxiliary conditioning tensors for SDXL."""
-    (
-        prompt_embeds,
-        negative_prompt_embeds,
-        pooled_prompt_embeds,
-        negative_pooled_prompt_embeds,
-    ) = pipe.encode_prompt(
+    """Encode prompt text and optional SDXL auxiliary conditioning tensors."""
+    if is_sdxl_pipeline(pipe):
+        (
+            prompt_embeds,
+            negative_prompt_embeds,
+            pooled_prompt_embeds,
+            negative_pooled_prompt_embeds,
+        ) = pipe.encode_prompt(
+            prompt=prompt,
+            prompt_2=prompt,
+            device=_pipeline_device(pipe),
+            num_images_per_prompt=1,
+            do_classifier_free_guidance=True,
+            negative_prompt=negative_prompt,
+            negative_prompt_2=negative_prompt,
+        )
+
+        add_time_ids = pipe._get_add_time_ids(
+            original_size=(height, width),
+            crops_coords_top_left=(0, 0),
+            target_size=(height, width),
+            dtype=prompt_embeds.dtype,
+            text_encoder_projection_dim=pipe.text_encoder_2.config.projection_dim,
+        ).to(pipe.device)
+
+        return {
+            "prompt_embeds": prompt_embeds,
+            "negative_prompt_embeds": negative_prompt_embeds,
+            "pooled_prompt_embeds": pooled_prompt_embeds,
+            "negative_pooled_prompt_embeds": negative_pooled_prompt_embeds,
+            "add_time_ids": add_time_ids,
+        }
+
+    prompt_embeds, negative_prompt_embeds = pipe.encode_prompt(
         prompt=prompt,
-        prompt_2=prompt,
-        device=pipe._execution_device,
+        device=_pipeline_device(pipe),
         num_images_per_prompt=1,
         do_classifier_free_guidance=True,
         negative_prompt=negative_prompt,
-        negative_prompt_2=negative_prompt,
     )
-
-    add_time_ids = pipe._get_add_time_ids(
-        original_size=(height, width),
-        crops_coords_top_left=(0, 0),
-        target_size=(height, width),
-        dtype=prompt_embeds.dtype,
-        text_encoder_projection_dim=pipe.text_encoder_2.config.projection_dim,
-    ).to(pipe.device)
-
     return {
         "prompt_embeds": prompt_embeds,
         "negative_prompt_embeds": negative_prompt_embeds,
-        "pooled_prompt_embeds": pooled_prompt_embeds,
-        "negative_pooled_prompt_embeds": negative_pooled_prompt_embeds,
-        "add_time_ids": add_time_ids,
     }
 
 
 @torch.no_grad()
 def sample_with_trajectory(
-    pipe: StableDiffusionXLPipeline,
+    pipe: StableDiffusionPipeline | StableDiffusionXLPipeline,
     prompt: str,
     negative_prompt: str,
     num_inference_steps: int,
@@ -138,11 +163,17 @@ def sample_with_trajectory(
         [cond["negative_prompt_embeds"], cond["prompt_embeds"]],
         dim=0,
     )
-    text_embeds = torch.cat(
-        [cond["negative_pooled_prompt_embeds"], cond["pooled_prompt_embeds"]],
-        dim=0,
-    )
-    time_ids = cond["add_time_ids"].repeat(2, 1)
+    unet_kwargs = {}
+    if has_sdxl_conditioning(cond):
+        text_embeds = torch.cat(
+            [cond["negative_pooled_prompt_embeds"], cond["pooled_prompt_embeds"]],
+            dim=0,
+        )
+        time_ids = cond["add_time_ids"].repeat(2, 1)
+        unet_kwargs["added_cond_kwargs"] = {
+            "text_embeds": text_embeds,
+            "time_ids": time_ids,
+        }
 
     for t in tqdm(timesteps, desc="Denoising", leave=False):
         latent_model_input = torch.cat([latents, latents], dim=0)
@@ -152,11 +183,8 @@ def sample_with_trajectory(
             latent_model_input,
             t,
             encoder_hidden_states=encoder_hidden_states,
-            added_cond_kwargs={
-                "text_embeds": text_embeds,
-                "time_ids": time_ids,
-            },
             return_dict=False,
+            **unet_kwargs,
         )[0]
 
         noise_uncond, noise_text = noise_pred.chunk(2)
@@ -187,22 +215,23 @@ def save_training_cache(
     conditioning_path = sample_dir / str(
         OmegaConf.select(cfg, "conditioning_file_name", default="conditioning.pt")
     )
-    targets_dir = sample_dir / str(
-        OmegaConf.select(cfg, "targets_dir_name", default="targets")
-    )
+    targets_dir = sample_dir / str(OmegaConf.select(cfg, "targets_dir_name", default="targets"))
     target_eps_path = targets_dir / str(
         OmegaConf.select(cfg, "target_eps_file_name", default="target_eps.pt")
     )
     targets_dir.mkdir(parents=True, exist_ok=True)
 
-    torch.save(
-        {
-            "prompt_embeds": conditioning["prompt_embeds"].detach().cpu(),
-            "pooled_prompt_embeds": conditioning["pooled_prompt_embeds"].detach().cpu(),
-            "add_time_ids": conditioning["add_time_ids"].detach().cpu(),
-        },
-        conditioning_path,
-    )
+    conditioning_to_save = {
+        "prompt_embeds": conditioning["prompt_embeds"].detach().cpu(),
+    }
+    if has_sdxl_conditioning(conditioning):
+        conditioning_to_save.update(
+            {
+                "pooled_prompt_embeds": conditioning["pooled_prompt_embeds"].detach().cpu(),
+                "add_time_ids": conditioning["add_time_ids"].detach().cpu(),
+            }
+        )
+    torch.save(conditioning_to_save, conditioning_path)
 
     if isinstance(target_eps, torch.Tensor):
         target_eps_tensor = target_eps.detach().cpu()
@@ -219,9 +248,7 @@ def save_latent_trajectory(
     gather_cfg: DictConfig,
 ) -> str:
     """Persist latent trajectory tensors using the configured file layout."""
-    latents_format = str(
-        OmegaConf.select(gather_cfg, "latents_format", default="stacked_pt")
-    )
+    latents_format = str(OmegaConf.select(gather_cfg, "latents_format", default="stacked_pt"))
 
     if latents_format == "per_step_pt":
         template = str(
@@ -236,15 +263,12 @@ def save_latent_trajectory(
         return latents_format
 
     if latents_format == "stacked_pt":
-        file_name = str(
-            OmegaConf.select(gather_cfg, "latents_file_name", default="trajectory.pt")
-        )
+        file_name = str(OmegaConf.select(gather_cfg, "latents_file_name", default="trajectory.pt"))
         torch.save(torch.stack(trajectory, dim=0), latents_dir / file_name)
         return latents_format
 
     raise ValueError(
-        f"Unsupported latents_format: {latents_format}. "
-        "Expected one of: stacked_pt, per_step_pt."
+        f"Unsupported latents_format: {latents_format}. Expected one of: stacked_pt, per_step_pt."
     )
 
 
@@ -367,9 +391,7 @@ def apply_job_spec(gather_cfg: DictConfig) -> None:
         gather_cfg.data.prompts_jsonl = str(job_spec.prompts_jsonl)
 
 
-@hydra.main(
-    config_path="../../config", config_name="sample_gather_submitit", version_base=None
-)
+@hydra.main(config_path="../../config", config_name="sample_gather_submitit", version_base=None)
 def main(cfg: DictConfig) -> None:
     """CLI entrypoint for generating SDXL samples from prepared prompts."""
     model_cfg = cfg.model
@@ -409,9 +431,7 @@ def main(cfg: DictConfig) -> None:
     pipe = make_pipe(model_cfg, device)
 
     with (out_dir / str(gather_cfg.run_config_name)).open("w", encoding="utf-8") as f:
-        json.dump(
-            OmegaConf.to_container(cfg, resolve=True), f, indent=2, ensure_ascii=False
-        )
+        json.dump(OmegaConf.to_container(cfg, resolve=True), f, indent=2, ensure_ascii=False)
     logger.info("Saved run config: {}", out_dir / str(gather_cfg.run_config_name))
 
     for sample_idx, record in tqdm(

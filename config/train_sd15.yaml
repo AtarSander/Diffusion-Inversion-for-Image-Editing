@@ -1,0 +1,5 @@
+defaults:
+  - train_config
+  - override /model: sd15
+  - override /train: sd15_lora
+  - _self_

@@ -1,0 +1,6 @@
+defaults:
+  - sample_gather
+  - override /model: sd15
+  - _self_
+
+output_dir: /net/pr2/projects/plgrid/plggzzsn2026/plgatarsander/data/processed/sd15_trajectories_stacked/train

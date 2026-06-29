@@ -42,7 +42,9 @@ class LatentTrajectoryDataset(Dataset):
             if trajectory_path.exists():
                 trajectory_length = int(meta.get("trajectory_length", 0))
                 if trajectory_length <= 0:
-                    trajectory_length = int(torch.load(trajectory_path, map_location="cpu").shape[0])
+                    trajectory_length = int(
+                        torch.load(trajectory_path, map_location="cpu").shape[0]
+                    )
                 self._add_sample(
                     {
                         "format": "stacked_pt",
@@ -92,18 +94,21 @@ class LatentTrajectoryDataset(Dataset):
         conditioning = torch.load(sample["conditioning_path"], map_location="cpu")
         target_eps = torch.load(sample["target_eps_path"], map_location="cpu")[step_idx]
 
-        return {
+        item = {
             "x_clean": self._squeeze_latent(x_clean),
             "timestep": torch.tensor(timestep, dtype=torch.long),
             "prompt_embeds": self._squeeze_batch_dim(conditioning["prompt_embeds"]),
-            "pooled_prompt_embeds": self._squeeze_batch_dim(
-                conditioning["pooled_prompt_embeds"]
-            ),
-            "add_time_ids": self._squeeze_batch_dim(conditioning["add_time_ids"]),
             "target_eps": self._squeeze_latent(target_eps),
             "sample_idx": sample["sample_idx"],
             "step_idx": step_idx,
         }
+        if "pooled_prompt_embeds" in conditioning:
+            item["pooled_prompt_embeds"] = self._squeeze_batch_dim(
+                conditioning["pooled_prompt_embeds"]
+            )
+        if "add_time_ids" in conditioning:
+            item["add_time_ids"] = self._squeeze_batch_dim(conditioning["add_time_ids"])
+        return item
 
     @staticmethod
     def _load_json(path: Path) -> dict[str, Any]:
@@ -159,8 +164,10 @@ class LatentTrajectoryDataset(Dataset):
             return
         sample["num_transitions"] = num_transitions
         self.samples.append(sample)
-        total = num_transitions if not self.cumulative_lengths else (
-            self.cumulative_lengths[-1] + num_transitions
+        total = (
+            num_transitions
+            if not self.cumulative_lengths
+            else (self.cumulative_lengths[-1] + num_transitions)
         )
         self.cumulative_lengths.append(total)
 

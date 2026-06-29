@@ -1,0 +1,12 @@
+defaults:
+  - sd15_lora
+  - _self_
+
+# @package _global_
+
+run_name: sd15-inversion-lora-r8-lr5e-5-cosine-fp16
+checkpoint_dir: /net/pr2/projects/plgrid/plggzzsn2026/plgatarsander/checkpoints/sd15_inversion_lora_r8_lr5e-5_cosine_fp16
+
+lora:
+  r: 8
+  lora_alpha: 4

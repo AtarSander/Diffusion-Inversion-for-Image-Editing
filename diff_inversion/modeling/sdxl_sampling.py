@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from diffusers import DDIMInverseScheduler
 import torch
+from diffusers import DDIMInverseScheduler
 from tqdm import tqdm
 
 
@@ -23,21 +23,24 @@ def predict_noise_sdxl(
         [cond["negative_prompt_embeds"], cond["prompt_embeds"]],
         dim=0,
     )
-    text_embeds = torch.cat(
-        [cond["negative_pooled_prompt_embeds"], cond["pooled_prompt_embeds"]],
-        dim=0,
-    )
-    time_ids = cond["add_time_ids"].repeat(2, 1)
+    unet_kwargs = {}
+    if "pooled_prompt_embeds" in cond and "add_time_ids" in cond:
+        text_embeds = torch.cat(
+            [cond["negative_pooled_prompt_embeds"], cond["pooled_prompt_embeds"]],
+            dim=0,
+        )
+        time_ids = cond["add_time_ids"].repeat(2, 1)
+        unet_kwargs["added_cond_kwargs"] = {
+            "text_embeds": text_embeds,
+            "time_ids": time_ids,
+        }
 
     noise_pred = pipe.unet(
         latent_model_input,
         timestep,
         encoder_hidden_states=encoder_hidden_states,
-        added_cond_kwargs={
-            "text_embeds": text_embeds,
-            "time_ids": time_ids,
-        },
         return_dict=False,
+        **unet_kwargs,
     )[0]
 
     noise_uncond, noise_text = noise_pred.chunk(2)

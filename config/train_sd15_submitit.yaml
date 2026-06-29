@@ -1,0 +1,5 @@
+defaults:
+  - train_sd15
+  - override /hydra/launcher: plgrid_train_submitit_slurm
+  - _self_
+

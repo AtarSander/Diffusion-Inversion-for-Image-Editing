@@ -15,6 +15,7 @@ from PIL import Image, ImageDraw
 from diff_inversion.data.generate_sdxl_samples import (
     decode_latent_to_pil,
     encode_prompt_sdxl,
+    has_sdxl_conditioning,
 )
 from diff_inversion.eval.previews import (
     channel_grid_image,
@@ -263,14 +264,17 @@ def _write_noise_prediction_previews(
         device=pipe.device,
         dtype=pipe.unet.dtype,
     )
-    pooled_prompt_embeds = _ensure_batch(cond["pooled_prompt_embeds"]).to(
-        device=pipe.device,
-        dtype=pipe.unet.dtype,
-    )
-    add_time_ids = _ensure_batch(cond["add_time_ids"]).to(
-        device=pipe.device,
-        dtype=pipe.unet.dtype,
-    )
+    pooled_prompt_embeds = None
+    add_time_ids = None
+    if has_sdxl_conditioning(cond):
+        pooled_prompt_embeds = _ensure_batch(cond["pooled_prompt_embeds"]).to(
+            device=pipe.device,
+            dtype=pipe.unet.dtype,
+        )
+        add_time_ids = _ensure_batch(cond["add_time_ids"]).to(
+            device=pipe.device,
+            dtype=pipe.unet.dtype,
+        )
 
     num_steps = int(target_eps.shape[0])
     preview_paths: list[Path] = []
@@ -284,21 +288,28 @@ def _write_noise_prediction_previews(
 
         step_idx = num_steps - 1 - inversion_step
         timestep = _transition_timestep(timesteps, step_idx, int(trajectory.shape[0]))
-        latent = _squeeze_batch(trajectory[step_idx + 1]).unsqueeze(0).to(
-            device=pipe.device,
-            dtype=pipe.unet.dtype,
+        latent = (
+            _squeeze_batch(trajectory[step_idx + 1])
+            .unsqueeze(0)
+            .to(
+                device=pipe.device,
+                dtype=pipe.unet.dtype,
+            )
         )
         scheduler_timestep = torch.tensor([timestep], device=pipe.device)
         model_input = pipe.scheduler.scale_model_input(latent, scheduler_timestep)
+        unet_kwargs = {}
+        if pooled_prompt_embeds is not None and add_time_ids is not None:
+            unet_kwargs["added_cond_kwargs"] = {
+                "text_embeds": pooled_prompt_embeds,
+                "time_ids": add_time_ids,
+            }
         pred_eps = pipe.unet(
             model_input,
             scheduler_timestep,
             encoder_hidden_states=prompt_embeds,
-            added_cond_kwargs={
-                "text_embeds": pooled_prompt_embeds,
-                "time_ids": add_time_ids,
-            },
             return_dict=False,
+            **unet_kwargs,
         )[0]
 
         target = _squeeze_batch(target_eps[step_idx]).float()

@@ -8,7 +8,7 @@ import hydra
 import torch
 import torch.nn.functional as F
 import wandb
-from diffusers import StableDiffusionXLPipeline
+from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
 from diffusers.optimization import get_scheduler
 from loguru import logger
 from omegaconf import DictConfig, OmegaConf
@@ -24,7 +24,7 @@ from diff_inversion.utils import make_pipe
 class SDXLInversionTrainer:
     def __init__(
         self,
-        pipe: StableDiffusionXLPipeline,
+        pipe: StableDiffusionPipeline | StableDiffusionXLPipeline,
         lora_config: LoraConfig,
         tracker: Any,
         checkpoint_dir: Path | str,
@@ -180,11 +180,15 @@ class SDXLInversionTrainer:
             device=self.model.device,
             dtype=self.model.dtype,
         )
-        pooled_prompt_embeds = batch["pooled_prompt_embeds"].to(
-            device=self.model.device,
-            dtype=self.model.dtype,
-        )
-        add_time_ids = batch["add_time_ids"].to(device=self.model.device, dtype=self.model.dtype)
+        pooled_prompt_embeds = batch.get("pooled_prompt_embeds")
+        if pooled_prompt_embeds is not None:
+            pooled_prompt_embeds = pooled_prompt_embeds.to(
+                device=self.model.device,
+                dtype=self.model.dtype,
+            )
+        add_time_ids = batch.get("add_time_ids")
+        if add_time_ids is not None:
+            add_time_ids = add_time_ids.to(device=self.model.device, dtype=self.model.dtype)
 
         scheduler_timesteps = self._scheduler_timesteps(timestep, batch_size=x_clean.shape[0])
 
@@ -203,19 +207,22 @@ class SDXLInversionTrainer:
         latents: torch.Tensor,
         scheduler_timesteps: torch.Tensor,
         prompt_embeds: torch.Tensor,
-        pooled_prompt_embeds: torch.Tensor,
-        add_time_ids: torch.Tensor,
+        pooled_prompt_embeds: torch.Tensor | None,
+        add_time_ids: torch.Tensor | None,
     ) -> torch.Tensor:
         model_input = self.pipe.scheduler.scale_model_input(latents, scheduler_timesteps)
+        unet_kwargs = {}
+        if pooled_prompt_embeds is not None and add_time_ids is not None:
+            unet_kwargs["added_cond_kwargs"] = {
+                "text_embeds": pooled_prompt_embeds,
+                "time_ids": add_time_ids,
+            }
         return self.model(
             model_input,
             scheduler_timesteps,
             encoder_hidden_states=prompt_embeds,
-            added_cond_kwargs={
-                "text_embeds": pooled_prompt_embeds,
-                "time_ids": add_time_ids,
-            },
             return_dict=False,
+            **unet_kwargs,
         )[0]
 
     @torch.no_grad()
@@ -244,27 +251,38 @@ class SDXLInversionTrainer:
         else:
             prompt_list = list(prompts)
 
-        prompt_embeds, _, pooled_prompt_embeds, _ = self.pipe.encode_prompt(
+        device = getattr(self.pipe, "_execution_device", self.model.device)
+        if getattr(self.pipe, "text_encoder_2", None) is not None:
+            prompt_embeds, _, pooled_prompt_embeds, _ = self.pipe.encode_prompt(
+                prompt=prompt_list,
+                prompt_2=prompt_list,
+                device=device,
+                num_images_per_prompt=1,
+                do_classifier_free_guidance=False,
+            )
+            add_time_ids = self.pipe._get_add_time_ids(
+                original_size=(self.height, self.width),
+                crops_coords_top_left=(0, 0),
+                target_size=(self.height, self.width),
+                dtype=prompt_embeds.dtype,
+                text_encoder_projection_dim=self.pipe.text_encoder_2.config.projection_dim,
+            ).to(device=self.model.device)
+            add_time_ids = add_time_ids.repeat(len(prompt_list), 1)
+
+            return (
+                prompt_embeds.to(device=self.model.device, dtype=self.model.dtype),
+                pooled_prompt_embeds.to(device=self.model.device, dtype=self.model.dtype),
+                add_time_ids,
+            )
+
+        encoded = self.pipe.encode_prompt(
             prompt=prompt_list,
-            prompt_2=prompt_list,
-            device=self.pipe._execution_device,
+            device=device,
             num_images_per_prompt=1,
             do_classifier_free_guidance=False,
         )
-        add_time_ids = self.pipe._get_add_time_ids(
-            original_size=(self.height, self.width),
-            crops_coords_top_left=(0, 0),
-            target_size=(self.height, self.width),
-            dtype=prompt_embeds.dtype,
-            text_encoder_projection_dim=self.pipe.text_encoder_2.config.projection_dim,
-        ).to(device=self.model.device)
-        add_time_ids = add_time_ids.repeat(len(prompt_list), 1)
-
-        return (
-            prompt_embeds.to(device=self.model.device, dtype=self.model.dtype),
-            pooled_prompt_embeds.to(device=self.model.device, dtype=self.model.dtype),
-            add_time_ids,
-        )
+        prompt_embeds = encoded[0] if isinstance(encoded, tuple) else encoded
+        return prompt_embeds.to(device=self.model.device, dtype=self.model.dtype), None, None
 
     def save_checkpoint(self, filename: str):
         save_path = self.checkpoint_dir / filename
@@ -323,11 +341,17 @@ class SDXLInversionTrainer:
             torch.cuda.set_rng_state_all(state["cuda_rng_state_all"])
 
         global_step = int(state.get("global_step", 0))
-        logger.info("Training state loaded from {} at global_step={}", checkpoint_path, global_step)
+        logger.info(
+            "Training state loaded from {} at global_step={}", checkpoint_path, global_step
+        )
         return global_step
 
     def _freeze_pipeline_components(self) -> None:
-        for component in (self.pipe.text_encoder, self.pipe.text_encoder_2, self.pipe.vae):
+        for component in (
+            self.pipe.text_encoder,
+            getattr(self.pipe, "text_encoder_2", None),
+            self.pipe.vae,
+        ):
             if component is not None:
                 component.requires_grad_(False)
                 component.eval()

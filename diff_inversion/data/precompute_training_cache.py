@@ -6,13 +6,17 @@ from typing import Any
 
 import hydra
 import torch
-from diffusers import StableDiffusionXLPipeline
+from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
 from hydra.utils import to_absolute_path
 from loguru import logger
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
-from diff_inversion.data.generate_sdxl_samples import encode_prompt_sdxl, save_training_cache
+from diff_inversion.data.generate_sdxl_samples import (
+    encode_prompt_sdxl,
+    has_sdxl_conditioning,
+    save_training_cache,
+)
 from diff_inversion.utils import make_pipe
 
 
@@ -78,7 +82,7 @@ def transition_timesteps(sample_dir: Path, trajectory_length: int) -> list[int]:
 
 @torch.no_grad()
 def compute_target_eps(
-    pipe: StableDiffusionXLPipeline,
+    pipe: StableDiffusionPipeline | StableDiffusionXLPipeline,
     trajectory: torch.Tensor,
     timesteps: list[int],
     conditioning: dict[str, torch.Tensor],
@@ -93,11 +97,14 @@ def compute_target_eps(
 
     device = pipe.device
     prompt_embeds = conditioning["prompt_embeds"].to(device=device, dtype=pipe.unet.dtype)
-    pooled_prompt_embeds = conditioning["pooled_prompt_embeds"].to(
-        device=device,
-        dtype=pipe.unet.dtype,
-    )
-    add_time_ids = conditioning["add_time_ids"].to(device=device, dtype=pipe.unet.dtype)
+    pooled_prompt_embeds = None
+    add_time_ids = None
+    if has_sdxl_conditioning(conditioning):
+        pooled_prompt_embeds = conditioning["pooled_prompt_embeds"].to(
+            device=device,
+            dtype=pipe.unet.dtype,
+        )
+        add_time_ids = conditioning["add_time_ids"].to(device=device, dtype=pipe.unet.dtype)
 
     target_chunks = []
     for start in range(0, x_noisy.shape[0], batch_size):
@@ -107,15 +114,18 @@ def compute_target_eps(
         timestep = torch.tensor(timesteps[start:end], device=device, dtype=torch.long)
         model_input = pipe.scheduler.scale_model_input(latents, timestep)
 
+        unet_kwargs = {}
+        if pooled_prompt_embeds is not None and add_time_ids is not None:
+            unet_kwargs["added_cond_kwargs"] = {
+                "text_embeds": pooled_prompt_embeds.repeat(chunk_size, 1),
+                "time_ids": add_time_ids.repeat(chunk_size, 1),
+            }
         target_eps = pipe.unet(
             model_input,
             timestep,
             encoder_hidden_states=prompt_embeds.repeat(chunk_size, 1, 1),
-            added_cond_kwargs={
-                "text_embeds": pooled_prompt_embeds.repeat(chunk_size, 1),
-                "time_ids": add_time_ids.repeat(chunk_size, 1),
-            },
             return_dict=False,
+            **unet_kwargs,
         )[0]
         target_chunks.append(target_eps.detach().cpu())
 
@@ -160,7 +170,7 @@ def apply_job_spec(cfg: DictConfig) -> None:
 
 
 def process_sample(
-    pipe: StableDiffusionXLPipeline,
+    pipe: StableDiffusionPipeline | StableDiffusionXLPipeline,
     sample_dir: Path,
     cfg: DictConfig,
 ) -> str:
@@ -211,7 +221,7 @@ def main(cfg: DictConfig) -> None:
     pipe.unet.eval()
     if pipe.text_encoder is not None:
         pipe.text_encoder.eval()
-    if pipe.text_encoder_2 is not None:
+    if getattr(pipe, "text_encoder_2", None) is not None:
         pipe.text_encoder_2.eval()
     pipe.scheduler.set_timesteps(cfg.model.num_inference_steps, device=device)
 
