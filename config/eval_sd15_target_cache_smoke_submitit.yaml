@@ -1,0 +1,4 @@
+defaults:
+  - eval/sd15_target_cache_smoke
+  - override /hydra/launcher: plgrid_submitit_slurm
+  - _self_

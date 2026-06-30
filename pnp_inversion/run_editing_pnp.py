@@ -3,6 +3,7 @@ import torch
 from diffusers import AutoencoderKL, UNet2DConditionModel, DDIMScheduler, StableDiffusionPipeline
 import numpy as np
 from PIL import Image
+from tqdm import tqdm
 import os
 import json
 import random
@@ -54,7 +55,58 @@ class Preprocess(nn.Module):
         self.unet = UNet2DConditionModel.from_pretrained(model_key, subfolder="unet", revision="fp16",
                                                          torch_dtype=torch.float16).to(self.device)
         self.scheduler = DDIMScheduler.from_pretrained(model_key, subfolder="scheduler")
+        self.lora_loaded = False
+        self.lora_adapter_name = "inversion"
         print(f'[INFO] loaded stable diffusion!')
+
+    def load_lora(
+        self,
+        checkpoint_path,
+        rank=16,
+        lora_alpha=8,
+        lora_dropout=0.0,
+        adapter_name="inversion",
+        scale=1.0,
+    ):
+        from peft import LoraConfig, inject_adapter_in_model, set_peft_model_state_dict
+
+        checkpoint_path = os.path.abspath(os.path.expanduser(checkpoint_path))
+        if not os.path.exists(checkpoint_path):
+            raise FileNotFoundError(f"LoRA checkpoint does not exist: {checkpoint_path}")
+
+        lora_config = LoraConfig(
+            r=rank,
+            lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
+            bias="none",
+            init_lora_weights=True,
+            target_modules=["to_q", "to_k", "to_v", "to_out.0"],
+        )
+        inject_adapter_in_model(lora_config, self.unet, adapter_name=adapter_name)
+        try:
+            state_dict = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        except TypeError:
+            state_dict = torch.load(checkpoint_path, map_location="cpu")
+        if isinstance(state_dict, dict) and "lora_state_dict" in state_dict:
+            state_dict = state_dict["lora_state_dict"]
+        set_peft_model_state_dict(self.unet, state_dict, adapter_name=adapter_name)
+
+        if scale is not None and hasattr(self.unet, "set_adapters"):
+            self.unet.set_adapters([adapter_name], weights=[float(scale)])
+
+        self.lora_loaded = True
+        self.lora_adapter_name = adapter_name
+        self.set_lora_enabled(False)
+        print(f"[INFO] loaded inversion LoRA from {checkpoint_path}")
+
+    def set_lora_enabled(self, enabled):
+        if not self.lora_loaded:
+            return
+        for module in self.unet.modules():
+            if module is self.unet:
+                continue
+            if hasattr(module, "enable_adapters"):
+                module.enable_adapters(enabled)
 
 
     @torch.no_grad()
@@ -92,7 +144,7 @@ class Preprocess(nn.Module):
     @torch.no_grad()
     def ddim_inversion(self, cond, latent):
         latent_list=[latent]
-        timesteps = reversed(self.scheduler.timesteps)
+        timesteps = list(reversed(self.scheduler.timesteps))
         with torch.autocast(device_type='cuda', dtype=torch.float32):
             for i, t in enumerate(timesteps):
                 cond_batch = cond.repeat(latent.shape[0], 1, 1)
@@ -142,14 +194,22 @@ class Preprocess(nn.Module):
 
     @torch.no_grad()
     def extract_latents(self, num_steps, data_path,
-                        inversion_prompt=''):
+                        inversion_prompt='', use_lora_inversion=False):
+        if use_lora_inversion and not self.lora_loaded:
+            raise RuntimeError("LoRA inversion requested, but no LoRA checkpoint was loaded.")
+
         self.scheduler.set_timesteps(num_steps)
 
         cond = self.get_text_embeds(inversion_prompt, "")[1].unsqueeze(0)
         image = self.load_img(data_path)
         latent = self.encode_imgs(image)
 
-        inverted_x = self.ddim_inversion(cond, latent)
+        self.set_lora_enabled(use_lora_inversion)
+        try:
+            inverted_x = self.ddim_inversion(cond, latent)
+        finally:
+            self.set_lora_enabled(False)
+
         latent_reconstruction = self.ddim_sample(inverted_x[-1], cond)
         rgb_reconstruction = self.decode_latents(latent_reconstruction[-1])
         latent_reconstruction.reverse()
@@ -392,7 +452,7 @@ class PNP(nn.Module):
 
     def sample_loop(self, x,guidance_scale,noisy_latent):
         with torch.autocast(device_type='cuda', dtype=torch.float32):
-            for i, t in enumerate(self.scheduler.timesteps, desc="Sampling"):
+            for i, t in enumerate(tqdm(self.scheduler.timesteps, desc="Sampling")):
                 x = self.denoise_step(x, t,guidance_scale,noisy_latent[-1-i])
 
             decoded_latent = self.decode_latent(x)
@@ -462,6 +522,32 @@ def edit_image_directinversion_PnP(
         ),1))
 
 
+def edit_image_lora_PnP(
+    image_path,
+    prompt_src,
+    prompt_tar,
+    guidance_scale=7.5,
+    image_shape=[512,512]
+):
+    torch.cuda.empty_cache()
+    image_gt = load_512(image_path)
+    _, rgb_reconstruction, latent_reconstruction = model.extract_latents(data_path=image_path,
+                                         num_steps=NUM_DDIM_STEPS,
+                                         inversion_prompt=prompt_src,
+                                         use_lora_inversion=True)
+
+    edited_image=pnp.run_pnp(image_path,latent_reconstruction,prompt_tar,guidance_scale)
+    
+    image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
+
+    return Image.fromarray(np.concatenate((
+        image_instruct,
+        image_gt,
+        np.uint8(255*np.array(rgb_reconstruction[0].permute(1,2,0).cpu().detach())),
+        np.uint8(255*np.array(edited_image[0].permute(1,2,0).cpu().detach())),
+        ),1))
+
+
 def mask_decode(encoded_mask,image_shape=[512,512]):
     length=image_shape[0]*image_shape[1]
     mask_array=np.zeros((length,))
@@ -483,6 +569,7 @@ def mask_decode(encoded_mask,image_shape=[512,512]):
 image_save_paths={
     "ddim+pnp":"ddim+pnp",
     "directinversion+pnp":"directinversion+pnp",
+    "lora+pnp":"lora+pnp",
     }
 
 
@@ -493,6 +580,11 @@ if __name__ == "__main__":
     parser.add_argument('--output_path', type=str, default="output") # the editing category that needed to run
     parser.add_argument('--edit_category_list', nargs = '+', type=str, default=["0","1","2","3","4","5","6","7","8","9"]) # the editing category that needed to run
     parser.add_argument('--edit_method_list', nargs = '+', type=str, default=["ddim+pnp","directinversion+pnp"]) # the editing methods that needed to run
+    parser.add_argument('--lora_checkpoint', type=str, default=None)
+    parser.add_argument('--lora_rank', type=int, default=16)
+    parser.add_argument('--lora_alpha', type=int, default=8)
+    parser.add_argument('--lora_dropout', type=float, default=0.0)
+    parser.add_argument('--lora_scale', type=float, default=1.0)
     args = parser.parse_args()
     
     rerun_exist_images=args.rerun_exist_images
@@ -500,6 +592,17 @@ if __name__ == "__main__":
     output_path=args.output_path
     edit_category_list=args.edit_category_list
     edit_method_list=args.edit_method_list
+
+    if "lora+pnp" in edit_method_list:
+        if args.lora_checkpoint is None:
+            raise ValueError("--lora_checkpoint is required when using edit method lora+pnp")
+        model.load_lora(
+            checkpoint_path=args.lora_checkpoint,
+            rank=args.lora_rank,
+            lora_alpha=args.lora_alpha,
+            lora_dropout=args.lora_dropout,
+            scale=args.lora_scale,
+        )
     
     with open(f"{data_path}/mapping_file.json", "r") as f:
         editing_instruction = json.load(f)
@@ -531,6 +634,13 @@ if __name__ == "__main__":
                     )
                 elif edit_method=="directinversion+pnp":
                     edited_image = edit_image_directinversion_PnP(
+                        image_path=image_path,
+                        prompt_src=original_prompt,
+                        prompt_tar=editing_prompt,
+                        guidance_scale=7.5,
+                    )
+                elif edit_method=="lora+pnp":
+                    edited_image = edit_image_lora_PnP(
                         image_path=image_path,
                         prompt_src=original_prompt,
                         prompt_tar=editing_prompt,

@@ -1,0 +1,17 @@
+# @package _global_
+
+defaults:
+  - /model: sd15
+  - _self_
+
+root_dir: /net/pr2/projects/plgrid/plggzzsn2026/plgatarsander/data/processed/sd15_trajectories_stacked/train
+max_samples: 2
+max_steps: 5
+device: cuda
+
+latents_dir_name: latents
+latents_file_name: trajectory.pt
+conditioning_file_name: conditioning.pt
+targets_dir_name: targets
+target_eps_file_name: target_eps.pt
+output_json: null
