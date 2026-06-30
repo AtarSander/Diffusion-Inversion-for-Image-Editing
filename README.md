@@ -1,50 +1,56 @@
 # Diffusion Inversion for Image Editing
 
-This project improves DDIM inversion for Stable Diffusion XL by fine-tuning a
-lightweight LoRA adapter on the SDXL UNet. The adapter is trained to produce a
-better inversion-time approximation of the frozen base model's noise prediction
-at the next, noisier latent state:
+This project improves DDIM inversion for Stable Diffusion XL and SD1.5 by
+fine-tuning a lightweight LoRA adapter on the diffusion UNet. The adapter is
+trained to produce a better inversion-time approximation of the frozen base
+model's noise prediction at the next, noisier latent state:
 
 ```text
 eps_phi(x_{t-1}, t, c) ~= eps_theta(x_t, t, c)
 ```
 
-The base SDXL model stays frozen. Only LoRA parameters injected into UNet
-attention projections (`to_q`, `to_k`, `to_v`, `to_out.0`) are trained. The
-adapter can be enabled only for inversion, leaving normal sampling unchanged
-unless the LoRA is explicitly activated.
+The base model stays frozen. Only LoRA parameters injected into UNet attention
+projections (`to_q`, `to_k`, `to_v`, `to_out.0`) are trained. The adapter can
+be enabled only for inversion, leaving normal sampling unchanged unless the
+LoRA is explicitly activated.
 
 ## Project Layout
 
 ```text
 diff_inversion/
   data/
-    generate_sdxl_samples.py       # Generate SDXL images and latent trajectories
+    generate_sdxl_samples.py       # Generate SDXL/SD1.5 images and trajectories
     latent_trajectory_dataset.py   # Dataset of latent transitions for training
     precompute_training_cache.py   # Add conditioning.pt and target_eps.pt
   modeling/
-    train.py                       # Train SDXL UNet LoRA
+    train.py                       # Train UNet LoRA
     sdxl_sampling.py               # Shared DDIM sampling/inversion helpers
     validation_preview.py          # Optional previews during training
   eval/
     invert_sdxl.py                 # DDIM inversion, optionally with LoRA
+    pnp_lora.py                    # Submit PnP editing with SD1.5 LoRA inversion
     reconstruct_sdxl.py            # Reconstruct images from inverted_noise.pt
     run.py                         # Metrics and preview report
     reporting.py                   # JSON/CSV/Markdown/W&B output helpers
 
 config/
   model/sdxl.yaml                  # SDXL base, DDIM, 50 steps, 1024x1024
+  model/sd15.yaml                  # SD1.5 base, DDIM, 50 steps, 512x512
   sample_gather*.yaml              # Train/val/test trajectory generation
   precompute_training_cache*.yaml  # Cached training target generation
   train/sdxl_lora*.yaml            # LoRA variants: r8/r16/r32
+  train/sd15_lora*.yaml            # SD1.5 LoRA training configs
   eval/*.yaml                      # Inversion, reconstruction, and reporting
 
 scripts/
   launch_sample_gather_submitit.sh
+  launch_sd15_sample_gather_submitit.sh
   launch_sample_gather_eval_submitit.sh
   launch_precompute_training_cache_{train,val,test}_submitit.sh
   launch_sdxl_lora_train_submitit.sh
+  launch_sd15_lora_train_submitit.sh
   launch_sdxl_eval_{invert,reconstruct,run}_submitit.sh
+  launch_pnp_lora_eval_submitit.sh
   submit_sdxl_eval_chain.sh
 ```
 
@@ -79,10 +85,11 @@ sample_000000/
     target_eps.pt
 ```
 
-`trajectory.pt` stores the full SDXL latent trajectory as one stacked tensor.
-For 1024x1024 images, one latent has shape `4 x 128 x 128`.
+`trajectory.pt` stores the full latent trajectory as one stacked tensor. For
+SDXL 1024x1024 images, one latent has shape `4 x 128 x 128`; for SD1.5
+512x512 images, one latent has shape `4 x 64 x 64`.
 
-`conditioning.pt` stores the SDXL UNet conditioning tensors:
+`conditioning.pt` stores UNet conditioning. SDXL samples include:
 
 ```text
 prompt_embeds
@@ -90,9 +97,15 @@ pooled_prompt_embeds
 add_time_ids
 ```
 
+SD1.5 samples store only:
+
+```text
+prompt_embeds
+```
+
 `target_eps.pt` stores cached teacher noise predictions from the frozen base
-SDXL UNet. This avoids recomputing the teacher target during every LoRA
-training step.
+UNet. This avoids recomputing the teacher target during every LoRA training
+step.
 
 ## Data Preparation
 
@@ -116,6 +129,16 @@ scripts/launch_sample_gather_eval_submitit.sh
 The default job specs split train generation into 8 chunks and eval generation
 into separate val/test chunks.
 
+SD1.5 uses the same generation and training code with
+`StableDiffusionPipeline`, `runwayml/stable-diffusion-v1-5`, 512x512 images,
+and prompt embeddings only:
+
+```bash
+scripts/launch_sd15_sample_gather_submitit.sh
+scripts/launch_sd15_val_sample_gather_submitit.sh
+scripts/launch_sd15_test_sample_gather_submitit.sh
+```
+
 If trajectories already exist but `conditioning.pt` and `targets/target_eps.pt`
 are missing, add the training cache without regenerating images:
 
@@ -135,9 +158,9 @@ treats each saved trajectory as a set of latent transitions. For transition
 x_clean             # cleaner latent used as the student input
 timestep            # target timestep
 prompt_embeds
-pooled_prompt_embeds
-add_time_ids
-target_eps          # eps_theta for the next/noisier latent state
+pooled_prompt_embeds # SDXL only
+add_time_ids         # SDXL only
+target_eps           # eps_theta for the next/noisier latent state
 ```
 
 Training loss:
@@ -152,6 +175,7 @@ LoRA configs:
 config/train/sdxl_lora.yaml      # r=16, alpha=8
 config/train/sdxl_lora_r8.yaml   # r=8,  alpha=4
 config/train/sdxl_lora_r32.yaml  # r=32, alpha=16
+config/train/sd15_lora.yaml      # SD1.5 r=16, alpha=8
 ```
 
 Shared training settings:
@@ -179,6 +203,19 @@ Run comparison variants:
 ```bash
 scripts/launch_sdxl_lora_train_submitit.sh train=sdxl_lora_r8
 scripts/launch_sdxl_lora_train_submitit.sh train=sdxl_lora_r32
+```
+
+Run SD1.5 LoRA training:
+
+```bash
+scripts/launch_sd15_lora_train_submitit.sh
+```
+
+For SD1.5 rank variants, pass rank overrides directly:
+
+```bash
+scripts/launch_sd15_lora_train_submitit.sh lora.r=8 lora.lora_alpha=4
+scripts/launch_sd15_lora_train_submitit.sh lora.r=32 lora.lora_alpha=16
 ```
 
 Checkpoints are saved as:
@@ -233,6 +270,18 @@ scripts/submit_sdxl_eval_chain.sh r32
 
 The chain script creates a separate output directory and runs
 inversion -> reconstruction -> report in order.
+
+PnP editing can run with SD1.5 LoRA-assisted inversion through the
+`lora+pnp` method. The wrapper loads the LoRA checkpoint into
+`pnp_inversion/run_editing_pnp.py`, enables it only for inversion, and then
+runs Plug-and-Play editing:
+
+```bash
+scripts/launch_pnp_lora_eval_submitit.sh \
+  lora.r=16 \
+  lora.lora_alpha=8 \
+  lora.checkpoint_path=/path/to/checkpoint_step_15000.pt
+```
 
 Override input/output locations:
 
