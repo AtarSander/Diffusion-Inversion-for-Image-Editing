@@ -17,6 +17,7 @@ save_meta: true
 save_timesteps: true
 save_training_cache: true
 save_pred_noises: false
+save_cfg_branch_targets: true
 
 sample_dir_template: sample_{sample_idx:06d}
 latents_dir_name: latents
@@ -27,5 +28,6 @@ pred_noises_dir_name: pred_noises
 conditioning_file_name: conditioning.pt
 targets_dir_name: targets
 target_eps_file_name: target_eps.pt
+target_uncond_eps_file_name: target_eps_uncond.pt
 final_image_name: final.png
 run_config_name: run_config.json

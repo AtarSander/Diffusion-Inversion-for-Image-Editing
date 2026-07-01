@@ -13,6 +13,7 @@ from omegaconf import DictConfig, OmegaConf
 from PIL import Image
 from tqdm import tqdm
 
+from diff_inversion.modeling.sdxl_sampling import predict_noise_sdxl_branches
 from diff_inversion.utils import make_pipe
 
 
@@ -121,11 +122,13 @@ def sample_with_trajectory(
     height: int,
     width: int,
     seed: int,
+    save_cfg_branch_targets: bool,
 ) -> Tuple[
     torch.Tensor,
     List[torch.Tensor],
     List[torch.Tensor],
     List[torch.Tensor],
+    List[torch.Tensor] | None,
     Dict[str, torch.Tensor],
     List[int],
 ]:
@@ -155,41 +158,22 @@ def sample_with_trajectory(
     trajectory: List[torch.Tensor] = [latents.detach().cpu()]
     pred_noises: List[torch.Tensor] = []
     target_eps: List[torch.Tensor] = []
+    target_eps_uncond: List[torch.Tensor] | None = [] if save_cfg_branch_targets else None
     timestep_values: List[int] = [
         int(timesteps[0].item()) if hasattr(timesteps[0], "item") else int(timesteps[0])
     ]
 
-    encoder_hidden_states = torch.cat(
-        [cond["negative_prompt_embeds"], cond["prompt_embeds"]],
-        dim=0,
-    )
-    unet_kwargs = {}
-    if has_sdxl_conditioning(cond):
-        text_embeds = torch.cat(
-            [cond["negative_pooled_prompt_embeds"], cond["pooled_prompt_embeds"]],
-            dim=0,
-        )
-        time_ids = cond["add_time_ids"].repeat(2, 1)
-        unet_kwargs["added_cond_kwargs"] = {
-            "text_embeds": text_embeds,
-            "time_ids": time_ids,
-        }
-
     for t in tqdm(timesteps, desc="Denoising", leave=False):
-        latent_model_input = torch.cat([latents, latents], dim=0)
-        latent_model_input = pipe.scheduler.scale_model_input(latent_model_input, t)
-
-        noise_pred = pipe.unet(
-            latent_model_input,
-            t,
-            encoder_hidden_states=encoder_hidden_states,
-            return_dict=False,
-            **unet_kwargs,
-        )[0]
-
-        noise_uncond, noise_text = noise_pred.chunk(2)
+        noise_uncond, noise_text, noise_pred = predict_noise_sdxl_branches(
+            pipe=pipe,
+            latents=latents,
+            timestep=t,
+            cond=cond,
+            guidance_scale=guidance_scale,
+        )
         target_eps.append(noise_text.detach().cpu())
-        noise_pred = noise_uncond + guidance_scale * (noise_text - noise_uncond)
+        if target_eps_uncond is not None:
+            target_eps_uncond.append(noise_uncond.detach().cpu())
 
         latents = pipe.scheduler.step(
             model_output=noise_pred,
@@ -202,7 +186,7 @@ def sample_with_trajectory(
         pred_noises.append(noise_pred.detach().cpu())
         timestep_values.append(int(t.item()) if hasattr(t, "item") else int(t))
 
-    return latents, trajectory, pred_noises, target_eps, cond, timestep_values
+    return latents, trajectory, pred_noises, target_eps, target_eps_uncond, cond, timestep_values
 
 
 def save_training_cache(
@@ -210,7 +194,8 @@ def save_training_cache(
     target_eps: List[torch.Tensor] | torch.Tensor,
     sample_dir: Path,
     cfg: DictConfig,
-) -> tuple[Path, Path, int]:
+    target_eps_uncond: List[torch.Tensor] | torch.Tensor | None = None,
+) -> tuple[Path, Path, int, Path | None, int | None]:
     """Persist cached conditioning and target noise for LoRA inversion training."""
     conditioning_path = sample_dir / str(
         OmegaConf.select(cfg, "conditioning_file_name", default="conditioning.pt")
@@ -223,11 +208,15 @@ def save_training_cache(
 
     conditioning_to_save = {
         "prompt_embeds": conditioning["prompt_embeds"].detach().cpu(),
+        "negative_prompt_embeds": conditioning["negative_prompt_embeds"].detach().cpu(),
     }
     if has_sdxl_conditioning(conditioning):
         conditioning_to_save.update(
             {
                 "pooled_prompt_embeds": conditioning["pooled_prompt_embeds"].detach().cpu(),
+                "negative_pooled_prompt_embeds": conditioning[
+                    "negative_pooled_prompt_embeds"
+                ].detach().cpu(),
                 "add_time_ids": conditioning["add_time_ids"].detach().cpu(),
             }
         )
@@ -239,7 +228,38 @@ def save_training_cache(
         target_eps_tensor = torch.cat([eps.detach().cpu() for eps in target_eps], dim=0)
     torch.save(target_eps_tensor, target_eps_path)
 
-    return conditioning_path, target_eps_path, int(target_eps_tensor.shape[0])
+    target_uncond_eps_path = None
+    target_uncond_eps_length = None
+    if target_eps_uncond is not None:
+        target_uncond_eps_path = targets_dir / str(
+            OmegaConf.select(
+                cfg,
+                "target_uncond_eps_file_name",
+                default="target_eps_uncond.pt",
+            )
+        )
+        if isinstance(target_eps_uncond, torch.Tensor):
+            target_uncond_eps_tensor = target_eps_uncond.detach().cpu()
+        else:
+            target_uncond_eps_tensor = torch.cat(
+                [eps.detach().cpu() for eps in target_eps_uncond],
+                dim=0,
+            )
+        if target_uncond_eps_tensor.shape[0] != target_eps_tensor.shape[0]:
+            raise ValueError(
+                "Conditional and unconditional target eps lengths do not match: "
+                f"{target_eps_tensor.shape[0]} vs {target_uncond_eps_tensor.shape[0]}."
+            )
+        torch.save(target_uncond_eps_tensor, target_uncond_eps_path)
+        target_uncond_eps_length = int(target_uncond_eps_tensor.shape[0])
+
+    return (
+        conditioning_path,
+        target_eps_path,
+        int(target_eps_tensor.shape[0]),
+        target_uncond_eps_path,
+        target_uncond_eps_length,
+    )
 
 
 def save_latent_trajectory(
@@ -304,17 +324,41 @@ def save_sample(
     prompt = record["prompt"]
     seed = gather_cfg.seed + sample_idx
 
-    final_latent, trajectory, pred_noises, target_eps, conditioning, timestep_values = (
-        sample_with_trajectory(
-            pipe=pipe,
-            prompt=prompt,
-            negative_prompt=gather_cfg.negative_prompt,
-            num_inference_steps=model_cfg.num_inference_steps,
-            guidance_scale=model_cfg.guidance_scale,
-            height=model_cfg.height,
-            width=model_cfg.width,
-            seed=seed,
+    save_cfg_branch_targets_value = OmegaConf.select(
+        gather_cfg,
+        "save_cfg_branch_targets",
+        default=False,
+    )
+    if not isinstance(save_cfg_branch_targets_value, bool):
+        raise ValueError("save_cfg_branch_targets must be a boolean: true or false.")
+    if (
+        save_training_cache_enabled
+        and float(model_cfg.guidance_scale) > 1.0
+        and not save_cfg_branch_targets_value
+    ):
+        raise ValueError(
+            "model.guidance_scale > 1.0 requires save_cfg_branch_targets=true "
+            "so unconditional target eps are saved."
         )
+    save_cfg_branch_targets = save_training_cache_enabled and save_cfg_branch_targets_value
+    (
+        final_latent,
+        trajectory,
+        pred_noises,
+        target_eps,
+        target_eps_uncond,
+        conditioning,
+        timestep_values,
+    ) = sample_with_trajectory(
+        pipe=pipe,
+        prompt=prompt,
+        negative_prompt=gather_cfg.negative_prompt,
+        num_inference_steps=model_cfg.num_inference_steps,
+        guidance_scale=model_cfg.guidance_scale,
+        height=model_cfg.height,
+        width=model_cfg.width,
+        seed=seed,
+        save_cfg_branch_targets=save_cfg_branch_targets,
     )
 
     if gather_cfg.save_final_image:
@@ -331,18 +375,30 @@ def save_sample(
 
     training_cache_meta = None
     if save_training_cache_enabled:
-        conditioning_path, target_eps_path, target_eps_length = save_training_cache(
+        (
+            conditioning_path,
+            target_eps_path,
+            target_eps_length,
+            target_uncond_eps_path,
+            target_uncond_eps_length,
+        ) = save_training_cache(
             conditioning,
             target_eps,
             sample_dir,
             gather_cfg,
+            target_eps_uncond=target_eps_uncond,
         )
         training_cache_meta = {
             "conditioning_file": conditioning_path.name,
             "targets_dir": target_eps_path.parent.name,
             "target_eps_file": target_eps_path.name,
             "target_eps_length": target_eps_length,
+            "target_eps_branch": "conditional",
+            "cfg_branch_targets_saved": target_uncond_eps_path is not None,
         }
+        if target_uncond_eps_path is not None:
+            training_cache_meta["target_uncond_eps_file"] = target_uncond_eps_path.name
+            training_cache_meta["target_uncond_eps_length"] = target_uncond_eps_length
 
     if gather_cfg.save_prompt:
         with (sample_dir / "prompt.json").open("w", encoding="utf-8") as f:

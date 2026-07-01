@@ -30,16 +30,22 @@ def save_json(path: Path, data: dict[str, Any]) -> None:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
-def cache_paths(sample_dir: Path, cfg: DictConfig) -> tuple[Path, Path]:
+def cache_paths(sample_dir: Path, cfg: DictConfig) -> tuple[Path, Path, Path]:
     conditioning_path = sample_dir / str(
         OmegaConf.select(cfg, "conditioning_file_name", default="conditioning.pt")
     )
+    targets_dir = sample_dir / str(OmegaConf.select(cfg, "targets_dir_name", default="targets"))
     target_eps_path = (
-        sample_dir
-        / str(OmegaConf.select(cfg, "targets_dir_name", default="targets"))
-        / str(OmegaConf.select(cfg, "target_eps_file_name", default="target_eps.pt"))
+        targets_dir / str(OmegaConf.select(cfg, "target_eps_file_name", default="target_eps.pt"))
     )
-    return conditioning_path, target_eps_path
+    target_uncond_eps_path = targets_dir / str(
+        OmegaConf.select(
+            cfg,
+            "target_uncond_eps_file_name",
+            default="target_eps_uncond.pt",
+        )
+    )
+    return conditioning_path, target_eps_path, target_uncond_eps_path
 
 
 def load_trajectory(sample_dir: Path, cfg: DictConfig) -> torch.Tensor:
@@ -87,7 +93,8 @@ def compute_target_eps(
     timesteps: list[int],
     conditioning: dict[str, torch.Tensor],
     batch_size: int,
-) -> torch.Tensor:
+    return_uncond: bool,
+) -> tuple[torch.Tensor, torch.Tensor | None]:
     x_noisy = trajectory[:-1]
     if len(timesteps) != x_noisy.shape[0]:
         raise ValueError(
@@ -96,40 +103,96 @@ def compute_target_eps(
         )
 
     device = pipe.device
+    has_sdxl = has_sdxl_conditioning(conditioning)
     prompt_embeds = conditioning["prompt_embeds"].to(device=device, dtype=pipe.unet.dtype)
+    negative_prompt_embeds = (
+        conditioning["negative_prompt_embeds"].to(device=device, dtype=pipe.unet.dtype)
+        if return_uncond
+        else None
+    )
     pooled_prompt_embeds = None
+    negative_pooled_prompt_embeds = None
     add_time_ids = None
-    if has_sdxl_conditioning(conditioning):
+    if has_sdxl:
         pooled_prompt_embeds = conditioning["pooled_prompt_embeds"].to(
             device=device,
             dtype=pipe.unet.dtype,
         )
         add_time_ids = conditioning["add_time_ids"].to(device=device, dtype=pipe.unet.dtype)
+        if return_uncond:
+            negative_pooled_prompt_embeds = conditioning["negative_pooled_prompt_embeds"].to(
+                device=device,
+                dtype=pipe.unet.dtype,
+            )
 
     target_chunks = []
+    target_uncond_chunks = []
     for start in range(0, x_noisy.shape[0], batch_size):
         end = min(start + batch_size, x_noisy.shape[0])
         chunk_size = end - start
         latents = x_noisy[start:end].to(device=device, dtype=pipe.unet.dtype)
         timestep = torch.tensor(timesteps[start:end], device=device, dtype=torch.long)
-        model_input = pipe.scheduler.scale_model_input(latents, timestep)
-
         unet_kwargs = {}
-        if pooled_prompt_embeds is not None and add_time_ids is not None:
-            unet_kwargs["added_cond_kwargs"] = {
-                "text_embeds": pooled_prompt_embeds.repeat(chunk_size, 1),
-                "time_ids": add_time_ids.repeat(chunk_size, 1),
-            }
+        if return_uncond:
+            if negative_prompt_embeds is None:
+                raise ValueError("negative_prompt_embeds are required for CFG branch targets.")
+            model_input = torch.cat([latents, latents], dim=0)
+            timestep_input = timestep.repeat(2)
+            encoder_hidden_states = torch.cat(
+                [
+                    negative_prompt_embeds.repeat(chunk_size, 1, 1),
+                    prompt_embeds.repeat(chunk_size, 1, 1),
+                ],
+                dim=0,
+            )
+            if has_sdxl:
+                if (
+                    pooled_prompt_embeds is None
+                    or negative_pooled_prompt_embeds is None
+                    or add_time_ids is None
+                ):
+                    raise ValueError("SDXL CFG branch targets require pooled embeds and time ids.")
+                unet_kwargs["added_cond_kwargs"] = {
+                    "text_embeds": torch.cat(
+                        [
+                            negative_pooled_prompt_embeds.repeat(chunk_size, 1),
+                            pooled_prompt_embeds.repeat(chunk_size, 1),
+                        ],
+                        dim=0,
+                    ),
+                    "time_ids": add_time_ids.repeat(chunk_size * 2, 1),
+                }
+        else:
+            model_input = latents
+            timestep_input = timestep
+            encoder_hidden_states = prompt_embeds.repeat(chunk_size, 1, 1)
+            if has_sdxl:
+                if pooled_prompt_embeds is None or add_time_ids is None:
+                    raise ValueError("SDXL target eps require pooled embeds and time ids.")
+                unet_kwargs["added_cond_kwargs"] = {
+                    "text_embeds": pooled_prompt_embeds.repeat(chunk_size, 1),
+                    "time_ids": add_time_ids.repeat(chunk_size, 1),
+                }
+
+        model_input = pipe.scheduler.scale_model_input(model_input, timestep_input)
+
         target_eps = pipe.unet(
             model_input,
-            timestep,
-            encoder_hidden_states=prompt_embeds.repeat(chunk_size, 1, 1),
+            timestep_input,
+            encoder_hidden_states=encoder_hidden_states,
             return_dict=False,
             **unet_kwargs,
         )[0]
-        target_chunks.append(target_eps.detach().cpu())
+        if return_uncond:
+            target_uncond_eps, target_cond_eps = target_eps.chunk(2)
+            target_uncond_chunks.append(target_uncond_eps.detach().cpu())
+            target_chunks.append(target_cond_eps.detach().cpu())
+        else:
+            target_chunks.append(target_eps.detach().cpu())
 
-    return torch.cat(target_chunks, dim=0)
+    target_cond = torch.cat(target_chunks, dim=0)
+    target_uncond = torch.cat(target_uncond_chunks, dim=0) if return_uncond else None
+    return target_cond, target_uncond
 
 
 def update_meta(
@@ -137,6 +200,8 @@ def update_meta(
     conditioning_path: Path,
     target_eps_path: Path,
     target_eps_length: int,
+    target_uncond_eps_path: Path | None = None,
+    target_uncond_eps_length: int | None = None,
 ) -> None:
     meta_path = sample_dir / "meta.json"
     meta = load_json(meta_path) if meta_path.exists() else {}
@@ -145,7 +210,12 @@ def update_meta(
         "targets_dir": target_eps_path.parent.name,
         "target_eps_file": target_eps_path.name,
         "target_eps_length": target_eps_length,
+        "target_eps_branch": "conditional",
+        "cfg_branch_targets_saved": target_uncond_eps_path is not None,
     }
+    if target_uncond_eps_path is not None:
+        meta["training_cache"]["target_uncond_eps_file"] = target_uncond_eps_path.name
+        meta["training_cache"]["target_uncond_eps_length"] = target_uncond_eps_length
     save_json(meta_path, meta)
 
 
@@ -174,9 +244,31 @@ def process_sample(
     sample_dir: Path,
     cfg: DictConfig,
 ) -> str:
-    conditioning_path, target_eps_path = cache_paths(sample_dir, cfg)
+    conditioning_path, target_eps_path, target_uncond_eps_path = cache_paths(sample_dir, cfg)
+    save_cfg_branch_targets_value = OmegaConf.select(
+        cfg,
+        "save_cfg_branch_targets",
+        default=False,
+    )
+    if not isinstance(save_cfg_branch_targets_value, bool):
+        raise ValueError("save_cfg_branch_targets must be a boolean: true or false.")
+    meta_path = sample_dir / "meta.json"
+    meta = load_json(meta_path) if meta_path.exists() else {}
+    guidance_scale = float(
+        meta.get("guidance_scale", OmegaConf.select(cfg, "model.guidance_scale", default=1.0))
+    )
+    if guidance_scale > 1.0 and not save_cfg_branch_targets_value:
+        raise ValueError(
+            f"{sample_dir} was generated with guidance_scale={guidance_scale}; "
+            "set save_cfg_branch_targets=true to cache unconditional target eps."
+        )
+    save_cfg_branch_targets = save_cfg_branch_targets_value
+
     overwrite = bool(OmegaConf.select(cfg, "overwrite", default=False))
-    if conditioning_path.exists() and target_eps_path.exists() and not overwrite:
+    required_cache_paths = [conditioning_path, target_eps_path]
+    if save_cfg_branch_targets:
+        required_cache_paths.append(target_uncond_eps_path)
+    if all(path.exists() for path in required_cache_paths) and not overwrite:
         return "skipped"
 
     prompt = load_json(sample_dir / "prompt.json").get("prompt", "")
@@ -192,20 +284,35 @@ def process_sample(
         height=int(cfg.model.height),
         width=int(cfg.model.width),
     )
-    target_eps = compute_target_eps(
+    target_eps, target_eps_uncond = compute_target_eps(
         pipe,
         trajectory,
         timesteps,
         conditioning,
         batch_size=int(cfg.batch_size),
+        return_uncond=save_cfg_branch_targets,
     )
-    conditioning_path, target_eps_path, target_eps_length = save_training_cache(
+    (
+        conditioning_path,
+        target_eps_path,
+        target_eps_length,
+        target_uncond_eps_path,
+        target_uncond_eps_length,
+    ) = save_training_cache(
         conditioning,
         target_eps,
         sample_dir,
         cfg,
+        target_eps_uncond=target_eps_uncond,
     )
-    update_meta(sample_dir, conditioning_path, target_eps_path, target_eps_length)
+    update_meta(
+        sample_dir,
+        conditioning_path,
+        target_eps_path,
+        target_eps_length,
+        target_uncond_eps_path,
+        target_uncond_eps_length,
+    )
     return "written"
 
 

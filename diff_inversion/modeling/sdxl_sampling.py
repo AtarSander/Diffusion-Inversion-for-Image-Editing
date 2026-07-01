@@ -8,14 +8,14 @@ from tqdm import tqdm
 
 
 @torch.no_grad()
-def predict_noise_sdxl(
+def predict_noise_sdxl_branches(
     pipe,
     latents: torch.Tensor,
     timestep: torch.Tensor,
     cond: dict[str, torch.Tensor],
     guidance_scale: float,
-) -> torch.Tensor:
-    """Predict CFG-combined SDXL noise for one latent batch."""
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Predict unconditional, conditional, and CFG-combined SDXL noise."""
     latent_model_input = torch.cat([latents, latents], dim=0)
     latent_model_input = pipe.scheduler.scale_model_input(latent_model_input, timestep)
 
@@ -44,7 +44,27 @@ def predict_noise_sdxl(
     )[0]
 
     noise_uncond, noise_text = noise_pred.chunk(2)
-    return noise_uncond + guidance_scale * (noise_text - noise_uncond)
+    noise_cfg = noise_uncond + guidance_scale * (noise_text - noise_uncond)
+    return noise_uncond, noise_text, noise_cfg
+
+
+@torch.no_grad()
+def predict_noise_sdxl(
+    pipe,
+    latents: torch.Tensor,
+    timestep: torch.Tensor,
+    cond: dict[str, torch.Tensor],
+    guidance_scale: float,
+) -> torch.Tensor:
+    """Predict CFG-combined SDXL noise for one latent batch."""
+    _, _, noise_cfg = predict_noise_sdxl_branches(
+        pipe=pipe,
+        latents=latents,
+        timestep=timestep,
+        cond=cond,
+        guidance_scale=guidance_scale,
+    )
+    return noise_cfg
 
 
 @torch.no_grad()
