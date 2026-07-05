@@ -23,7 +23,7 @@ from diff_inversion.eval.invert_sdxl import (
     _read_json,
     _sample_dirs,
 )
-from diff_inversion.eval.lora import configure_unet_lora
+from diff_inversion.eval.lora import configure_unet_lora, get_lora_branch_adapter_names
 from diff_inversion.modeling.sdxl_sampling import reconstruct_latent_sdxl
 
 
@@ -38,6 +38,7 @@ def reconstruct_from_noise_sdxl(
     prompt: str,
     negative_prompt: str,
     model_cfg,
+    lora_branch_adapter_names: tuple[str, str] | None = None,
     guidance_scale: float | None = None,
 ) -> tuple[torch.Tensor, list[int]]:
     """Run DDIM denoising from an inverted noise latent back to an image latent."""
@@ -64,6 +65,7 @@ def reconstruct_from_noise_sdxl(
         cond=cond,
         num_inference_steps=model_cfg.num_inference_steps,
         guidance_scale=guidance_scale,
+        lora_branch_adapter_names=lora_branch_adapter_names,
         progress_desc="Reconstructing",
     )
 
@@ -76,6 +78,7 @@ def reconstruct_sample(
     negative_prompt: str,
     output_name: str,
     prompt_field: str,
+    lora_branch_adapter_names: tuple[str, str] | None,
     guidance_scale: float | None,
     overwrite: bool,
 ) -> None:
@@ -103,6 +106,7 @@ def reconstruct_sample(
         prompt=prompt,
         negative_prompt=negative_prompt,
         model_cfg=model_cfg,
+        lora_branch_adapter_names=lora_branch_adapter_names,
         guidance_scale=guidance_scale,
     )
     image = decode_latent_to_pil(pipe, reconstructed_latent.to(device=pipe.device))
@@ -140,7 +144,8 @@ def main(cfg: DictConfig) -> None:
         raise RuntimeError("This script is intended to run on CUDA.")
 
     pipe = make_pipe(run_cfg.model, device)
-    configure_unet_lora(pipe, cfg.lora)
+    lora_loaded = configure_unet_lora(pipe, cfg.lora)
+    lora_branch_adapter_names = get_lora_branch_adapter_names(cfg.lora) if lora_loaded else None
     negative_prompt = str(run_cfg.negative_prompt)
     guidance_scale = OmegaConf.select(cfg, "guidance_scale", default=None)
     guidance_scale = None if guidance_scale is None else float(guidance_scale)
@@ -152,6 +157,7 @@ def main(cfg: DictConfig) -> None:
             negative_prompt=negative_prompt,
             output_name=str(cfg.output_name),
             prompt_field=str(cfg.prompt_field),
+            lora_branch_adapter_names=lora_branch_adapter_names,
             guidance_scale=guidance_scale,
             overwrite=bool(cfg.overwrite),
         )

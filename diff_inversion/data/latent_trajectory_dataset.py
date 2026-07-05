@@ -15,6 +15,8 @@ class LatentTrajectoryDataset(Dataset):
         conditioning_file_name: str = "conditioning.pt",
         targets_dir_name: str = "targets",
         target_eps_file_name: str = "target_eps.pt",
+        target_uncond_eps_file_name: str = "target_eps_uncond.pt",
+        load_cfg_branch_targets: bool = False,
         require_training_cache: bool = True,
     ):
         self.root_dir = Path(root_dir)
@@ -22,6 +24,8 @@ class LatentTrajectoryDataset(Dataset):
         self.conditioning_file_name = conditioning_file_name
         self.targets_dir_name = targets_dir_name
         self.target_eps_file_name = target_eps_file_name
+        self.target_uncond_eps_file_name = target_uncond_eps_file_name
+        self.load_cfg_branch_targets = bool(load_cfg_branch_targets)
         self.require_training_cache = require_training_cache
         self.samples: list[dict[str, Any]] = []
         self.cumulative_lengths: list[int] = []
@@ -36,7 +40,15 @@ class LatentTrajectoryDataset(Dataset):
             meta = self._load_json(sample_dir / "meta.json")
             conditioning_path = sample_dir / self.conditioning_file_name
             target_eps_path = sample_dir / self.targets_dir_name / self.target_eps_file_name
-            self._validate_training_cache(sample_dir, conditioning_path, target_eps_path)
+            target_uncond_eps_path = (
+                sample_dir / self.targets_dir_name / self.target_uncond_eps_file_name
+            )
+            self._validate_training_cache(
+                sample_dir,
+                conditioning_path,
+                target_eps_path,
+                target_uncond_eps_path,
+            )
 
             trajectory_path = latents_dir / self.latents_file_name
             if trajectory_path.exists():
@@ -54,6 +66,8 @@ class LatentTrajectoryDataset(Dataset):
                         "prompt_path": prompt_path,
                         "conditioning_path": conditioning_path,
                         "target_eps_path": target_eps_path,
+                        "target_uncond_eps_path": target_uncond_eps_path,
+                        "guidance_scale": meta.get("guidance_scale"),
                         "sample_idx": meta.get("sample_idx"),
                     }
                 )
@@ -70,6 +84,8 @@ class LatentTrajectoryDataset(Dataset):
                         "prompt_path": prompt_path,
                         "conditioning_path": conditioning_path,
                         "target_eps_path": target_eps_path,
+                        "target_uncond_eps_path": target_uncond_eps_path,
+                        "guidance_scale": meta.get("guidance_scale"),
                         "sample_idx": meta.get("sample_idx"),
                     }
                 )
@@ -108,6 +124,47 @@ class LatentTrajectoryDataset(Dataset):
             )
         if "add_time_ids" in conditioning:
             item["add_time_ids"] = self._squeeze_batch_dim(conditioning["add_time_ids"])
+        if self.load_cfg_branch_targets:
+            item.update(self._cfg_branch_item(sample, conditioning, step_idx))
+        return item
+
+    def _cfg_branch_item(
+        self,
+        sample: dict[str, Any],
+        conditioning: dict[str, torch.Tensor],
+        step_idx: int,
+    ) -> dict[str, Any]:
+        if "negative_prompt_embeds" not in conditioning:
+            raise KeyError(
+                f"Missing negative_prompt_embeds in {sample['conditioning_path']} "
+                "required for CFG training."
+            )
+
+        target_eps_uncond = torch.load(
+            sample["target_uncond_eps_path"],
+            map_location="cpu",
+        )[step_idx]
+        item: dict[str, Any] = {
+            "negative_prompt_embeds": self._squeeze_batch_dim(
+                conditioning["negative_prompt_embeds"]
+            ),
+            "target_eps_uncond": self._squeeze_latent(target_eps_uncond),
+        }
+        if "negative_pooled_prompt_embeds" in conditioning:
+            item["negative_pooled_prompt_embeds"] = self._squeeze_batch_dim(
+                conditioning["negative_pooled_prompt_embeds"]
+            )
+        elif "pooled_prompt_embeds" in conditioning:
+            raise KeyError(
+                f"Missing negative_pooled_prompt_embeds in {sample['conditioning_path']} "
+                "required for SDXL CFG training."
+            )
+
+        if sample.get("guidance_scale") is not None:
+            item["sample_guidance_scale"] = torch.tensor(
+                float(sample["guidance_scale"]),
+                dtype=torch.float32,
+            )
         return item
 
     @staticmethod
@@ -145,12 +202,14 @@ class LatentTrajectoryDataset(Dataset):
         sample_dir: Path,
         conditioning_path: Path,
         target_eps_path: Path,
+        target_uncond_eps_path: Path,
     ) -> None:
         if not self.require_training_cache:
             return
-        missing_paths = [
-            str(path) for path in (conditioning_path, target_eps_path) if not path.exists()
-        ]
+        required_paths = [conditioning_path, target_eps_path]
+        if self.load_cfg_branch_targets:
+            required_paths.append(target_uncond_eps_path)
+        missing_paths = [str(path) for path in required_paths if not path.exists()]
         if missing_paths:
             raise FileNotFoundError(
                 "Missing cached training tensors for "

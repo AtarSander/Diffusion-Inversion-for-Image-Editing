@@ -2,11 +2,18 @@
 
 input_dir: data/processed/sdxl_trajectories
 overwrite: false
+save_inversion_latents: true
+save_inversion_pred_noises: true
 
 lora:
   enabled: false
+  mode: single
   checkpoint_path: null
+  conditional_checkpoint_path: null
+  unconditional_checkpoint_path: null
   adapter_name: inversion
+  conditional_adapter_name: text_branch
+  unconditional_adapter_name: null_branch
   scale: 1.0
   active_steps: null
   active_fraction: null

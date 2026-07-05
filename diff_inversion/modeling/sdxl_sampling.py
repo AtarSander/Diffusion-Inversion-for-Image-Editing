@@ -7,6 +7,44 @@ from diffusers import DDIMInverseScheduler
 from tqdm import tqdm
 
 
+def _set_active_adapter(pipe, adapter_name: str) -> None:
+    switched = False
+    for module in pipe.unet.modules():
+        if module is pipe.unet:
+            continue
+        if hasattr(module, "set_adapter"):
+            module.set_adapter(adapter_name)
+            switched = True
+    if not switched:
+        raise AttributeError("No injected LoRA adapter layers expose set_adapter().")
+
+
+def _predict_noise_sdxl_single_branch(
+    pipe,
+    latents: torch.Tensor,
+    timestep: torch.Tensor,
+    prompt_embeds: torch.Tensor,
+    pooled_prompt_embeds: torch.Tensor | None,
+    add_time_ids: torch.Tensor | None,
+) -> torch.Tensor:
+    latent_model_input = pipe.scheduler.scale_model_input(latents, timestep)
+    unet_kwargs = {}
+    if pooled_prompt_embeds is not None:
+        if add_time_ids is None:
+            raise KeyError("add_time_ids are required for SDXL pooled prompt embeddings.")
+        unet_kwargs["added_cond_kwargs"] = {
+            "text_embeds": pooled_prompt_embeds,
+            "time_ids": add_time_ids,
+        }
+    return pipe.unet(
+        latent_model_input,
+        timestep,
+        encoder_hidden_states=prompt_embeds,
+        return_dict=False,
+        **unet_kwargs,
+    )[0]
+
+
 @torch.no_grad()
 def predict_noise_sdxl_branches(
     pipe,
@@ -14,8 +52,38 @@ def predict_noise_sdxl_branches(
     timestep: torch.Tensor,
     cond: dict[str, torch.Tensor],
     guidance_scale: float,
+    lora_branch_adapter_names: tuple[str, str] | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Predict unconditional, conditional, and CFG-combined SDXL noise."""
+    if lora_branch_adapter_names is not None:
+        unconditional_adapter_name, conditional_adapter_name = lora_branch_adapter_names
+        pooled_prompt_embeds = cond.get("pooled_prompt_embeds")
+        negative_pooled_prompt_embeds = cond.get("negative_pooled_prompt_embeds")
+        add_time_ids = cond.get("add_time_ids")
+
+        _set_active_adapter(pipe, unconditional_adapter_name)
+        noise_uncond = _predict_noise_sdxl_single_branch(
+            pipe,
+            latents,
+            timestep,
+            cond["negative_prompt_embeds"],
+            negative_pooled_prompt_embeds,
+            add_time_ids,
+        )
+
+        _set_active_adapter(pipe, conditional_adapter_name)
+        noise_text = _predict_noise_sdxl_single_branch(
+            pipe,
+            latents,
+            timestep,
+            cond["prompt_embeds"],
+            pooled_prompt_embeds,
+            add_time_ids,
+        )
+
+        noise_cfg = noise_uncond + guidance_scale * (noise_text - noise_uncond)
+        return noise_uncond, noise_text, noise_cfg
+
     latent_model_input = torch.cat([latents, latents], dim=0)
     latent_model_input = pipe.scheduler.scale_model_input(latent_model_input, timestep)
 
@@ -55,6 +123,7 @@ def predict_noise_sdxl(
     timestep: torch.Tensor,
     cond: dict[str, torch.Tensor],
     guidance_scale: float,
+    lora_branch_adapter_names: tuple[str, str] | None = None,
 ) -> torch.Tensor:
     """Predict CFG-combined SDXL noise for one latent batch."""
     _, _, noise_cfg = predict_noise_sdxl_branches(
@@ -63,6 +132,7 @@ def predict_noise_sdxl(
         timestep=timestep,
         cond=cond,
         guidance_scale=guidance_scale,
+        lora_branch_adapter_names=lora_branch_adapter_names,
     )
     return noise_cfg
 
@@ -76,6 +146,7 @@ def invert_latent_sdxl(
     scheduler_config,
     num_inference_steps: int,
     guidance_scale: float,
+    lora_branch_adapter_names: tuple[str, str] | None = None,
     progress_desc: str | None = None,
 ) -> torch.Tensor:
     inverse_scheduler = DDIMInverseScheduler.from_config(scheduler_config)
@@ -95,6 +166,7 @@ def invert_latent_sdxl(
             timestep=timestep,
             cond=cond,
             guidance_scale=guidance_scale,
+            lora_branch_adapter_names=lora_branch_adapter_names,
         )
         latents = inverse_scheduler.step(
             model_output=noise_pred,
@@ -113,6 +185,7 @@ def reconstruct_latent_sdxl(
     cond: dict[str, torch.Tensor],
     num_inference_steps: int,
     guidance_scale: float,
+    lora_branch_adapter_names: tuple[str, str] | None = None,
     progress_desc: str | None = None,
 ) -> tuple[torch.Tensor, list[int]]:
     if noise_latent.ndim == 3:
@@ -142,6 +215,7 @@ def reconstruct_latent_sdxl(
             timestep=timestep,
             cond=cond,
             guidance_scale=guidance_scale,
+            lora_branch_adapter_names=lora_branch_adapter_names,
         )
         latents = pipe.scheduler.step(
             model_output=noise_pred,

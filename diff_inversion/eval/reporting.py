@@ -99,6 +99,13 @@ def build_samples_table_rows(
                     prefix="reconstruction_image",
                 )
             )
+        if "edited_image" in sample:
+            row.update(
+                flatten_metrics(
+                    sample["edited_image"],
+                    prefix="edited_image",
+                )
+            )
         if "clip_text_alignment" in sample:
             row.update(
                 flatten_metrics(
@@ -254,6 +261,7 @@ def log_to_wandb(results: dict[str, Any], output_dir: Path, config: Any) -> None
             "noise_comparisons",
             "normality",
             "image_comparisons",
+            "edit_image_comparisons",
             "masked_noise_regions",
             "clip_text_alignment",
             "inversion_diagnostics",
@@ -301,6 +309,14 @@ def write_outputs(results: dict[str, Any], output_dir: Path) -> None:
     if image_comparisons:
         _write_rows(output_dir / "image_comparisons", "image_comparisons", image_comparisons)
 
+    edit_image_comparisons = results.get("edit_image_comparisons") or []
+    if edit_image_comparisons:
+        _write_rows(
+            output_dir / "edit_image_comparisons",
+            "edit_image_comparisons",
+            edit_image_comparisons,
+        )
+
     masked_noise_region_comparisons = results.get("masked_noise_region_comparisons") or []
     if masked_noise_region_comparisons:
         _write_rows(
@@ -339,6 +355,8 @@ def write_outputs(results: dict[str, Any], output_dir: Path) -> None:
             f.write("- Normality artifacts: `normality/`\n\n")
         if image_comparisons:
             f.write("- Image reconstruction artifacts: `image_comparisons/`\n\n")
+        if edit_image_comparisons:
+            f.write("- Image editing artifacts: `edit_image_comparisons/`\n\n")
         if masked_noise_region_comparisons:
             f.write("- Masked noise-region artifacts: `masked_noise_regions/`\n\n")
         if clip_text_alignments:

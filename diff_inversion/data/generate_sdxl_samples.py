@@ -1,6 +1,7 @@
 """Generate SDXL samples and latent trajectories from prepared prompt files."""
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -27,6 +28,73 @@ def load_recap_prompt_records(jsonl_path: Path) -> List[Dict[str, Any]]:
                 continue
             records.append(json.loads(line))
     return records
+
+
+def nested_get(data: Dict[str, Any], dotted_key: str) -> Any:
+    value: Any = data
+    for part in dotted_key.split("."):
+        if not isinstance(value, dict) or part not in value:
+            return None
+        value = value[part]
+    return value
+
+
+def validate_existing_run_config(out_dir: Path, cfg: DictConfig) -> None:
+    """Refuse to resume into a directory generated with incompatible settings."""
+    if bool(OmegaConf.select(cfg, "overwrite", default=False)):
+        return
+
+    run_config_path = out_dir / str(
+        OmegaConf.select(cfg, "run_config_name", default="run_config.json")
+    )
+    if not run_config_path.exists():
+        return
+
+    with run_config_path.open("r", encoding="utf-8") as f:
+        existing = json.load(f)
+    if not isinstance(existing, dict):
+        raise ValueError(f"Expected dict in existing run config: {run_config_path}")
+
+    checked_keys = [
+        "data.prompts_jsonl",
+        "model.model_id",
+        "model.scheduler",
+        "model.num_inference_steps",
+        "model.guidance_scale",
+        "model.height",
+        "model.width",
+        "negative_prompt",
+        "seed",
+        "save_training_cache",
+        "save_cfg_branch_targets",
+        "latents_file_name",
+        "targets_dir_name",
+        "target_eps_file_name",
+        "target_uncond_eps_file_name",
+    ]
+    mismatches = []
+    for key in checked_keys:
+        current_value = OmegaConf.select(cfg, key, default=None)
+        existing_value = nested_get(existing, key)
+        if str(existing_value) != str(current_value):
+            mismatches.append(
+                f"{key}: existing={existing_value!r}, current={current_value!r}"
+            )
+
+    if mismatches:
+        joined = "\n  - ".join(mismatches)
+        raise ValueError(
+            f"Output directory already has an incompatible {run_config_path.name}: {out_dir}\n"
+            f"  - {joined}\n"
+            "Use a new OUTPUT_DIR for this CFG, or set overwrite=true intentionally."
+        )
+
+
+def save_run_config(path: Path, cfg: DictConfig) -> None:
+    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    with tmp_path.open("w", encoding="utf-8") as f:
+        json.dump(OmegaConf.to_container(cfg, resolve=True), f, indent=2, ensure_ascii=False)
+    os.replace(tmp_path, path)
 
 
 @torch.no_grad()
@@ -476,19 +544,24 @@ def main(cfg: DictConfig) -> None:
     prompts = prompts[start_index:end_index]
     out_dir = Path(to_absolute_path(str(gather_cfg.output_dir)))
     out_dir.mkdir(parents=True, exist_ok=True)
+    validate_existing_run_config(out_dir, cfg)
     logger.info(
-        "Generating {} samples from records [{}:{}) into {}",
+        "Generating {} samples from records [{}:{}) into {} with guidance_scale={} "
+        "save_training_cache={} save_cfg_branch_targets={}",
         len(prompts),
         start_index,
         end_index,
         out_dir,
+        model_cfg.guidance_scale,
+        OmegaConf.select(gather_cfg, "save_training_cache", default=True),
+        OmegaConf.select(gather_cfg, "save_cfg_branch_targets", default=False),
     )
 
     pipe = make_pipe(model_cfg, device)
 
-    with (out_dir / str(gather_cfg.run_config_name)).open("w", encoding="utf-8") as f:
-        json.dump(OmegaConf.to_container(cfg, resolve=True), f, indent=2, ensure_ascii=False)
-    logger.info("Saved run config: {}", out_dir / str(gather_cfg.run_config_name))
+    run_config_path = out_dir / str(gather_cfg.run_config_name)
+    save_run_config(run_config_path, cfg)
+    logger.info("Saved run config: {}", run_config_path)
 
     for sample_idx, record in tqdm(
         enumerate(prompts, start=start_index),

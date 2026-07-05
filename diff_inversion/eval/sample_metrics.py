@@ -31,6 +31,15 @@ def load_rgb_tensor(path: Path, size: tuple[int, int] | None = None) -> torch.Te
     return torch.from_numpy(array).permute(2, 0, 1).div(255.0)
 
 
+def load_mask_tensor(path: Path, size: tuple[int, int] | None = None) -> torch.Tensor:
+    with Image.open(path) as image:
+        image = image.convert("L")
+        if size is not None and image.size != size:
+            image = image.resize(size, Image.Resampling.NEAREST)
+        array = np.asarray(image, dtype=np.float32).copy()
+    return torch.from_numpy(array).div(255.0) > 0.5
+
+
 def plain_area_mask(image: torch.Tensor, threshold: float) -> torch.Tensor:
     if image.ndim != 3:
         raise ValueError(f"Expected [C,H,W] image tensor, got {tuple(image.shape)}")

@@ -21,6 +21,11 @@ from diff_inversion.data.latent_trajectory_dataset import LatentTrajectoryDatase
 from diff_inversion.utils import make_pipe
 
 
+SINGLE_ADAPTER_NAME = "inversion"
+PAIR_CONDITIONAL_ADAPTER_NAME = "text_branch"
+PAIR_UNCONDITIONAL_ADAPTER_NAME = "null_branch"
+
+
 class SDXLInversionTrainer:
     def __init__(
         self,
@@ -42,6 +47,10 @@ class SDXLInversionTrainer:
         max_grad_norm: float | None = None,
         gradient_checkpointing: bool = False,
         validation_preview_config: DictConfig | None = None,
+        training_target_mode: str = "conditional",
+        training_guidance_scale: float | None = None,
+        cfg_branch_loss_weight: float = 0.0,
+        branch_pair_cfg_loss_weight: float = 0.0,
     ):
         self.pipe = pipe
         self.lora_config = lora_config
@@ -60,11 +69,35 @@ class SDXLInversionTrainer:
         self.validation_preview_config = validation_preview_config
         self.height = int(height)
         self.width = int(width)
+        self.training_target_mode = self._normalize_training_target_mode(training_target_mode)
+        self.training_guidance_scale = (
+            None if training_guidance_scale is None else float(training_guidance_scale)
+        )
+        self.cfg_branch_loss_weight = float(cfg_branch_loss_weight)
+        if self.cfg_branch_loss_weight < 0.0:
+            raise ValueError("cfg_branch_loss_weight must be non-negative.")
+        self.branch_pair_cfg_loss_weight = float(branch_pair_cfg_loss_weight)
+        if self.branch_pair_cfg_loss_weight < 0.0:
+            raise ValueError("branch_pair_cfg_loss_weight must be non-negative.")
+        if (
+            self.training_target_mode in {"cfg", "branch_pair"}
+            and self.training_guidance_scale is not None
+            and self.training_guidance_scale <= 1.0
+        ):
+            raise ValueError(
+                f"training_target.mode={self.training_target_mode} requires "
+                "training_target.guidance_scale > 1.0 "
+                f"or null per-sample guidance; got {self.training_guidance_scale}."
+            )
 
         self._freeze_pipeline_components()
-        inject_adapter_in_model(lora_config, self.model, adapter_name="inversion")
+        self._inject_lora_adapters(lora_config)
         self._freeze_non_lora_parameters()
         self._cast_trainable_parameters(torch.float32)
+        if self.training_target_mode == "branch_pair":
+            self._set_active_adapter(PAIR_CONDITIONAL_ADAPTER_NAME)
+        else:
+            self._set_active_adapter(SINGLE_ADAPTER_NAME)
 
         if gradient_checkpointing and hasattr(self.model, "enable_gradient_checkpointing"):
             self.model.enable_gradient_checkpointing()
@@ -83,6 +116,14 @@ class SDXLInversionTrainer:
             "LoRA trainable parameters: {:,}",
             sum(p.numel() for p in self.trainable_parameters),
         )
+        logger.info(
+            "Training target mode: {} guidance_scale={} branch_loss_weight={} "
+            "branch_pair_cfg_loss_weight={}",
+            self.training_target_mode,
+            self.training_guidance_scale,
+            self.cfg_branch_loss_weight,
+            self.branch_pair_cfg_loss_weight,
+        )
 
     def train(
         self,
@@ -94,7 +135,7 @@ class SDXLInversionTrainer:
     ):
         self.global_step = int(initial_global_step)
         micro_step = 0
-        recent_losses: list[float] = []
+        recent_metrics: list[dict[str, float]] = []
         self.lr_scheduler = self._build_lr_scheduler(max_train_steps)
         if self._pending_lr_scheduler_state is not None:
             if self.lr_scheduler is None:
@@ -115,12 +156,12 @@ class SDXLInversionTrainer:
 
         while self.global_step < max_train_steps:
             for batch in train_loader:
-                loss = self.forward_loss(batch)
+                loss, metrics = self.forward_loss_with_metrics(batch)
                 if not torch.isfinite(loss):
                     raise FloatingPointError(self._non_finite_loss_message(batch, loss))
 
                 (loss / self.gradient_accumulation_steps).backward()
-                recent_losses.append(float(loss.detach().cpu()))
+                recent_metrics.append(self._detach_metrics(metrics))
                 micro_step += 1
 
                 if micro_step % self.gradient_accumulation_steps != 0:
@@ -141,15 +182,10 @@ class SDXLInversionTrainer:
                 progress.update(1)
 
                 if self._should_run(self.log_every_steps):
-                    train_loss = sum(recent_losses) / len(recent_losses)
-                    self.tracker.log(
-                        {
-                            "train/loss": train_loss,
-                            "train/lr": self.optimizer.param_groups[0]["lr"],
-                        },
-                        step=self.global_step,
-                    )
-                    recent_losses = []
+                    train_metrics = self._average_metric_rows(recent_metrics, prefix="train")
+                    train_metrics["train/lr"] = self.optimizer.param_groups[0]["lr"]
+                    self.tracker.log(train_metrics, step=self.global_step)
+                    recent_metrics = []
 
                 if self._should_run(self.eval_every_steps):
                     self.tracker.log(
@@ -173,6 +209,13 @@ class SDXLInversionTrainer:
         self.tracker.finish()
 
     def forward_loss(self, batch: dict[str, Any]) -> torch.Tensor:
+        loss, _ = self.forward_loss_with_metrics(batch)
+        return loss
+
+    def forward_loss_with_metrics(
+        self,
+        batch: dict[str, Any],
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         x_clean = batch["x_clean"].to(device=self.model.device, dtype=self.model.dtype)
         timestep = batch["timestep"].to(device=self.model.device)
         target_eps = batch["target_eps"].to(device=self.model.device, dtype=self.model.dtype)
@@ -192,6 +235,35 @@ class SDXLInversionTrainer:
 
         scheduler_timesteps = self._scheduler_timesteps(timestep, batch_size=x_clean.shape[0])
 
+        if self.training_target_mode == "cfg":
+            return self._forward_cfg_loss(
+                batch=batch,
+                x_clean=x_clean,
+                scheduler_timesteps=scheduler_timesteps,
+                prompt_embeds=prompt_embeds,
+                pooled_prompt_embeds=pooled_prompt_embeds,
+                add_time_ids=add_time_ids,
+                target_eps=target_eps,
+            )
+        if self.training_target_mode == "unconditional":
+            return self._forward_unconditional_loss(
+                batch=batch,
+                x_clean=x_clean,
+                scheduler_timesteps=scheduler_timesteps,
+                pooled_prompt_embeds=pooled_prompt_embeds,
+                add_time_ids=add_time_ids,
+            )
+        if self.training_target_mode == "branch_pair":
+            return self._forward_branch_pair_loss(
+                batch=batch,
+                x_clean=x_clean,
+                scheduler_timesteps=scheduler_timesteps,
+                prompt_embeds=prompt_embeds,
+                pooled_prompt_embeds=pooled_prompt_embeds,
+                add_time_ids=add_time_ids,
+                target_eps=target_eps,
+            )
+
         student_eps = self.predict_noise(
             x_clean,
             scheduler_timesteps,
@@ -200,7 +272,193 @@ class SDXLInversionTrainer:
             add_time_ids,
         )
 
-        return F.mse_loss(student_eps.float(), target_eps.float())
+        loss = F.mse_loss(student_eps.float(), target_eps.float())
+        return loss, {
+            "loss": loss,
+            "loss_cond": loss,
+        }
+
+    def _forward_unconditional_loss(
+        self,
+        *,
+        batch: dict[str, Any],
+        x_clean: torch.Tensor,
+        scheduler_timesteps: torch.Tensor,
+        pooled_prompt_embeds: torch.Tensor | None,
+        add_time_ids: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        target_eps_uncond = self._required_tensor(batch, "target_eps_uncond").to(
+            device=self.model.device,
+            dtype=self.model.dtype,
+        )
+        negative_prompt_embeds = self._required_tensor(batch, "negative_prompt_embeds").to(
+            device=self.model.device,
+            dtype=self.model.dtype,
+        )
+        negative_pooled_prompt_embeds = batch.get("negative_pooled_prompt_embeds")
+        if negative_pooled_prompt_embeds is not None:
+            negative_pooled_prompt_embeds = negative_pooled_prompt_embeds.to(
+                device=self.model.device,
+                dtype=self.model.dtype,
+            )
+        elif pooled_prompt_embeds is not None:
+            raise KeyError(
+                "negative_pooled_prompt_embeds are required for SDXL unconditional training."
+            )
+
+        student_eps = self.predict_noise(
+            x_clean,
+            scheduler_timesteps,
+            negative_prompt_embeds,
+            negative_pooled_prompt_embeds,
+            add_time_ids,
+        )
+        loss = F.mse_loss(student_eps.float(), target_eps_uncond.float())
+        return loss, {
+            "loss": loss,
+            "loss_uncond": loss,
+        }
+
+    def _forward_branch_pair_loss(
+        self,
+        *,
+        batch: dict[str, Any],
+        x_clean: torch.Tensor,
+        scheduler_timesteps: torch.Tensor,
+        prompt_embeds: torch.Tensor,
+        pooled_prompt_embeds: torch.Tensor | None,
+        add_time_ids: torch.Tensor | None,
+        target_eps: torch.Tensor,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        target_eps_uncond = self._required_tensor(batch, "target_eps_uncond").to(
+            device=self.model.device,
+            dtype=self.model.dtype,
+        )
+        negative_prompt_embeds = self._required_tensor(batch, "negative_prompt_embeds").to(
+            device=self.model.device,
+            dtype=self.model.dtype,
+        )
+
+        negative_pooled_prompt_embeds = batch.get("negative_pooled_prompt_embeds")
+        if negative_pooled_prompt_embeds is not None:
+            negative_pooled_prompt_embeds = negative_pooled_prompt_embeds.to(
+                device=self.model.device,
+                dtype=self.model.dtype,
+            )
+        elif pooled_prompt_embeds is not None:
+            raise KeyError(
+                "negative_pooled_prompt_embeds are required for SDXL branch-pair training."
+            )
+
+        pred_cond = self.predict_noise_with_adapter(
+            PAIR_CONDITIONAL_ADAPTER_NAME,
+            x_clean,
+            scheduler_timesteps,
+            prompt_embeds,
+            pooled_prompt_embeds,
+            add_time_ids,
+        )
+        pred_uncond = self.predict_noise_with_adapter(
+            PAIR_UNCONDITIONAL_ADAPTER_NAME,
+            x_clean,
+            scheduler_timesteps,
+            negative_prompt_embeds,
+            negative_pooled_prompt_embeds,
+            add_time_ids,
+        )
+        self._set_lora_parameters_trainable()
+
+        loss_cond = F.mse_loss(pred_cond.float(), target_eps.float())
+        loss_uncond = F.mse_loss(pred_uncond.float(), target_eps_uncond.float())
+
+        guidance_scale = self._guidance_scale(
+            batch,
+            batch_size=x_clean.shape[0],
+            device=self.model.device,
+            dtype=self.model.dtype,
+        )
+        guidance_scale = guidance_scale.reshape(
+            x_clean.shape[0],
+            *([1] * (target_eps.ndim - 1)),
+        )
+        pred_cfg = pred_uncond + guidance_scale * (pred_cond - pred_uncond)
+        target_cfg = target_eps_uncond + guidance_scale * (target_eps - target_eps_uncond)
+        loss_cfg = F.mse_loss(pred_cfg.float(), target_cfg.float())
+
+        loss = loss_cond + loss_uncond
+        if self.branch_pair_cfg_loss_weight > 0.0:
+            loss = loss + self.branch_pair_cfg_loss_weight * loss_cfg
+
+        return loss, {
+            "loss": loss,
+            "loss_cond": loss_cond,
+            "loss_uncond": loss_uncond,
+            "loss_cfg": loss_cfg,
+        }
+
+    def _forward_cfg_loss(
+        self,
+        *,
+        batch: dict[str, Any],
+        x_clean: torch.Tensor,
+        scheduler_timesteps: torch.Tensor,
+        prompt_embeds: torch.Tensor,
+        pooled_prompt_embeds: torch.Tensor | None,
+        add_time_ids: torch.Tensor | None,
+        target_eps: torch.Tensor,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        target_eps_uncond = self._required_tensor(batch, "target_eps_uncond").to(
+            device=self.model.device,
+            dtype=self.model.dtype,
+        )
+        negative_prompt_embeds = self._required_tensor(batch, "negative_prompt_embeds").to(
+            device=self.model.device,
+            dtype=self.model.dtype,
+        )
+
+        negative_pooled_prompt_embeds = batch.get("negative_pooled_prompt_embeds")
+        if negative_pooled_prompt_embeds is not None:
+            negative_pooled_prompt_embeds = negative_pooled_prompt_embeds.to(
+                device=self.model.device,
+                dtype=self.model.dtype,
+            )
+
+        pred_uncond, pred_cond = self.predict_noise_cfg_branches(
+            x_clean,
+            scheduler_timesteps,
+            negative_prompt_embeds,
+            prompt_embeds,
+            negative_pooled_prompt_embeds,
+            pooled_prompt_embeds,
+            add_time_ids,
+        )
+        guidance_scale = self._guidance_scale(
+            batch,
+            batch_size=x_clean.shape[0],
+            device=self.model.device,
+            dtype=self.model.dtype,
+        )
+        guidance_scale = guidance_scale.reshape(
+            x_clean.shape[0],
+            *([1] * (target_eps.ndim - 1)),
+        )
+
+        pred_cfg = pred_uncond + guidance_scale * (pred_cond - pred_uncond)
+        target_cfg = target_eps_uncond + guidance_scale * (target_eps - target_eps_uncond)
+
+        loss_cfg = F.mse_loss(pred_cfg.float(), target_cfg.float())
+        loss_cond = F.mse_loss(pred_cond.float(), target_eps.float())
+        loss_uncond = F.mse_loss(pred_uncond.float(), target_eps_uncond.float())
+        loss = loss_cfg
+        if self.cfg_branch_loss_weight > 0.0:
+            loss = loss + self.cfg_branch_loss_weight * (loss_cond + loss_uncond)
+
+        return loss, {
+            "loss": loss,
+            "loss_cfg": loss_cfg,
+            "loss_cond": loss_cond,
+            "loss_uncond": loss_uncond,
+        }
 
     def predict_noise(
         self,
@@ -225,21 +483,77 @@ class SDXLInversionTrainer:
             **unet_kwargs,
         )[0]
 
+    def predict_noise_with_adapter(
+        self,
+        adapter_name: str,
+        latents: torch.Tensor,
+        scheduler_timesteps: torch.Tensor,
+        prompt_embeds: torch.Tensor,
+        pooled_prompt_embeds: torch.Tensor | None,
+        add_time_ids: torch.Tensor | None,
+    ) -> torch.Tensor:
+        self._set_active_adapter(adapter_name)
+        return self.predict_noise(
+            latents,
+            scheduler_timesteps,
+            prompt_embeds,
+            pooled_prompt_embeds,
+            add_time_ids,
+        )
+
+    def predict_noise_cfg_branches(
+        self,
+        latents: torch.Tensor,
+        scheduler_timesteps: torch.Tensor,
+        negative_prompt_embeds: torch.Tensor,
+        prompt_embeds: torch.Tensor,
+        negative_pooled_prompt_embeds: torch.Tensor | None,
+        pooled_prompt_embeds: torch.Tensor | None,
+        add_time_ids: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        branch_latents = torch.cat([latents, latents], dim=0)
+        branch_timesteps = torch.cat([scheduler_timesteps, scheduler_timesteps], dim=0)
+        branch_prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
+
+        branch_pooled_prompt_embeds = None
+        if pooled_prompt_embeds is not None:
+            if negative_pooled_prompt_embeds is None:
+                raise KeyError("negative_pooled_prompt_embeds are required for SDXL CFG training.")
+            branch_pooled_prompt_embeds = torch.cat(
+                [negative_pooled_prompt_embeds, pooled_prompt_embeds],
+                dim=0,
+            )
+        branch_add_time_ids = None
+        if add_time_ids is not None:
+            branch_add_time_ids = torch.cat([add_time_ids, add_time_ids], dim=0)
+
+        noise_pred = self.predict_noise(
+            branch_latents,
+            branch_timesteps,
+            branch_prompt_embeds,
+            branch_pooled_prompt_embeds,
+            branch_add_time_ids,
+        )
+        noise_uncond, noise_cond = noise_pred.chunk(2)
+        return noise_uncond, noise_cond
+
     @torch.no_grad()
     def validation_epoch(self, val_loader: DataLoader) -> dict[str, float]:
         self.model.eval()
-        losses = []
+        metric_rows: list[dict[str, float]] = []
 
         for batch_idx, batch in enumerate(tqdm(val_loader, desc="Validation")):
             if self.max_val_batches is not None and batch_idx >= self.max_val_batches:
                 break
-            loss = self.forward_loss(batch)
+            loss, metrics = self.forward_loss_with_metrics(batch)
             if not torch.isfinite(loss):
                 raise FloatingPointError(self._non_finite_loss_message(batch, loss, "validation"))
-            losses.append(float(loss.detach().cpu()))
+            metric_rows.append(self._detach_metrics(metrics))
 
         self.model.train()
-        return {"val/loss": sum(losses) / len(losses)} if losses else {"val/loss": float("nan")}
+        if not metric_rows:
+            return {"val/loss": float("nan")}
+        return self._average_metric_rows(metric_rows, prefix="val")
 
     @torch.no_grad()
     def encode_prompts(
@@ -287,7 +601,32 @@ class SDXLInversionTrainer:
     def save_checkpoint(self, filename: str):
         save_path = self.checkpoint_dir / filename
         save_path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save(get_peft_model_state_dict(self.model, adapter_name="inversion"), save_path)
+        if self.training_target_mode == "branch_pair":
+            state = {
+                "branch_pair": True,
+                "adapter_names": {
+                    "conditional": PAIR_CONDITIONAL_ADAPTER_NAME,
+                    "unconditional": PAIR_UNCONDITIONAL_ADAPTER_NAME,
+                },
+                "adapters": {
+                    "conditional": self._adapter_state_dict(PAIR_CONDITIONAL_ADAPTER_NAME),
+                    "unconditional": self._adapter_state_dict(PAIR_UNCONDITIONAL_ADAPTER_NAME),
+                },
+            }
+            torch.save(state, save_path)
+            torch.save(
+                state["adapters"]["conditional"],
+                self._branch_checkpoint_path(save_path, "conditional"),
+            )
+            torch.save(
+                state["adapters"]["unconditional"],
+                self._branch_checkpoint_path(save_path, "unconditional"),
+            )
+        else:
+            torch.save(
+                get_peft_model_state_dict(self.model, adapter_name=SINGLE_ADAPTER_NAME),
+                save_path,
+            )
         logger.info("Checkpoint saved to {}", save_path)
 
     def save_training_state(self, filename: str):
@@ -295,7 +634,6 @@ class SDXLInversionTrainer:
         save_path.parent.mkdir(parents=True, exist_ok=True)
         state = {
             "global_step": self.global_step,
-            "lora_state_dict": get_peft_model_state_dict(self.model, adapter_name="inversion"),
             "optimizer_state_dict": self.optimizer.state_dict(),
             "lr_scheduler_state_dict": (
                 self.lr_scheduler.state_dict() if self.lr_scheduler is not None else None
@@ -305,6 +643,16 @@ class SDXLInversionTrainer:
                 torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
             ),
         }
+        if self.training_target_mode == "branch_pair":
+            state["lora_state_dicts"] = {
+                "conditional": self._adapter_state_dict(PAIR_CONDITIONAL_ADAPTER_NAME),
+                "unconditional": self._adapter_state_dict(PAIR_UNCONDITIONAL_ADAPTER_NAME),
+            }
+        else:
+            state["lora_state_dict"] = get_peft_model_state_dict(
+                self.model,
+                adapter_name=SINGLE_ADAPTER_NAME,
+            )
         torch.save(state, save_path)
         logger.info("Training state saved to {}", save_path)
 
@@ -315,9 +663,13 @@ class SDXLInversionTrainer:
         if not checkpoint_path.exists():
             raise FileNotFoundError(f"Checkpoint path does not exist: {checkpoint_path}")
         state_dict = torch.load(checkpoint_path, map_location="cpu")
+        if self.training_target_mode == "branch_pair":
+            self._load_branch_pair_checkpoint_state(state_dict, checkpoint_path)
+            logger.info("Checkpoint loaded from {}", checkpoint_path)
+            return
         if isinstance(state_dict, dict) and "lora_state_dict" in state_dict:
             state_dict = state_dict["lora_state_dict"]
-        set_peft_model_state_dict(self.model, state_dict, adapter_name="inversion")
+        set_peft_model_state_dict(self.model, state_dict, adapter_name=SINGLE_ADAPTER_NAME)
         logger.info("Checkpoint loaded from {}", checkpoint_path)
 
     def load_training_state(self, filename: str | Path) -> int:
@@ -328,10 +680,21 @@ class SDXLInversionTrainer:
             raise FileNotFoundError(f"Training state checkpoint does not exist: {checkpoint_path}")
 
         state = torch.load(checkpoint_path, map_location="cpu")
-        if not isinstance(state, dict) or "lora_state_dict" not in state:
+        if not isinstance(state, dict):
             raise ValueError(f"Not a full training-state checkpoint: {checkpoint_path}")
 
-        set_peft_model_state_dict(self.model, state["lora_state_dict"], adapter_name="inversion")
+        if self.training_target_mode == "branch_pair":
+            if "lora_state_dicts" not in state:
+                raise ValueError(f"Not a branch-pair training-state checkpoint: {checkpoint_path}")
+            self._load_branch_pair_state_dicts(state["lora_state_dicts"], checkpoint_path)
+        else:
+            if "lora_state_dict" not in state:
+                raise ValueError(f"Not a full training-state checkpoint: {checkpoint_path}")
+            set_peft_model_state_dict(
+                self.model,
+                state["lora_state_dict"],
+                adapter_name=SINGLE_ADAPTER_NAME,
+            )
         if "optimizer_state_dict" in state:
             self.optimizer.load_state_dict(state["optimizer_state_dict"])
         self._pending_lr_scheduler_state = state.get("lr_scheduler_state_dict")
@@ -346,6 +709,74 @@ class SDXLInversionTrainer:
         )
         return global_step
 
+    def _inject_lora_adapters(self, lora_config: LoraConfig) -> None:
+        if self.training_target_mode == "branch_pair":
+            inject_adapter_in_model(
+                lora_config,
+                self.model,
+                adapter_name=PAIR_CONDITIONAL_ADAPTER_NAME,
+            )
+            inject_adapter_in_model(
+                lora_config,
+                self.model,
+                adapter_name=PAIR_UNCONDITIONAL_ADAPTER_NAME,
+            )
+            return
+
+        inject_adapter_in_model(lora_config, self.model, adapter_name=SINGLE_ADAPTER_NAME)
+
+    def _adapter_state_dict(self, adapter_name: str) -> dict[str, torch.Tensor]:
+        needle = f".{adapter_name}."
+        state: dict[str, torch.Tensor] = {}
+        for key, value in self.model.state_dict().items():
+            if "lora" not in key.lower() or needle not in key:
+                continue
+            state[key.replace(needle, ".")] = value.detach().cpu()
+        if not state:
+            raise RuntimeError(f"No LoRA state found for adapter {adapter_name!r}.")
+        return state
+
+    @staticmethod
+    def _branch_checkpoint_path(path: Path, branch_name: str) -> Path:
+        return path.with_name(f"{path.stem}_{branch_name}{path.suffix}")
+
+    def _load_branch_pair_checkpoint_state(
+        self,
+        state: dict[str, Any],
+        checkpoint_path: Path,
+    ) -> None:
+        if not isinstance(state, dict):
+            raise ValueError(f"Not a branch-pair checkpoint: {checkpoint_path}")
+        if "lora_state_dicts" in state:
+            self._load_branch_pair_state_dicts(state["lora_state_dicts"], checkpoint_path)
+            return
+        if "adapters" in state:
+            self._load_branch_pair_state_dicts(state["adapters"], checkpoint_path)
+            return
+        raise ValueError(f"Not a branch-pair checkpoint: {checkpoint_path}")
+
+    def _load_branch_pair_state_dicts(
+        self,
+        state_dicts: dict[str, dict[str, torch.Tensor]],
+        checkpoint_path: Path,
+    ) -> None:
+        if "conditional" not in state_dicts or "unconditional" not in state_dicts:
+            raise ValueError(
+                "Branch-pair checkpoint must contain 'conditional' and "
+                f"'unconditional' adapter states: {checkpoint_path}"
+            )
+        set_peft_model_state_dict(
+            self.model,
+            state_dicts["conditional"],
+            adapter_name=PAIR_CONDITIONAL_ADAPTER_NAME,
+        )
+        set_peft_model_state_dict(
+            self.model,
+            state_dicts["unconditional"],
+            adapter_name=PAIR_UNCONDITIONAL_ADAPTER_NAME,
+        )
+        self._set_lora_parameters_trainable()
+
     def _freeze_pipeline_components(self) -> None:
         for component in (
             self.pipe.text_encoder,
@@ -359,6 +790,11 @@ class SDXLInversionTrainer:
     def _freeze_non_lora_parameters(self) -> None:
         for name, parameter in self.model.named_parameters():
             parameter.requires_grad_("lora" in name.lower())
+
+    def _set_lora_parameters_trainable(self) -> None:
+        for name, parameter in self.model.named_parameters():
+            if "lora" in name.lower():
+                parameter.requires_grad_(True)
 
     def _cast_trainable_parameters(self, dtype: torch.dtype) -> None:
         for parameter in self.model.parameters():
@@ -435,6 +871,81 @@ class SDXLInversionTrainer:
             return value[0] if value else None
         return value
 
+    @staticmethod
+    def _required_tensor(batch: dict[str, Any], key: str) -> torch.Tensor:
+        value = batch.get(key)
+        if not torch.is_tensor(value):
+            raise KeyError(f"Batch is missing required tensor {key!r}.")
+        return value
+
+    def _guidance_scale(
+        self,
+        batch: dict[str, Any],
+        *,
+        batch_size: int,
+        device: torch.device | str,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        if self.training_guidance_scale is not None:
+            guidance_scale = torch.full(
+                (batch_size,),
+                self.training_guidance_scale,
+                device=device,
+                dtype=dtype,
+            )
+        else:
+            sample_guidance_scale = self._required_tensor(batch, "sample_guidance_scale")
+            guidance_scale = sample_guidance_scale.to(device=device, dtype=dtype).flatten()
+            if guidance_scale.numel() == 1:
+                guidance_scale = guidance_scale.expand(batch_size)
+            if guidance_scale.numel() != batch_size:
+                raise ValueError(
+                    "sample_guidance_scale batch shape does not match latent batch shape: "
+                    f"got {guidance_scale.numel()} values for batch_size={batch_size}."
+                )
+
+        if torch.any(guidance_scale <= 1.0):
+            min_guidance = float(guidance_scale.detach().float().min().cpu())
+            raise ValueError(
+                "training_target.mode=cfg requires guidance_scale > 1.0; "
+                f"got minimum batch value {min_guidance}."
+            )
+        return guidance_scale
+
+    @staticmethod
+    def _detach_metrics(metrics: dict[str, torch.Tensor]) -> dict[str, float]:
+        return {
+            key: float(value.detach().float().cpu())
+            for key, value in metrics.items()
+            if torch.is_tensor(value) and torch.isfinite(value.detach()).all().item()
+        }
+
+    @staticmethod
+    def _average_metric_rows(
+        rows: list[dict[str, float]],
+        *,
+        prefix: str,
+    ) -> dict[str, float]:
+        grouped: dict[str, list[float]] = {}
+        for row in rows:
+            for key, value in row.items():
+                grouped.setdefault(key, []).append(float(value))
+        return {
+            f"{prefix}/{key}": sum(values) / len(values)
+            for key, values in grouped.items()
+            if values
+        }
+
+    @staticmethod
+    def _normalize_training_target_mode(value: str) -> str:
+        mode = str(value).strip().lower()
+        if mode not in {"conditional", "unconditional", "cfg", "branch_pair"}:
+            raise ValueError(
+                "training_target.mode must be 'conditional', 'unconditional', "
+                f"'cfg', or 'branch_pair', got {value!r}."
+            )
+        return mode
+
     @contextmanager
     def _teacher_mode(self):
         was_training = self.model.training
@@ -446,6 +957,22 @@ class SDXLInversionTrainer:
             self._set_lora_enabled(True)
             if was_training:
                 self.model.train()
+
+    def _set_active_adapter(self, adapter_name: str) -> None:
+        toggled = False
+        for module in self.model.modules():
+            if module is self.model:
+                continue
+            if hasattr(module, "set_adapter"):
+                module.set_adapter(adapter_name)
+                toggled = True
+
+        if not toggled:
+            raise AttributeError("No injected LoRA adapter layers expose set_adapter().")
+
+        # PEFT marks only the active adapter trainable. Branch-pair training needs
+        # gradients for both adapter graphs after two forward passes.
+        self._set_lora_parameters_trainable()
 
     def _set_lora_enabled(self, enabled: bool) -> None:
         toggled = False
@@ -475,6 +1002,12 @@ class SDXLInversionTrainer:
 
     def _run_validation_preview(self) -> None:
         if self.validation_preview_config is None:
+            return
+        if self.training_target_mode == "branch_pair":
+            logger.warning(
+                "Validation preview skipped for training_target.mode=branch_pair; "
+                "two-adapter inversion preview is not implemented."
+            )
             return
 
         from diff_inversion.modeling.validation_preview import (
@@ -530,6 +1063,23 @@ def main(cfg: DictConfig) -> None:
 
     pipe = make_pipe(model_cfg, device)
     lora_config = get_lora_config(lora_cfg)
+    training_target_mode = str(
+        OmegaConf.select(cfg, "training_target.mode", default="conditional")
+    )
+    training_guidance_scale = OmegaConf.select(
+        cfg,
+        "training_target.guidance_scale",
+        default=None,
+    )
+    training_guidance_scale = (
+        None if training_guidance_scale is None else float(training_guidance_scale)
+    )
+    cfg_branch_loss_weight = float(
+        OmegaConf.select(cfg, "training_target.branch_loss_weight", default=0.0)
+    )
+    branch_pair_cfg_loss_weight = float(
+        OmegaConf.select(cfg, "training_target.cfg_loss_weight", default=0.0)
+    )
 
     run = wandb.init(
         project=cfg.wandb.project,
@@ -561,6 +1111,10 @@ def main(cfg: DictConfig) -> None:
         validation_preview_config=(
             cfg if OmegaConf.select(cfg, "validation_preview.enabled", default=False) else None
         ),
+        training_target_mode=training_target_mode,
+        training_guidance_scale=training_guidance_scale,
+        cfg_branch_loss_weight=cfg_branch_loss_weight,
+        branch_pair_cfg_loss_weight=branch_pair_cfg_loss_weight,
     )
 
     initial_global_step = 0
@@ -600,6 +1154,14 @@ def main(cfg: DictConfig) -> None:
         conditioning_file_name=cfg.data.conditioning_file_name,
         targets_dir_name=cfg.data.targets_dir_name,
         target_eps_file_name=cfg.data.target_eps_file_name,
+        target_uncond_eps_file_name=str(
+            OmegaConf.select(
+                cfg,
+                "data.target_uncond_eps_file_name",
+                default="target_eps_uncond.pt",
+            )
+        ),
+        load_cfg_branch_targets=training_target_mode in {"unconditional", "cfg", "branch_pair"},
         require_training_cache=cfg.data.require_training_cache,
     )
     val_dataset = LatentTrajectoryDataset(
@@ -608,6 +1170,14 @@ def main(cfg: DictConfig) -> None:
         conditioning_file_name=cfg.data.conditioning_file_name,
         targets_dir_name=cfg.data.targets_dir_name,
         target_eps_file_name=cfg.data.target_eps_file_name,
+        target_uncond_eps_file_name=str(
+            OmegaConf.select(
+                cfg,
+                "data.target_uncond_eps_file_name",
+                default="target_eps_uncond.pt",
+            )
+        ),
+        load_cfg_branch_targets=training_target_mode in {"unconditional", "cfg", "branch_pair"},
         require_training_cache=cfg.data.require_training_cache,
     )
     logger.info("Loaded {:,} train transitions", len(train_dataset))

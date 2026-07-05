@@ -34,8 +34,10 @@ from diff_inversion.eval.reporting import (
 from diff_inversion.eval.sample_metrics import (
     error_distribution_metrics,
     image_pair_metrics,
+    load_mask_tensor,
     latent_error_structure_metrics,
     load_rgb_tensor,
+    masked_image_error_metrics,
     noise_normality_metrics,
     pair_metrics,
     patch_topk_corr,
@@ -339,6 +341,57 @@ def _add_image_metrics(
     return comparison
 
 
+def _add_edit_image_metrics(
+    sample_name: str,
+    sample_dir: Path,
+    metadata: dict[str, Any],
+    edited_image_name: str,
+    plain_threshold: float,
+    sample_results: dict[str, Any],
+) -> dict[str, Any] | None:
+    final_image_path = sample_dir / "final.png"
+    edited_image_path = sample_dir / edited_image_name
+    if not final_image_path.exists() or not edited_image_path.exists():
+        return None
+
+    metrics = image_pair_metrics(
+        final_image_path,
+        edited_image_path,
+        plain_threshold=plain_threshold,
+    )
+
+    mask_path = sample_dir / "edit_mask.png"
+    if mask_path.exists():
+        with Image.open(final_image_path) as image:
+            reference_size = image.size
+        source = load_rgb_tensor(final_image_path)
+        edited = load_rgb_tensor(edited_image_path, size=reference_size)
+        edit_mask = load_mask_tensor(mask_path, size=reference_size)
+        non_edit_mask = ~edit_mask
+        delta = edited - source
+        metrics.update(masked_image_error_metrics(delta, edit_mask, prefix="edit_mask"))
+        metrics.update(
+            masked_image_error_metrics(delta, non_edit_mask, prefix="non_edit_mask")
+        )
+        metrics["has_edit_mask"] = True
+        metrics["edit_mask_path"] = mask_path.as_posix()
+    else:
+        metrics["has_edit_mask"] = False
+
+    sample_results["edited_image"] = metrics
+    comparison = {
+        "sample": sample_name,
+        "source_prompt": _prompt_text(metadata),
+        "target_prompt": _target_prompt_text(metadata),
+        "sample_dir_path": sample_dir.as_posix(),
+        "final_image_path": final_image_path.as_posix(),
+        "edited_image_path": edited_image_path.as_posix(),
+        "edited_image_name": edited_image_name,
+        **metrics,
+    }
+    return comparison
+
+
 def _lpips_device(device_name: str) -> torch.device:
     if device_name == "auto":
         device_name = "cuda" if torch.cuda.is_available() else "cpu"
@@ -419,6 +472,7 @@ def run_evaluation(
     lpips_device: str,
     lpips_batch_size: int,
     reconstruction_image_name: str = "reconstructed.png",
+    edited_image_name: str = "edited.png",
     clip_text_alignment: Any | None = None,
     inversion_diagnostics: Any | None = None,
 ) -> dict[str, Any]:
@@ -448,6 +502,7 @@ def run_evaluation(
     noise_comparisons = []
     normality_comparisons = []
     image_comparisons = []
+    edit_image_comparisons = []
     clip_text_alignments = []
     masked_noise_region_comparisons = []
     noise_comparison_dir = output_dir / "noise_comparisons"
@@ -568,6 +623,17 @@ def run_evaluation(
         if image_comparison is not None:
             image_comparisons.append(image_comparison)
 
+        edit_image_comparison = _add_edit_image_metrics(
+            sample_name=sample_dir.name,
+            sample_dir=sample_dir,
+            metadata=metadata,
+            edited_image_name=edited_image_name,
+            plain_threshold=plain_threshold,
+            sample_results=sample_results,
+        )
+        if edit_image_comparison is not None:
+            edit_image_comparisons.append(edit_image_comparison)
+
         initial_latents.append(steps[0])
         final_latents.append(steps[-1])
 
@@ -618,19 +684,31 @@ def run_evaluation(
         latent_normality_reverse_kl = kl_div(inverted_batch, initial_batch)
         per_location_kl = kl_div2(initial_batch, inverted_batch)
         per_location_reverse_kl = kl_div2(inverted_batch, initial_batch)
+        per_location_kl_x100 = per_location_kl * 100.0
+        per_location_reverse_kl_x100 = per_location_reverse_kl * 100.0
         aggregate["inverted_noise_patch_topk_correlation"] = latent_normality_corr
         aggregate["latent_normality"] = {
             "corr": float(latent_normality_corr["mean"]),
             "corr_std": float(latent_normality_corr["std"]),
-            "kl": float(latent_normality_kl),
-            "reverse_kl": float(latent_normality_reverse_kl),
+            "kl": float(per_location_kl_x100),
+            "reverse_kl": float(per_location_reverse_kl_x100),
             "symmetric_kl": float(
+                (per_location_kl_x100 + per_location_reverse_kl_x100) / 2
+            ),
+            "global_kl": float(latent_normality_kl),
+            "global_reverse_kl": float(latent_normality_reverse_kl),
+            "global_symmetric_kl": float(
                 (latent_normality_kl + latent_normality_reverse_kl) / 2
             ),
             "per_location_kl": float(per_location_kl),
             "per_location_reverse_kl": float(per_location_reverse_kl),
             "per_location_symmetric_kl": float(
                 (per_location_kl + per_location_reverse_kl) / 2
+            ),
+            "per_location_kl_x100": float(per_location_kl_x100),
+            "per_location_reverse_kl_x100": float(per_location_reverse_kl_x100),
+            "per_location_symmetric_kl_x100": float(
+                (per_location_kl_x100 + per_location_reverse_kl_x100) / 2
             ),
         }
         aggregate["initial_vs_inverted_noise_per_channel"] = per_channel_pair_metrics(
@@ -656,6 +734,11 @@ def run_evaluation(
         aggregate["final_vs_reconstructed_image"] = summarize_numeric_rows(
             image_comparisons,
             prefixes_to_skip=("reference_", "candidate_"),
+        )
+    if edit_image_comparisons:
+        aggregate["final_vs_edited_image"] = summarize_numeric_rows(
+            edit_image_comparisons,
+            prefixes_to_skip=("reference_", "candidate_", "edit_mask_path"),
         )
     if clip_text_alignments:
         aggregate["clip_text_alignment"] = summarize_numeric_rows(
@@ -721,8 +804,9 @@ def run_evaluation(
             "If present, pred_noises are included as forward DDIM reference targets.",
             "If present, inverted_noise is compared against initial latent noise x_T.",
             "If present, normality diagnostics compare initial and inverted noise.",
-            "Latent normality uses patch top-k correlation and global Gaussian KL, matching the authors' KL definition; per-location KL is also reported separately.",
+            "Latent normality reports patch top-k correlation computed on inverted_noise; kl uses per-location Gaussian KL scaled by 100.",
             f"If present, {reconstruction_image_name} is compared against final.png.",
+            f"If present, {edited_image_name} is compared against final.png for editing metrics.",
             "LPIPS uses the AlexNet v0.1 perceptual metric when available.",
             "Plain-area reconstruction metrics use final.png local pixel differences.",
             "Inversion diagnostics include latent-location and prediction-error metrics.",
@@ -735,6 +819,7 @@ def run_evaluation(
         "noise_comparisons": noise_comparisons,
         "normality_comparisons": normality_comparisons,
         "image_comparisons": image_comparisons,
+        "edit_image_comparisons": edit_image_comparisons,
         "clip_text_alignments": clip_text_alignments,
         "masked_noise_region_comparisons": masked_noise_region_comparisons,
     }
@@ -763,6 +848,7 @@ def main(cfg: DictConfig) -> None:
         lpips_device=cfg.lpips_device,
         lpips_batch_size=cfg.lpips_batch_size,
         reconstruction_image_name=str(cfg.reconstruction_image_name),
+        edited_image_name=str(cfg.edited_image_name),
         clip_text_alignment=cfg.clip_text_alignment,
         inversion_diagnostics=cfg.inversion_diagnostics,
     )

@@ -8,6 +8,7 @@ input_dir: data/processed/sdxl_trajectories
 output_dir: reports/eval
 max_samples: null
 reconstruction_image_name: reconstructed.png
+edited_image_name: edited.png
 
 patch_size: 8
 top_k: 20

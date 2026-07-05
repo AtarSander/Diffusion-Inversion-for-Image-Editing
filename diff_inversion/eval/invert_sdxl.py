@@ -19,7 +19,11 @@ from diff_inversion.data.generate_sdxl_samples import (
     encode_prompt_sdxl,
     make_pipe,
 )
-from diff_inversion.eval.lora import configure_unet_lora, set_unet_lora_enabled
+from diff_inversion.eval.lora import (
+    configure_unet_lora,
+    get_lora_branch_adapter_names,
+    set_unet_lora_enabled,
+)
 from diff_inversion.modeling.sdxl_sampling import predict_noise_sdxl
 
 
@@ -104,6 +108,8 @@ def invert_sample(
     lora_cfg,
     lora_loaded: bool,
     overwrite: bool,
+    save_inversion_latents: bool,
+    save_inversion_pred_noises: bool,
 ) -> None:
     inverted_noise_path = sample_dir / "inverted_noise.pt"
     inversion_latents_dir = sample_dir / "inversion_latents"
@@ -149,9 +155,12 @@ def invert_sample(
                 len(inverse_scheduler.timesteps),
                 sample_dir.name,
             )
+        lora_branch_adapter_names = (
+            get_lora_branch_adapter_names(lora_cfg) if lora_loaded else None
+        )
 
         latents = final_latent
-        inversion_trajectory = [latents.detach().cpu()]
+        inversion_trajectory = [latents.detach().cpu()] if save_inversion_latents else []
         inversion_pred_noises = []
         inversion_timesteps = [
             int(inverse_scheduler.timesteps[0].item())
@@ -175,6 +184,7 @@ def invert_sample(
                 timestep=timestep,
                 cond=cond,
                 guidance_scale=model_cfg.guidance_scale,
+                lora_branch_adapter_names=lora_branch_adapter_names,
             )
             latents = inverse_scheduler.step(
                 model_output=noise_pred,
@@ -182,8 +192,10 @@ def invert_sample(
                 sample=latents,
                 return_dict=True,
             ).prev_sample
-            inversion_trajectory.append(latents.detach().cpu())
-            inversion_pred_noises.append(noise_pred.detach().cpu())
+            if save_inversion_latents:
+                inversion_trajectory.append(latents.detach().cpu())
+            if save_inversion_pred_noises:
+                inversion_pred_noises.append(noise_pred.detach().cpu())
             inversion_timesteps.append(
                 int(timestep.item()) if hasattr(timestep, "item") else int(timestep)
             )
@@ -192,14 +204,15 @@ def invert_sample(
             set_unet_lora_enabled(pipe, True)
         pipe.scheduler = original_scheduler
 
-    inversion_latents_dir.mkdir(parents=True, exist_ok=True)
-    inversion_pred_noises_dir.mkdir(parents=True, exist_ok=True)
-
     torch.save(latents.detach().cpu(), inverted_noise_path)
-    for idx, latent in enumerate(inversion_trajectory):
-        torch.save(latent, inversion_latents_dir / f"x_inv_{idx:03d}.pt")
-    for idx, noise in enumerate(inversion_pred_noises):
-        torch.save(noise, inversion_pred_noises_dir / f"noise_inv_{idx:03d}.pt")
+    if save_inversion_latents:
+        inversion_latents_dir.mkdir(parents=True, exist_ok=True)
+        for idx, latent in enumerate(inversion_trajectory):
+            torch.save(latent, inversion_latents_dir / f"x_inv_{idx:03d}.pt")
+    if save_inversion_pred_noises:
+        inversion_pred_noises_dir.mkdir(parents=True, exist_ok=True)
+        for idx, noise in enumerate(inversion_pred_noises):
+            torch.save(noise, inversion_pred_noises_dir / f"noise_inv_{idx:03d}.pt")
     with inversion_timesteps_path.open("w", encoding="utf-8") as f:
         json.dump(inversion_timesteps, f, indent=2)
 
@@ -211,6 +224,8 @@ def invert_sample(
                 "inverted_noise": inverted_noise_path.name,
                 "inversion_trajectory_length": len(inversion_trajectory),
                 "inversion_pred_noises_length": len(inversion_pred_noises),
+                "inversion_trajectory_saved": bool(save_inversion_latents),
+                "inversion_pred_noises_saved": bool(save_inversion_pred_noises),
                 "inversion_lora_enabled": bool(lora_loaded),
                 "inversion_lora_active_steps": active_lora_steps,
             }
@@ -246,6 +261,8 @@ def main(cfg: DictConfig) -> None:
             lora_cfg=cfg.lora,
             lora_loaded=lora_loaded,
             overwrite=bool(cfg.overwrite),
+            save_inversion_latents=bool(cfg.save_inversion_latents),
+            save_inversion_pred_noises=bool(cfg.save_inversion_pred_noises),
         )
 
 

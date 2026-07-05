@@ -260,17 +260,46 @@ def _write_noise_prediction_previews(
     timesteps: list[int],
 ) -> tuple[list[Path], dict[str, float]]:
     cond = torch.load(_conditioning_path(cfg, sample_dir), map_location="cpu")
+    target_mode = _training_target_mode(cfg)
+    guidance_scale = _preview_guidance_scale(cfg, sample_dir)
+    target_eps_uncond = None
+    if target_mode in {"unconditional", "cfg"}:
+        target_eps_uncond = _load_target_eps_uncond(cfg, sample_dir)
+
     prompt_embeds = _ensure_batch(cond["prompt_embeds"]).to(
         device=pipe.device,
         dtype=pipe.unet.dtype,
     )
+    negative_prompt_embeds = None
+    if target_mode in {"unconditional", "cfg"}:
+        if "negative_prompt_embeds" not in cond:
+            raise KeyError(
+                f"Missing negative_prompt_embeds in {_conditioning_path(cfg, sample_dir)}"
+            )
+        negative_prompt_embeds = _ensure_batch(cond["negative_prompt_embeds"]).to(
+            device=pipe.device,
+            dtype=pipe.unet.dtype,
+        )
+
     pooled_prompt_embeds = None
+    negative_pooled_prompt_embeds = None
     add_time_ids = None
     if has_sdxl_conditioning(cond):
         pooled_prompt_embeds = _ensure_batch(cond["pooled_prompt_embeds"]).to(
             device=pipe.device,
             dtype=pipe.unet.dtype,
         )
+        if target_mode in {"unconditional", "cfg"}:
+            if "negative_pooled_prompt_embeds" not in cond:
+                raise KeyError(
+                    f"Missing negative_pooled_prompt_embeds in {_conditioning_path(cfg, sample_dir)}"
+                )
+            negative_pooled_prompt_embeds = _ensure_batch(
+                cond["negative_pooled_prompt_embeds"]
+            ).to(
+                device=pipe.device,
+                dtype=pipe.unet.dtype,
+            )
         add_time_ids = _ensure_batch(cond["add_time_ids"]).to(
             device=pipe.device,
             dtype=pipe.unet.dtype,
@@ -297,23 +326,60 @@ def _write_noise_prediction_previews(
             )
         )
         scheduler_timestep = torch.tensor([timestep], device=pipe.device)
-        model_input = pipe.scheduler.scale_model_input(latent, scheduler_timestep)
+        if target_mode == "cfg":
+            model_latent = torch.cat([latent, latent], dim=0)
+            model_timestep = scheduler_timestep.repeat(2)
+            model_prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
+        elif target_mode == "unconditional":
+            model_latent = latent
+            model_timestep = scheduler_timestep
+            model_prompt_embeds = negative_prompt_embeds
+        else:
+            model_latent = latent
+            model_timestep = scheduler_timestep
+            model_prompt_embeds = prompt_embeds
+
+        model_input = pipe.scheduler.scale_model_input(model_latent, model_timestep)
         unet_kwargs = {}
         if pooled_prompt_embeds is not None and add_time_ids is not None:
+            if target_mode == "cfg":
+                text_embeds = torch.cat(
+                    [negative_pooled_prompt_embeds, pooled_prompt_embeds],
+                    dim=0,
+                )
+                time_ids = torch.cat([add_time_ids, add_time_ids], dim=0)
+            elif target_mode == "unconditional":
+                text_embeds = negative_pooled_prompt_embeds
+                time_ids = add_time_ids
+            else:
+                text_embeds = pooled_prompt_embeds
+                time_ids = add_time_ids
             unet_kwargs["added_cond_kwargs"] = {
-                "text_embeds": pooled_prompt_embeds,
-                "time_ids": add_time_ids,
+                "text_embeds": text_embeds,
+                "time_ids": time_ids,
             }
         pred_eps = pipe.unet(
             model_input,
-            scheduler_timestep,
-            encoder_hidden_states=prompt_embeds,
+            model_timestep,
+            encoder_hidden_states=model_prompt_embeds,
             return_dict=False,
             **unet_kwargs,
         )[0]
 
-        target = _squeeze_batch(target_eps[step_idx]).float()
-        predicted = _squeeze_batch(pred_eps.detach().cpu()).float()
+        target_cond = _squeeze_batch(target_eps[step_idx]).float()
+        if target_mode == "cfg":
+            pred_uncond, pred_cond = pred_eps.detach().cpu().float().chunk(2)
+            target_uncond = _squeeze_batch(target_eps_uncond[step_idx]).float()
+            target = target_uncond + guidance_scale * (target_cond - target_uncond)
+            predicted = _squeeze_batch(
+                pred_uncond + guidance_scale * (pred_cond - pred_uncond)
+            ).float()
+        elif target_mode == "unconditional":
+            target = _squeeze_batch(target_eps_uncond[step_idx]).float()
+            predicted = _squeeze_batch(pred_eps.detach().cpu()).float()
+        else:
+            target = target_cond
+            predicted = _squeeze_batch(pred_eps.detach().cpu()).float()
         preview_path = preview_dir / (
             f"{sample_dir.name}_noise_pred_inv_step_{inversion_step:03d}.png"
         )
@@ -408,10 +474,36 @@ def _load_target_eps(cfg: DictConfig, sample_dir: Path) -> torch.Tensor:
     return torch.load(path, map_location="cpu")
 
 
+def _load_target_eps_uncond(cfg: DictConfig, sample_dir: Path) -> torch.Tensor:
+    path = sample_dir / str(OmegaConf.select(cfg, "data.targets_dir_name", default="targets"))
+    path = path / str(
+        OmegaConf.select(
+            cfg,
+            "data.target_uncond_eps_file_name",
+            default="target_eps_uncond.pt",
+        )
+    )
+    return torch.load(path, map_location="cpu")
+
+
 def _conditioning_path(cfg: DictConfig, sample_dir: Path) -> Path:
     return sample_dir / str(
         OmegaConf.select(cfg, "data.conditioning_file_name", default="conditioning.pt")
     )
+
+
+def _training_target_mode(cfg: DictConfig) -> str:
+    return str(OmegaConf.select(cfg, "training_target.mode", default="conditional")).lower()
+
+
+def _preview_guidance_scale(cfg: DictConfig, sample_dir: Path) -> float:
+    value = OmegaConf.select(cfg, "training_target.guidance_scale", default=None)
+    if value is None:
+        value = _read_json(sample_dir / "meta.json").get(
+            "guidance_scale",
+            OmegaConf.select(cfg, "model.guidance_scale", default=1.0),
+        )
+    return float(value)
 
 
 def _read_prompt(sample_dir: Path) -> str:

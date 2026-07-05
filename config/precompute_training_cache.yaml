@@ -13,6 +13,8 @@ num_samples: null
 overwrite: false
 batch_size: 4
 negative_prompt: ""
+target_branches: conditional
+require_existing_conditional_target: true
 save_cfg_branch_targets: false
 
 latents_dir_name: latents

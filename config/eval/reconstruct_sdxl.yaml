@@ -8,8 +8,13 @@ overwrite: false
 
 lora:
   enabled: false
+  mode: single
   checkpoint_path: null
+  conditional_checkpoint_path: null
+  unconditional_checkpoint_path: null
   adapter_name: inversion
+  conditional_adapter_name: text_branch
+  unconditional_adapter_name: null_branch
   scale: 1.0
   r: 16
   lora_alpha: 8
