@@ -1,5 +1,6 @@
 import json
 from bisect import bisect_right
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +11,7 @@ from torch.utils.data import Dataset
 class LatentTrajectoryDataset(Dataset):
     def __init__(
         self,
-        root_dir: str | Path,
+        root_dir: str | Path | Sequence[str | Path],
         latents_file_name: str = "trajectory.pt",
         conditioning_file_name: str = "conditioning.pt",
         targets_dir_name: str = "targets",
@@ -19,7 +20,12 @@ class LatentTrajectoryDataset(Dataset):
         load_cfg_branch_targets: bool = False,
         require_training_cache: bool = True,
     ):
-        self.root_dir = Path(root_dir)
+        if isinstance(root_dir, (str, Path)):
+            self.root_dirs = [Path(root_dir)]
+        else:
+            self.root_dirs = [Path(path) for path in root_dir]
+        if not self.root_dirs:
+            raise ValueError("LatentTrajectoryDataset requires at least one root directory.")
         self.latents_file_name = latents_file_name
         self.conditioning_file_name = conditioning_file_name
         self.targets_dir_name = targets_dir_name
@@ -30,65 +36,66 @@ class LatentTrajectoryDataset(Dataset):
         self.samples: list[dict[str, Any]] = []
         self.cumulative_lengths: list[int] = []
 
-        for sample_dir in sorted(self.root_dir.glob("sample_*")):
-            latents_dir = sample_dir / "latents"
-            timesteps_path = sample_dir / "timesteps.json"
-            if not latents_dir.exists() or not timesteps_path.exists():
-                continue
+        for root_dir in self.root_dirs:
+            for sample_dir in sorted(root_dir.glob("sample_*")):
+                latents_dir = sample_dir / "latents"
+                timesteps_path = sample_dir / "timesteps.json"
+                if not latents_dir.exists() or not timesteps_path.exists():
+                    continue
 
-            prompt_path = sample_dir / "prompt.json"
-            meta = self._load_json(sample_dir / "meta.json")
-            conditioning_path = sample_dir / self.conditioning_file_name
-            target_eps_path = sample_dir / self.targets_dir_name / self.target_eps_file_name
-            target_uncond_eps_path = (
-                sample_dir / self.targets_dir_name / self.target_uncond_eps_file_name
-            )
-            self._validate_training_cache(
-                sample_dir,
-                conditioning_path,
-                target_eps_path,
-                target_uncond_eps_path,
-            )
+                prompt_path = sample_dir / "prompt.json"
+                meta = self._load_json(sample_dir / "meta.json")
+                conditioning_path = sample_dir / self.conditioning_file_name
+                target_eps_path = sample_dir / self.targets_dir_name / self.target_eps_file_name
+                target_uncond_eps_path = (
+                    sample_dir / self.targets_dir_name / self.target_uncond_eps_file_name
+                )
+                self._validate_training_cache(
+                    sample_dir,
+                    conditioning_path,
+                    target_eps_path,
+                    target_uncond_eps_path,
+                )
 
-            trajectory_path = latents_dir / self.latents_file_name
-            if trajectory_path.exists():
-                trajectory_length = int(meta.get("trajectory_length", 0))
-                if trajectory_length <= 0:
-                    trajectory_length = int(
-                        torch.load(trajectory_path, map_location="cpu").shape[0]
+                trajectory_path = latents_dir / self.latents_file_name
+                if trajectory_path.exists():
+                    trajectory_length = int(meta.get("trajectory_length", 0))
+                    if trajectory_length <= 0:
+                        trajectory_length = int(
+                            torch.load(trajectory_path, map_location="cpu").shape[0]
+                        )
+                    self._add_sample(
+                        {
+                            "format": "stacked_pt",
+                            "trajectory_path": trajectory_path,
+                            "trajectory_length": trajectory_length,
+                            "timesteps_path": timesteps_path,
+                            "prompt_path": prompt_path,
+                            "conditioning_path": conditioning_path,
+                            "target_eps_path": target_eps_path,
+                            "target_uncond_eps_path": target_uncond_eps_path,
+                            "guidance_scale": meta.get("guidance_scale"),
+                            "sample_idx": meta.get("sample_idx"),
+                        }
                     )
-                self._add_sample(
-                    {
-                        "format": "stacked_pt",
-                        "trajectory_path": trajectory_path,
-                        "trajectory_length": trajectory_length,
-                        "timesteps_path": timesteps_path,
-                        "prompt_path": prompt_path,
-                        "conditioning_path": conditioning_path,
-                        "target_eps_path": target_eps_path,
-                        "target_uncond_eps_path": target_uncond_eps_path,
-                        "guidance_scale": meta.get("guidance_scale"),
-                        "sample_idx": meta.get("sample_idx"),
-                    }
-                )
-                continue
+                    continue
 
-            latent_paths = sorted(latents_dir.glob("x_*.pt"))
-            if len(latent_paths) >= 2:
-                self._add_sample(
-                    {
-                        "format": "per_step_pt",
-                        "latent_paths": latent_paths,
-                        "trajectory_length": len(latent_paths),
-                        "timesteps_path": timesteps_path,
-                        "prompt_path": prompt_path,
-                        "conditioning_path": conditioning_path,
-                        "target_eps_path": target_eps_path,
-                        "target_uncond_eps_path": target_uncond_eps_path,
-                        "guidance_scale": meta.get("guidance_scale"),
-                        "sample_idx": meta.get("sample_idx"),
-                    }
-                )
+                latent_paths = sorted(latents_dir.glob("x_*.pt"))
+                if len(latent_paths) >= 2:
+                    self._add_sample(
+                        {
+                            "format": "per_step_pt",
+                            "latent_paths": latent_paths,
+                            "trajectory_length": len(latent_paths),
+                            "timesteps_path": timesteps_path,
+                            "prompt_path": prompt_path,
+                            "conditioning_path": conditioning_path,
+                            "target_eps_path": target_eps_path,
+                            "target_uncond_eps_path": target_uncond_eps_path,
+                            "guidance_scale": meta.get("guidance_scale"),
+                            "sample_idx": meta.get("sample_idx"),
+                        }
+                    )
 
     def __len__(self) -> int:
         return self.cumulative_lengths[-1] if self.cumulative_lengths else 0

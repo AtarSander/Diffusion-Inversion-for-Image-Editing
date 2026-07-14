@@ -7,12 +7,12 @@ import math
 from pathlib import Path
 from typing import Any
 
-from diffusers import DDIMInverseScheduler
 import hydra
+import torch
+from diffusers import DDIMInverseScheduler
 from hydra.utils import to_absolute_path
 from loguru import logger
 from omegaconf import DictConfig, OmegaConf
-import torch
 from tqdm import tqdm
 
 from diff_inversion.data.generate_sdxl_samples import (
@@ -81,19 +81,17 @@ def _load_final_latent(sample_dir: Path) -> torch.Tensor:
     )
 
 
-def _lora_active_steps(lora_cfg, total_steps: int) -> int | None:
-    if lora_cfg is None or not bool(OmegaConf.select(lora_cfg, "enabled", default=False)):
+def _lora_active_steps(lora_cfg: DictConfig, total_steps: int) -> int | None:
+    if not bool(lora_cfg.enabled):
         return None
 
-    active_steps = OmegaConf.select(lora_cfg, "active_steps", default=None)
-    if active_steps is not None:
-        return max(0, min(total_steps, int(active_steps)))
+    if lora_cfg.active_steps is not None:
+        return max(0, min(total_steps, int(lora_cfg.active_steps)))
 
-    active_fraction = OmegaConf.select(lora_cfg, "active_fraction", default=None)
-    if active_fraction is None:
+    if lora_cfg.active_fraction is None:
         return None
 
-    fraction = float(active_fraction)
+    fraction = float(lora_cfg.active_fraction)
     if not 0.0 <= fraction <= 1.0:
         raise ValueError(f"lora.active_fraction must be in [0, 1], got {fraction}")
     return max(0, min(total_steps, math.ceil(total_steps * fraction)))
