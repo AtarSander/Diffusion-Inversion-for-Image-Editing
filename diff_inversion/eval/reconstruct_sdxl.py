@@ -23,7 +23,11 @@ from diff_inversion.eval.invert_sdxl import (
     _read_json,
     _sample_dirs,
 )
-from diff_inversion.eval.lora import configure_unet_lora, get_lora_branch_adapter_names
+from diff_inversion.eval.lora import (
+    configure_unet_lora,
+    get_lora_branch_adapter_names,
+    uses_single_conditional_prediction,
+)
 from diff_inversion.modeling.sdxl_sampling import reconstruct_latent_sdxl
 
 
@@ -39,6 +43,7 @@ def reconstruct_from_noise_sdxl(
     negative_prompt: str,
     model_cfg,
     lora_branch_adapter_names: tuple[str, str] | None = None,
+    single_conditional_prediction: bool = False,
     guidance_scale: float | None = None,
 ) -> tuple[torch.Tensor, list[int]]:
     """Run DDIM denoising from an inverted noise latent back to an image latent."""
@@ -59,6 +64,9 @@ def reconstruct_from_noise_sdxl(
     )
     if guidance_scale is None:
         guidance_scale = float(model_cfg.guidance_scale)
+    sampling_kwargs = {}
+    if single_conditional_prediction:
+        sampling_kwargs["single_conditional_prediction"] = True
     return reconstruct_latent_sdxl(
         pipe=pipe,
         noise_latent=inverted_noise,
@@ -67,6 +75,7 @@ def reconstruct_from_noise_sdxl(
         guidance_scale=guidance_scale,
         lora_branch_adapter_names=lora_branch_adapter_names,
         progress_desc="Reconstructing",
+        **sampling_kwargs,
     )
 
 
@@ -79,6 +88,7 @@ def reconstruct_sample(
     output_name: str,
     prompt_field: str,
     lora_branch_adapter_names: tuple[str, str] | None,
+    single_conditional_prediction: bool,
     guidance_scale: float | None,
     overwrite: bool,
 ) -> None:
@@ -107,6 +117,7 @@ def reconstruct_sample(
         negative_prompt=negative_prompt,
         model_cfg=model_cfg,
         lora_branch_adapter_names=lora_branch_adapter_names,
+        single_conditional_prediction=single_conditional_prediction,
         guidance_scale=guidance_scale,
     )
     image = decode_latent_to_pil(pipe, reconstructed_latent.to(device=pipe.device))
@@ -146,6 +157,9 @@ def main(cfg: DictConfig) -> None:
     pipe = make_pipe(run_cfg.model, device)
     lora_loaded = configure_unet_lora(pipe, cfg.lora)
     lora_branch_adapter_names = get_lora_branch_adapter_names(cfg.lora) if lora_loaded else None
+    single_conditional_prediction = (
+        uses_single_conditional_prediction(cfg.lora) if lora_loaded else False
+    )
     negative_prompt = str(run_cfg.negative_prompt)
     guidance_scale = OmegaConf.select(cfg, "guidance_scale", default=None)
     guidance_scale = None if guidance_scale is None else float(guidance_scale)
@@ -158,6 +172,7 @@ def main(cfg: DictConfig) -> None:
             output_name=str(cfg.output_name),
             prompt_field=str(cfg.prompt_field),
             lora_branch_adapter_names=lora_branch_adapter_names,
+            single_conditional_prediction=single_conditional_prediction,
             guidance_scale=guidance_scale,
             overwrite=bool(cfg.overwrite),
         )

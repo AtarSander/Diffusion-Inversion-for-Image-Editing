@@ -165,8 +165,29 @@ def predict_noise_sdxl(
     cond: dict[str, torch.Tensor],
     guidance_scale: float | torch.Tensor,
     lora_branch_adapter_names: tuple[str, str] | None = None,
+    single_conditional_prediction: bool = False,
 ) -> torch.Tensor:
     """Predict CFG-combined SDXL noise for one latent batch."""
+    if single_conditional_prediction:
+        if lora_branch_adapter_names is not None:
+            raise ValueError(
+                "single_conditional_prediction cannot be used with branch-pair adapters."
+            )
+        guidance_values = _guidance_scale_tensor(
+            guidance_scale,
+            batch_size=latents.shape[0],
+            device=latents.device,
+        )
+        with cfg_temb_context(pipe.unet, guidance_values):
+            return _predict_noise_sdxl_single_branch(
+                pipe,
+                latents,
+                timestep,
+                cond["prompt_embeds"],
+                cond.get("pooled_prompt_embeds"),
+                cond.get("add_time_ids"),
+            )
+
     _, _, noise_cfg = predict_noise_sdxl_branches(
         pipe=pipe,
         latents=latents,
@@ -188,6 +209,7 @@ def invert_latent_sdxl(
     num_inference_steps: int,
     guidance_scale: float,
     lora_branch_adapter_names: tuple[str, str] | None = None,
+    single_conditional_prediction: bool = False,
     progress_desc: str | None = None,
 ) -> torch.Tensor:
     inverse_scheduler = DDIMInverseScheduler.from_config(scheduler_config)
@@ -208,6 +230,7 @@ def invert_latent_sdxl(
             cond=cond,
             guidance_scale=guidance_scale,
             lora_branch_adapter_names=lora_branch_adapter_names,
+            single_conditional_prediction=single_conditional_prediction,
         )
         latents = inverse_scheduler.step(
             model_output=noise_pred,
@@ -227,6 +250,7 @@ def reconstruct_latent_sdxl(
     num_inference_steps: int,
     guidance_scale: float,
     lora_branch_adapter_names: tuple[str, str] | None = None,
+    single_conditional_prediction: bool = False,
     progress_desc: str | None = None,
 ) -> tuple[torch.Tensor, list[int]]:
     if noise_latent.ndim == 3:
@@ -257,6 +281,7 @@ def reconstruct_latent_sdxl(
             cond=cond,
             guidance_scale=guidance_scale,
             lora_branch_adapter_names=lora_branch_adapter_names,
+            single_conditional_prediction=single_conditional_prediction,
         )
         latents = pipe.scheduler.step(
             model_output=noise_pred,

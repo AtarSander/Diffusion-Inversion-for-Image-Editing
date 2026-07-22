@@ -17,6 +17,7 @@ from diff_inversion.data.generate_sdxl_samples import (
     encode_prompt_sdxl,
     has_sdxl_conditioning,
 )
+from diff_inversion.eval.lora import set_unet_lora_enabled
 from diff_inversion.eval.previews import (
     channel_grid_image,
     fit_panel,
@@ -25,10 +26,19 @@ from diff_inversion.eval.previews import (
     write_noise_images,
 )
 from diff_inversion.eval.sample_metrics import image_pair_metrics, load_rgb_tensor, pair_metrics
+from diff_inversion.modeling.cfg_temb import cfg_temb_context
 from diff_inversion.modeling.sdxl_sampling import (
     invert_latent_sdxl,
     reconstruct_latent_sdxl,
 )
+
+CFG_TARGET_MODES = {"cfg", "cfg_temb"}
+CFG_SINGLE_PASS_TARGET_MODES = {"cfg_single_pass", "cfg_single_pass_temb"}
+BRANCH_TARGET_MODES = {
+    "unconditional",
+    *CFG_TARGET_MODES,
+    *CFG_SINGLE_PASS_TARGET_MODES,
+}
 
 
 def should_run_validation_preview(cfg: DictConfig, global_step: int) -> bool:
@@ -97,7 +107,7 @@ def log_validation_preview(
                 )
     finally:
         pipe.scheduler = original_scheduler
-        _set_lora_enabled(pipe, True)
+        set_unet_lora_enabled(pipe, True)
         pipe.unet.train(was_training)
 
     payload: dict[str, Any] = _mean_metrics(metric_rows)
@@ -129,6 +139,8 @@ def _render_sample_preview(
         OmegaConf.select(cfg, "validation_preview.final_image_name", default="final.png")
     )
     prompt = _read_prompt(sample_dir)
+    target_mode = _training_target_mode(cfg)
+    guidance_scale = _preview_guidance_scale(cfg, sample_dir)
     cond = encode_prompt_sdxl(
         pipe=pipe,
         prompt=prompt,
@@ -144,6 +156,7 @@ def _render_sample_preview(
     }
     metrics: dict[str, float] = {}
 
+    set_unet_lora_enabled(pipe, True)
     if bool(OmegaConf.select(cfg, "validation_preview.log_predicted_noise", default=True)):
         noise_images, noise_metrics = _write_noise_prediction_previews(
             pipe=pipe,
@@ -157,14 +170,14 @@ def _render_sample_preview(
         images["noise_prediction"].extend(noise_images)
         metrics.update(noise_metrics)
 
-    _set_lora_enabled(pipe, True)
     inverted_noise = invert_latent_sdxl(
         pipe=pipe,
         final_latent=_squeeze_batch(trajectory[-1]).unsqueeze(0),
         cond=cond,
         scheduler_config=original_scheduler.config,
         num_inference_steps=int(cfg.model.num_inference_steps),
-        guidance_scale=float(cfg.model.guidance_scale),
+        guidance_scale=guidance_scale,
+        single_conditional_prediction=target_mode in CFG_SINGLE_PASS_TARGET_MODES,
     )
     metrics.update(
         {
@@ -194,22 +207,23 @@ def _render_sample_preview(
                 images["inverted_noise"].append(Path(noise_paths[key]))
 
     pipe.scheduler = original_scheduler
-    _set_lora_enabled(
-        pipe,
-        bool(
-            OmegaConf.select(
-                cfg,
-                "validation_preview.use_lora_for_reconstruction",
-                default=False,
-            )
-        ),
+    use_lora_for_reconstruction = bool(
+        OmegaConf.select(
+            cfg,
+            "validation_preview.use_lora_for_reconstruction",
+            default=False,
+        )
     )
+    set_unet_lora_enabled(pipe, use_lora_for_reconstruction)
     reconstructed_latent, _ = reconstruct_latent_sdxl(
         pipe=pipe,
         noise_latent=inverted_noise,
         cond=cond,
         num_inference_steps=int(cfg.model.num_inference_steps),
-        guidance_scale=float(cfg.model.guidance_scale),
+        guidance_scale=guidance_scale,
+        single_conditional_prediction=(
+            use_lora_for_reconstruction and target_mode in CFG_SINGLE_PASS_TARGET_MODES
+        ),
     )
     reconstructed_image = decode_latent_to_pil(
         pipe,
@@ -263,7 +277,7 @@ def _write_noise_prediction_previews(
     target_mode = _training_target_mode(cfg)
     guidance_scale = _preview_guidance_scale(cfg, sample_dir)
     target_eps_uncond = None
-    if target_mode in {"unconditional", "cfg"}:
+    if target_mode in BRANCH_TARGET_MODES:
         target_eps_uncond = _load_target_eps_uncond(cfg, sample_dir)
 
     prompt_embeds = _ensure_batch(cond["prompt_embeds"]).to(
@@ -271,7 +285,7 @@ def _write_noise_prediction_previews(
         dtype=pipe.unet.dtype,
     )
     negative_prompt_embeds = None
-    if target_mode in {"unconditional", "cfg"}:
+    if target_mode in BRANCH_TARGET_MODES:
         if "negative_prompt_embeds" not in cond:
             raise KeyError(
                 f"Missing negative_prompt_embeds in {_conditioning_path(cfg, sample_dir)}"
@@ -289,7 +303,7 @@ def _write_noise_prediction_previews(
             device=pipe.device,
             dtype=pipe.unet.dtype,
         )
-        if target_mode in {"unconditional", "cfg"}:
+        if target_mode in BRANCH_TARGET_MODES:
             if "negative_pooled_prompt_embeds" not in cond:
                 raise KeyError(
                     f"Missing negative_pooled_prompt_embeds in {_conditioning_path(cfg, sample_dir)}"
@@ -326,7 +340,7 @@ def _write_noise_prediction_previews(
             )
         )
         scheduler_timestep = torch.tensor([timestep], device=pipe.device)
-        if target_mode == "cfg":
+        if target_mode in CFG_TARGET_MODES:
             model_latent = torch.cat([latent, latent], dim=0)
             model_timestep = scheduler_timestep.repeat(2)
             model_prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
@@ -342,7 +356,7 @@ def _write_noise_prediction_previews(
         model_input = pipe.scheduler.scale_model_input(model_latent, model_timestep)
         unet_kwargs = {}
         if pooled_prompt_embeds is not None and add_time_ids is not None:
-            if target_mode == "cfg":
+            if target_mode in CFG_TARGET_MODES:
                 text_embeds = torch.cat(
                     [negative_pooled_prompt_embeds, pooled_prompt_embeds],
                     dim=0,
@@ -358,22 +372,40 @@ def _write_noise_prediction_previews(
                 "text_embeds": text_embeds,
                 "time_ids": time_ids,
             }
-        pred_eps = pipe.unet(
-            model_input,
-            model_timestep,
-            encoder_hidden_states=model_prompt_embeds,
-            return_dict=False,
-            **unet_kwargs,
-        )[0]
+        conditioning_guidance_scale = None
+        if target_mode == "cfg_temb":
+            conditioning_guidance_scale = torch.tensor(
+                [guidance_scale, guidance_scale],
+                device=pipe.device,
+                dtype=torch.float32,
+            )
+        elif target_mode == "cfg_single_pass_temb":
+            conditioning_guidance_scale = torch.tensor(
+                [guidance_scale],
+                device=pipe.device,
+                dtype=torch.float32,
+            )
+        with cfg_temb_context(pipe.unet, conditioning_guidance_scale):
+            pred_eps = pipe.unet(
+                model_input,
+                model_timestep,
+                encoder_hidden_states=model_prompt_embeds,
+                return_dict=False,
+                **unet_kwargs,
+            )[0]
 
         target_cond = _squeeze_batch(target_eps[step_idx]).float()
-        if target_mode == "cfg":
+        if target_mode in CFG_TARGET_MODES:
             pred_uncond, pred_cond = pred_eps.detach().cpu().float().chunk(2)
             target_uncond = _squeeze_batch(target_eps_uncond[step_idx]).float()
             target = target_uncond + guidance_scale * (target_cond - target_uncond)
             predicted = _squeeze_batch(
                 pred_uncond + guidance_scale * (pred_cond - pred_uncond)
             ).float()
+        elif target_mode in CFG_SINGLE_PASS_TARGET_MODES:
+            target_uncond = _squeeze_batch(target_eps_uncond[step_idx]).float()
+            target = target_uncond + guidance_scale * (target_cond - target_uncond)
+            predicted = _squeeze_batch(pred_eps.detach().cpu()).float()
         elif target_mode == "unconditional":
             target = _squeeze_batch(target_eps_uncond[step_idx]).float()
             predicted = _squeeze_batch(pred_eps.detach().cpu()).float()
@@ -435,14 +467,30 @@ def _write_noise_prediction_grid(
 
 
 def _sample_dirs(cfg: DictConfig) -> list[Path]:
-    val_root = OmegaConf.select(cfg, "data.val_root_dir")
-    if not val_root:
+    val_roots = OmegaConf.select(cfg, "data.val_root_dirs", default=None)
+    if val_roots:
+        roots = list(val_roots)
+    else:
+        val_root = OmegaConf.select(cfg, "data.val_root_dir", default=None)
+        roots = [val_root] if val_root else []
+    if not roots:
         return []
     limit = int(OmegaConf.select(cfg, "validation_preview.num_samples", default=2))
-    sample_dirs = sorted(
-        path for path in _resolve_path(val_root).glob("sample_*") if path.is_dir()
-    )
-    return sample_dirs[:limit]
+    if limit <= 0:
+        return []
+    samples_per_root = [
+        sorted(path for path in _resolve_path(root).glob("sample_*") if path.is_dir())
+        for root in roots
+    ]
+    selected: list[Path] = []
+    max_samples = max((len(paths) for paths in samples_per_root), default=0)
+    for sample_idx in range(max_samples):
+        for paths in samples_per_root:
+            if sample_idx < len(paths):
+                selected.append(paths[sample_idx])
+                if len(selected) >= limit:
+                    return selected
+    return selected
 
 
 def _preview_dir(cfg: DictConfig, checkpoint_dir: Path, global_step: int) -> Path:
@@ -537,18 +585,6 @@ def _ensure_batch(tensor: torch.Tensor) -> torch.Tensor:
     if tensor.ndim > 0 and tensor.shape[0] == 1:
         return tensor
     return tensor.unsqueeze(0)
-
-
-def _set_lora_enabled(pipe, enabled: bool) -> None:
-    toggled = False
-    for module in pipe.unet.modules():
-        if module is pipe.unet:
-            continue
-        if hasattr(module, "enable_adapters"):
-            module.enable_adapters(enabled)
-            toggled = True
-    if not toggled:
-        logger.warning("No LoRA adapter layers exposed enable_adapters(); preview toggle skipped")
 
 
 def _prefix_numeric(prefix: str, metrics: dict[str, Any]) -> dict[str, float]:

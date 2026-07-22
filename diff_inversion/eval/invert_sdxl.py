@@ -23,6 +23,7 @@ from diff_inversion.eval.lora import (
     configure_unet_lora,
     get_lora_branch_adapter_names,
     set_unet_lora_enabled,
+    uses_single_conditional_prediction,
 )
 from diff_inversion.modeling.sdxl_sampling import predict_noise_sdxl
 
@@ -156,6 +157,9 @@ def invert_sample(
         lora_branch_adapter_names = (
             get_lora_branch_adapter_names(lora_cfg) if lora_loaded else None
         )
+        cfg_distill_prediction = (
+            uses_single_conditional_prediction(lora_cfg) if lora_loaded else False
+        )
 
         latents = final_latent
         inversion_trajectory = [latents.detach().cpu()] if save_inversion_latents else []
@@ -176,6 +180,11 @@ def invert_sample(
                     set_unet_lora_enabled(pipe, should_enable_lora)
                     current_lora_enabled = should_enable_lora
 
+            prediction_kwargs = {}
+            if cfg_distill_prediction and (
+                active_lora_steps is None or step_idx < active_lora_steps
+            ):
+                prediction_kwargs["single_conditional_prediction"] = True
             noise_pred = predict_noise_sdxl(
                 pipe=pipe,
                 latents=latents,
@@ -183,6 +192,7 @@ def invert_sample(
                 cond=cond,
                 guidance_scale=model_cfg.guidance_scale,
                 lora_branch_adapter_names=lora_branch_adapter_names,
+                **prediction_kwargs,
             )
             latents = inverse_scheduler.step(
                 model_output=noise_pred,

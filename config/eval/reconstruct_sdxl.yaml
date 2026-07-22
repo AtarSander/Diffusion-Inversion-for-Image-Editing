@@ -10,12 +10,14 @@ lora:
   enabled: false
   mode: single
   checkpoint_path: null
-  conditional_checkpoint_path: null
-  unconditional_checkpoint_path: null
-  adapter_name: inversion
-  conditional_adapter_name: text_branch
-  unconditional_adapter_name: null_branch
   scale: 1.0
+  cfg_temb_conditioning:
+    embedding_type: mlp
+    hidden_dim: 128
+    log_mean: 1.51749664
+    log_std: 0.53920626
+    fourier_num_bands: 32
+    fourier_max_frequency: 16.0
   r: 16
   lora_alpha: 8
   lora_dropout: 0.0
@@ -26,3 +28,5 @@ lora:
     - to_q
     - to_v
     - to_out.0
+    - ff.net.0.proj
+    - ff.net.2

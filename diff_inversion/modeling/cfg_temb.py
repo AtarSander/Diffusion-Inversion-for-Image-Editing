@@ -1,14 +1,15 @@
 """Continuous CFG conditioning injected into the SDXL timestep embedding.
 
-The conditioner keeps the pretrained UNet architecture unchanged. A small MLP
-maps the per-sample guidance scale to the timestep-embedding dimension, and a
-forward hook adds that vector to ``unet.time_embedding``. The final projection
-is zero-initialized, so enabling the conditioner initially preserves the plain
-LoRA prediction exactly.
+The conditioner keeps the pretrained UNet architecture unchanged. It can map
+the per-sample guidance scale directly through a small MLP or first encode it
+with deterministic Fourier features. A forward hook adds the resulting vector
+to ``unet.time_embedding``. The final projection is zero-initialized, so
+enabling the conditioner initially preserves the plain LoRA prediction exactly.
 """
 
 from __future__ import annotations
 
+import math
 from contextlib import contextmanager, nullcontext
 from typing import Any, Iterator
 
@@ -21,15 +22,18 @@ CFG_TEMB_STATE_KEY = "cfg_temb_state_dict"
 CONDITIONING_TYPE_KEY = "conditioning_type"
 CHECKPOINT_FORMAT_VERSION_KEY = "checkpoint_format_version"
 LORA_STATE_KEY = "lora_state_dict"
+PREDICTION_MODE_KEY = "prediction_mode"
 
 CFG_TEMB_CONDITIONING_TYPE = "cfg_temb"
 CFG_TEMB_CHECKPOINT_FORMAT_VERSION = 2
+CFG_TEMB_EMBEDDING_TYPES = frozenset({"mlp", "fourier"})
 CFG_TEMB_CONDITIONING_MODES = frozenset(
     {
         "cfg_temb",
         "cfg_temb_pair",
         "cfg_temb_branch",
         "cfg_temb_branch_pair",
+        "cfg_single_pass_temb",
     }
 )
 
@@ -46,6 +50,9 @@ class CfgTembConditioner(nn.Module):
         hidden_dim: int = 128,
         log_mean: float = 1.51749664,
         log_std: float = 0.53920626,
+        embedding_type: str = "mlp",
+        fourier_num_bands: int = 32,
+        fourier_max_frequency: float = 16.0,
     ):
         super().__init__()
         if int(temb_dim) <= 0:
@@ -56,13 +63,49 @@ class CfgTembConditioner(nn.Module):
             raise ValueError(f"cfg log_mean must be finite, got {log_mean}.")
         if not torch.isfinite(torch.tensor(float(log_std))) or float(log_std) <= 0.0:
             raise ValueError(f"cfg log_std must be finite and positive, got {log_std}.")
+        embedding_type = str(embedding_type).strip().lower()
+        if embedding_type not in CFG_TEMB_EMBEDDING_TYPES:
+            raise ValueError(
+                "cfg embedding_type must be one of "
+                f"{sorted(CFG_TEMB_EMBEDDING_TYPES)}, got {embedding_type!r}."
+            )
+        if int(fourier_num_bands) <= 0:
+            raise ValueError(
+                f"cfg fourier_num_bands must be positive, got {fourier_num_bands}."
+            )
+        if (
+            not torch.isfinite(torch.tensor(float(fourier_max_frequency)))
+            or float(fourier_max_frequency) <= 0.0
+        ):
+            raise ValueError(
+                "cfg fourier_max_frequency must be finite and positive, "
+                f"got {fourier_max_frequency}."
+            )
 
         self.temb_dim = int(temb_dim)
         self.hidden_dim = int(hidden_dim)
         self.log_mean = float(log_mean)
         self.log_std = float(log_std)
+        self.embedding_type = embedding_type
+        self.fourier_num_bands = int(fourier_num_bands)
+        self.fourier_max_frequency = float(fourier_max_frequency)
+        feature_dim = 1
+        fourier_frequencies = None
+        if self.embedding_type == "fourier":
+            feature_dim = 2 * self.fourier_num_bands
+            fourier_frequencies = torch.logspace(
+                0.0,
+                math.log10(self.fourier_max_frequency),
+                self.fourier_num_bands,
+                dtype=torch.float32,
+            )
+        self.register_buffer(
+            "fourier_frequencies",
+            fourier_frequencies,
+            persistent=False,
+        )
         self.mlp = nn.Sequential(
-            nn.Linear(1, self.hidden_dim),
+            nn.Linear(feature_dim, self.hidden_dim),
             nn.SiLU(),
             nn.Linear(self.hidden_dim, self.temb_dim),
         )
@@ -81,14 +124,23 @@ class CfgTembConditioner(nn.Module):
         self._enabled = bool(enabled)
 
     def checkpoint_config(self) -> dict[str, Any]:
-        return {
+        config = {
             "input_transform": "log_standardized",
+            "embedding_type": self.embedding_type,
             "log_mean": self.log_mean,
             "log_std": self.log_std,
             "hidden_dim": self.hidden_dim,
             "temb_dim": self.temb_dim,
             "zero_init_output": True,
         }
+        if self.embedding_type == "fourier":
+            config.update(
+                {
+                    "fourier_num_bands": self.fourier_num_bands,
+                    "fourier_max_frequency": self.fourier_max_frequency,
+                }
+            )
+        return config
 
     def validate_checkpoint_config(self, cfg: dict[str, Any]) -> None:
         required_keys = {
@@ -108,6 +160,13 @@ class CfgTembConditioner(nn.Module):
         transform = str(cfg["input_transform"])
         if transform != "log_standardized":
             raise ValueError(f"Unsupported CFG temb input_transform in checkpoint: {transform!r}.")
+        checkpoint_embedding_type = str(cfg.get("embedding_type", "mlp")).strip().lower()
+        if checkpoint_embedding_type != self.embedding_type:
+            raise ValueError(
+                "CFG temb checkpoint embedding_type="
+                f"{checkpoint_embedding_type!r} does not match configured "
+                f"embedding_type={self.embedding_type!r}."
+            )
         if cfg["zero_init_output"] is not True:
             raise ValueError("CFG temb checkpoint must use zero_init_output=true.")
         for key, expected in (
@@ -119,6 +178,29 @@ class CfgTembConditioner(nn.Module):
                 raise ValueError(
                     f"CFG temb checkpoint {key}={value} does not match configured "
                     f"{key}={expected}."
+                )
+        if self.embedding_type == "fourier":
+            for key in ("fourier_num_bands", "fourier_max_frequency"):
+                if key not in cfg:
+                    raise ValueError(f"CFG temb Fourier checkpoint config is missing {key}.")
+            checkpoint_num_bands = int(cfg["fourier_num_bands"])
+            if checkpoint_num_bands != self.fourier_num_bands:
+                raise ValueError(
+                    "CFG temb checkpoint fourier_num_bands="
+                    f"{checkpoint_num_bands} does not match configured "
+                    f"fourier_num_bands={self.fourier_num_bands}."
+                )
+            checkpoint_max_frequency = float(cfg["fourier_max_frequency"])
+            if not torch.isclose(
+                torch.tensor(checkpoint_max_frequency),
+                torch.tensor(self.fourier_max_frequency),
+                rtol=1e-6,
+                atol=1e-7,
+            ):
+                raise ValueError(
+                    "CFG temb checkpoint fourier_max_frequency="
+                    f"{checkpoint_max_frequency} does not match configured "
+                    f"fourier_max_frequency={self.fourier_max_frequency}."
                 )
         for key, expected in (
             ("log_mean", self.log_mean),
@@ -176,9 +258,23 @@ class CfgTembConditioner(nn.Module):
             minimum = float(values.detach().min().cpu())
             raise ValueError(f"CFG temb guidance values must be positive, got {minimum}.")
 
-        feature = ((torch.log(values) - self.log_mean) / self.log_std).unsqueeze(-1)
+        normalized_values = (torch.log(values) - self.log_mean) / self.log_std
+        feature = self._embedding_features(normalized_values)
         embedding = self.mlp(feature)
         return embedding.to(device=device, dtype=dtype)
+
+    def _embedding_features(self, normalized_values: torch.Tensor) -> torch.Tensor:
+        if self.embedding_type == "mlp":
+            return normalized_values.unsqueeze(-1)
+        if self.fourier_frequencies is None:
+            raise RuntimeError("Fourier CFG conditioner is missing frequency bands.")
+        angles = (
+            2.0
+            * torch.pi
+            * normalized_values.unsqueeze(-1)
+            * self.fourier_frequencies.unsqueeze(0)
+        )
+        return torch.cat([torch.sin(angles), torch.cos(angles)], dim=-1)
 
     def _add_embedding_hook(
         self,
@@ -243,6 +339,9 @@ def install_cfg_temb_conditioner(
     hidden_dim: int,
     log_mean: float,
     log_std: float,
+    embedding_type: str = "mlp",
+    fourier_num_bands: int = 32,
+    fourier_max_frequency: float = 16.0,
 ) -> CfgTembConditioner:
     if get_cfg_temb_conditioner(unet) is not None:
         raise RuntimeError("CFG timestep-embedding conditioner is already installed.")
@@ -253,6 +352,9 @@ def install_cfg_temb_conditioner(
         hidden_dim=hidden_dim,
         log_mean=log_mean,
         log_std=log_std,
+        embedding_type=embedding_type,
+        fourier_num_bands=fourier_num_bands,
+        fourier_max_frequency=fourier_max_frequency,
     )
     reference_parameter = next(unet.time_embedding.parameters())
     conditioner.to(device=reference_parameter.device, dtype=torch.float32)
@@ -337,24 +439,30 @@ def make_cfg_temb_checkpoint_state(
     *,
     lora_state_dict: dict[str, Any],
     conditioner: CfgTembConditioner | None,
+    prediction_mode: str | None = None,
 ) -> dict[str, Any]:
     if conditioner is None:
         return lora_state_dict
     return {
-        **cfg_temb_checkpoint_metadata(conditioner),
+        **cfg_temb_checkpoint_metadata(conditioner, prediction_mode=prediction_mode),
         LORA_STATE_KEY: lora_state_dict,
     }
 
 
 def cfg_temb_checkpoint_metadata(
     conditioner: CfgTembConditioner | None,
+    *,
+    prediction_mode: str | None = None,
 ) -> dict[str, Any]:
     if conditioner is None:
         return {}
+    config = conditioner.checkpoint_config()
+    if prediction_mode is not None:
+        config[PREDICTION_MODE_KEY] = str(prediction_mode)
     return {
         CHECKPOINT_FORMAT_VERSION_KEY: CFG_TEMB_CHECKPOINT_FORMAT_VERSION,
         CONDITIONING_TYPE_KEY: CFG_TEMB_CONDITIONING_TYPE,
         CFG_TEMB_CONDITIONED_KEY: True,
         CFG_TEMB_STATE_KEY: conditioner.state_dict(),
-        CFG_TEMB_CONFIG_KEY: conditioner.checkpoint_config(),
+        CFG_TEMB_CONFIG_KEY: config,
     }
