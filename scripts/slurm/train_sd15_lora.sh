@@ -5,11 +5,11 @@ REPO_DIR=${REPO_DIR:-/net/people/plgrid/plgatarsander/Diffusion-Inversion-for-Im
 PYTHON=${PYTHON:-.venv/bin/python}
 CONFIG_NAME=${CONFIG_NAME:-train_sd15}
 
-DATA_ROOT=${DATA_ROOT:-/net/pr2/projects/plgrid/plggzzsn2026/plgatarsander/data/processed/sd15_trajectories_stacked}
+DATA_ROOT=${DATA_ROOT:-/net/pr2/projects/plgrid/plggdiffusion/plgatarsander/data/processed/sd15_trajectories_stacked}
 TRAIN_ROOT=${TRAIN_ROOT:-$DATA_ROOT/train}
 VAL_ROOT=${VAL_ROOT:-$DATA_ROOT/val}
-RUN_NAME=${RUN_NAME:-sd15-inversion-lora-r16-lr5e-5-cosine-fp16}
-CHECKPOINT_DIR=${CHECKPOINT_DIR:-/net/pr2/projects/plgrid/plggzzsn2026/plgatarsander/checkpoints/sd15_inversion_lora_r16_lr5e-5_cosine_fp16}
+RUN_NAME=${RUN_NAME:-sd15-inversion-lora-r16-lr5e-5-cosine-bf16}
+CHECKPOINT_DIR=${CHECKPOINT_DIR:-/net/pr2/projects/plgrid/plggdiffusion/plgatarsander/checkpoints/sd15_inversion_lora_r16_lr5e-5_cosine_bf16}
 
 MAX_TRAIN_STEPS=${MAX_TRAIN_STEPS:-171225}
 LEARNING_RATE=${LEARNING_RATE:-5e-5}

@@ -1,0 +1,4 @@
+defaults:
+  - eval/pix2pix_zero_lora
+  - override /hydra/launcher: plgrid_submitit_slurm
+  - _self_

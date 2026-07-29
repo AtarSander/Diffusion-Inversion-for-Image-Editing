@@ -5,7 +5,7 @@ REPO_DIR=${REPO_DIR:-/net/people/plgrid/plgatarsander/Diffusion-Inversion-for-Im
 PYTHON=${PYTHON:-$REPO_DIR/.venv/bin/python}
 UV=${UV:-uv}
 if [[ -z "${HYDRA_SWEEP_DIR:-}" ]]; then
-  HYDRA_SWEEP_DIR='/net/pr2/projects/plgrid/plggdiffusion/plgatarsander/logs/pnp_lora_eval/${now:%Y-%m-%d}/${now:%H-%M-%S}'
+  HYDRA_SWEEP_DIR='/net/pr2/projects/plgrid/plggdiffusion/plgatarsander/logs/pix2pix_zero_lora_eval/${now:%Y-%m-%d}/${now:%H-%M-%S}'
 fi
 
 cd "$REPO_DIR"
@@ -21,17 +21,17 @@ export TOKENIZERS_PARALLELISM=${TOKENIZERS_PARALLELISM:-false}
 mkdir -p "$UV_CACHE_DIR" "$HF_HOME" "$WANDB_CACHE_DIR" "$WANDB_DIR" "$MPLCONFIGDIR"
 
 if [[ -x "$PYTHON" ]]; then
-  exec "$PYTHON" -m diff_inversion.eval.pnp_lora \
-    --config-name eval_pnp_lora_submitit \
+  exec "$PYTHON" -m diff_inversion.eval.pix2pix_zero_lora \
+    --config-name eval_pix2pix_zero_lora_submitit \
     --multirun \
     "hydra.sweep.dir=$HYDRA_SWEEP_DIR" \
-    hydra.job.name=pnp_lora_eval \
+    hydra.job.name=pix2pix_zero_lora_eval \
     "$@"
 fi
 
-exec "$UV" run --frozen python -m diff_inversion.eval.pnp_lora \
-  --config-name eval_pnp_lora_submitit \
+exec "$UV" run --frozen python -m diff_inversion.eval.pix2pix_zero_lora \
+  --config-name eval_pix2pix_zero_lora_submitit \
   --multirun \
   "hydra.sweep.dir=$HYDRA_SWEEP_DIR" \
-  hydra.job.name=pnp_lora_eval \
+  hydra.job.name=pix2pix_zero_lora_eval \
   "$@"

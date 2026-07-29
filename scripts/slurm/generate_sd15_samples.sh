@@ -5,7 +5,7 @@ REPO_DIR=${REPO_DIR:-/net/people/plgrid/plgatarsander/Diffusion-Inversion-for-Im
 PYTHON=${PYTHON:-.venv/bin/python}
 CONFIG_NAME=${CONFIG_NAME:-sample_gather_sd15}
 
-DATA_ROOT=${DATA_ROOT:-/net/pr2/projects/plgrid/plggzzsn2026/plgatarsander/data/processed/sd15_trajectories_stacked}
+DATA_ROOT=${DATA_ROOT:-/net/pr2/projects/plgrid/plggdiffusion/plgatarsander/data/processed/sd15_trajectories_stacked}
 SPLIT=${SPLIT:-train}
 OUTPUT_DIR=${OUTPUT_DIR:-$DATA_ROOT/$SPLIT}
 PROMPTS_JSONL=${PROMPTS_JSONL:-/net/tscratch/people/plgatarsander/ZZSN_data/processed/recap_coco/${SPLIT}.jsonl}

@@ -5,7 +5,7 @@ REPO_DIR=${REPO_DIR:-/net/people/plgrid/plgatarsander/Diffusion-Inversion-for-Im
 PYTHON=${PYTHON:-$REPO_DIR/.venv/bin/python}
 UV=${UV:-uv}
 if [[ -z "${HYDRA_SWEEP_DIR:-}" ]]; then
-  HYDRA_SWEEP_DIR='/net/pr2/projects/plgrid/plggzzsn2026/plgatarsander/logs/sd15_target_cache_smoke/${now:%Y-%m-%d}/${now:%H-%M-%S}'
+  HYDRA_SWEEP_DIR='/net/pr2/projects/plgrid/plggdiffusion/plgatarsander/logs/sd15_target_cache_smoke/${now:%Y-%m-%d}/${now:%H-%M-%S}'
 fi
 
 cd "$REPO_DIR"

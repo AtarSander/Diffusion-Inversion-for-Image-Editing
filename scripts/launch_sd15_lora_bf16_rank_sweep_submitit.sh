@@ -8,8 +8,9 @@ UV=${UV:-uv}
 DATA_ROOT=${DATA_ROOT:-/net/pr2/projects/plgrid/plggdiffusion/plgatarsander/data/processed/sd15_trajectories_stacked}
 TRAIN_ROOT=${TRAIN_ROOT:-$DATA_ROOT/train}
 VAL_ROOT=${VAL_ROOT:-$DATA_ROOT/val}
-RUN_NAME=${RUN_NAME:-sd15-inversion-lora-r16-lr5e-5-cosine-bf16}
-CHECKPOINT_DIR=${CHECKPOINT_DIR:-/net/pr2/projects/plgrid/plggdiffusion/plgatarsander/checkpoints/sd15_inversion_lora_r16_lr5e-5_cosine_bf16}
+LOG_ROOT=${LOG_ROOT:-/net/pr2/projects/plgrid/plggdiffusion/plgatarsander/logs}
+SWEEP_DIR=${SWEEP_DIR:-$LOG_ROOT/sd15_lora_bf16_rank_sweep}
+TRAIN_CONFIGS=${TRAIN_CONFIGS:-sd15_lora_r8,sd15_lora,sd15_lora_r32}
 
 cd "$REPO_DIR"
 
@@ -21,29 +22,28 @@ export WANDB_DIR=${WANDB_DIR:-/net/tscratch/people/plgatarsander/wandb}
 export MPLCONFIGDIR=${MPLCONFIGDIR:-/net/tscratch/people/plgatarsander/matplotlib-cache}
 export HYDRA_FULL_ERROR=${HYDRA_FULL_ERROR:-1}
 export TOKENIZERS_PARALLELISM=${TOKENIZERS_PARALLELISM:-false}
-mkdir -p "$UV_CACHE_DIR" "$HF_HOME" "$WANDB_CACHE_DIR" "$WANDB_DIR" "$MPLCONFIGDIR" "$CHECKPOINT_DIR"
+mkdir -p "$UV_CACHE_DIR" "$HF_HOME" "$WANDB_CACHE_DIR" "$WANDB_DIR" "$MPLCONFIGDIR" "$SWEEP_DIR"
 
-if [[ -x "$PYTHON" ]]; then
-  exec "$PYTHON" -m diff_inversion.modeling.train \
-    --config-name train_sd15_submitit \
-    --multirun \
-    'hydra.sweep.dir=slurm_runs/${now:%Y-%m-%d}/${now:%H-%M-%S}' \
-    hydra.job.name=sd15_lora_train \
-    data.root_dir="$TRAIN_ROOT" \
-    data.val_root_dir="$VAL_ROOT" \
-    run_name="$RUN_NAME" \
-    checkpoint_dir="$CHECKPOINT_DIR" \
-    "$@"
-fi
+run_train() {
+  if [[ -x "$PYTHON" ]]; then
+    "$PYTHON" -m diff_inversion.modeling.train "$@"
+    return
+  fi
 
-exec "$UV" run --frozen python -m diff_inversion.modeling.train \
+  "$UV" run --frozen python -m diff_inversion.modeling.train "$@"
+}
+
+echo "Submitting SD1.5 LoRA bf16 rank sweep: $TRAIN_CONFIGS"
+echo "Train root: $TRAIN_ROOT"
+echo "Val root: $VAL_ROOT"
+echo "Logs: $SWEEP_DIR"
+
+run_train \
   --config-name train_sd15_submitit \
   --multirun \
-  'hydra.sweep.dir=slurm_runs/${now:%Y-%m-%d}/${now:%H-%M-%S}' \
-  hydra.job.name=sd15_lora_train \
+  "hydra.sweep.dir=$SWEEP_DIR/\${now:%Y-%m-%d}/\${now:%H-%M-%S}" \
+  hydra.job.name=sd15_lora_bf16_rank_sweep \
+  "train=$TRAIN_CONFIGS" \
   data.root_dir="$TRAIN_ROOT" \
   data.val_root_dir="$VAL_ROOT" \
-  run_name="$RUN_NAME" \
-  checkpoint_dir="$CHECKPOINT_DIR" \
   "$@"
-

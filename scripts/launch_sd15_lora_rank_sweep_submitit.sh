@@ -5,7 +5,7 @@ REPO_DIR=${REPO_DIR:-/net/people/plgrid/plgatarsander/Diffusion-Inversion-for-Im
 PYTHON=${PYTHON:-$REPO_DIR/.venv/bin/python}
 UV=${UV:-uv}
 
-DATA_ROOT=${DATA_ROOT:-/net/pr2/projects/plgrid/plggzzsn2026/plgatarsander/data/processed/sd15_trajectories_stacked}
+DATA_ROOT=${DATA_ROOT:-/net/pr2/projects/plgrid/plggdiffusion/plgatarsander/data/processed/sd15_trajectories_stacked}
 TRAIN_ROOT=${TRAIN_ROOT:-$DATA_ROOT/train}
 VAL_ROOT=${VAL_ROOT:-$DATA_ROOT/val}
 

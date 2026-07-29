@@ -1,7 +1,7 @@
 # @package _global_
 
-run_name: sd15-inversion-lora-r16-lr5e-5-cosine-fp16
-checkpoint_dir: /net/pr2/projects/plgrid/plggzzsn2026/plgatarsander/checkpoints/sd15_inversion_lora_r16_lr5e-5_cosine_fp16
+run_name: sd15-inversion-lora-r16-lr5e-5-cosine-bf16
+checkpoint_dir: /net/pr2/projects/plgrid/plggdiffusion/plgatarsander/checkpoints/sd15_inversion_lora_r16_lr5e-5_cosine_bf16
 
 max_train_steps: 171225
 learning_rate: 5e-5
@@ -36,12 +36,12 @@ validation_preview:
   enabled: false
 
 model:
-  torch_dtype: float16
+  torch_dtype: bfloat16
   variant: fp16
 
 data:
-  root_dir: /net/pr2/projects/plgrid/plggzzsn2026/plgatarsander/data/processed/sd15_trajectories_stacked/train
-  val_root_dir: /net/pr2/projects/plgrid/plggzzsn2026/plgatarsander/data/processed/sd15_trajectories_stacked/val
+  root_dir: /net/pr2/projects/plgrid/plggdiffusion/plgatarsander/data/processed/sd15_trajectories_stacked/train
+  val_root_dir: /net/pr2/projects/plgrid/plggdiffusion/plgatarsander/data/processed/sd15_trajectories_stacked/val
   latents_file_name: trajectory.pt
   conditioning_file_name: conditioning.pt
   targets_dir_name: targets

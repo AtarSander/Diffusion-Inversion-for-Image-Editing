@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO_DIR=${REPO_DIR:-/net/people/plgrid/plgatarsander/Diffusion-Inversion-for-Image-Editing}
 PYTHON_CMD=${PYTHON_CMD:-"uv run python"}
-DATA_ROOT=${DATA_ROOT:-/net/pr2/projects/plgrid/plggzzsn2026/plgatarsander/data/processed/sd15_trajectories_stacked}
+DATA_ROOT=${DATA_ROOT:-/net/pr2/projects/plgrid/plggdiffusion/plgatarsander/data/processed/sd15_trajectories_stacked}
 TRAIN_OUTPUT_DIR=${TRAIN_OUTPUT_DIR:-$DATA_ROOT/train}
 VAL_OUTPUT_DIR=${VAL_OUTPUT_DIR:-$DATA_ROOT/val}
 TRAIN_PROMPTS_JSONL=${TRAIN_PROMPTS_JSONL:-/net/tscratch/people/plgatarsander/ZZSN_data/processed/recap_coco/train.jsonl}
@@ -20,8 +20,8 @@ VAL_START_INDEX=${VAL_START_INDEX:-0}
 SEED=${SEED:-1234}
 OVERWRITE=${OVERWRITE:-false}
 
-RUN_NAME=${RUN_NAME:-sd15-inversion-lora-r16-lr5e-5-cosine-fp16}
-CHECKPOINT_DIR=${CHECKPOINT_DIR:-/net/pr2/projects/plgrid/plggzzsn2026/plgatarsander/checkpoints/sd15_inversion_lora_r16_lr5e-5_cosine_fp16}
+RUN_NAME=${RUN_NAME:-sd15-inversion-lora-r16-lr5e-5-cosine-bf16}
+CHECKPOINT_DIR=${CHECKPOINT_DIR:-/net/pr2/projects/plgrid/plggdiffusion/plgatarsander/checkpoints/sd15_inversion_lora_r16_lr5e-5_cosine_bf16}
 MAX_TRAIN_STEPS=${MAX_TRAIN_STEPS:-171225}
 BATCH_SIZE=${BATCH_SIZE:-2}
 GRADIENT_ACCUMULATION_STEPS=${GRADIENT_ACCUMULATION_STEPS:-4}

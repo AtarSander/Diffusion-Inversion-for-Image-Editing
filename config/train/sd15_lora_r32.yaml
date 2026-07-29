@@ -4,8 +4,8 @@ defaults:
   - sd15_lora
   - _self_
 
-run_name: sd15-inversion-lora-r32-lr5e-5-cosine-fp16
-checkpoint_dir: /net/pr2/projects/plgrid/plggzzsn2026/plgatarsander/checkpoints/sd15_inversion_lora_r32_lr5e-5_cosine_fp16
+run_name: sd15-inversion-lora-r32-lr5e-5-cosine-bf16
+checkpoint_dir: /net/pr2/projects/plgrid/plggdiffusion/plgatarsander/checkpoints/sd15_inversion_lora_r32_lr5e-5_cosine_bf16
 
 lora:
   r: 32

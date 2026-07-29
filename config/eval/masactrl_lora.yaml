@@ -2,7 +2,7 @@
 
 repo_dir: /net/people/plgrid/plgatarsander/Diffusion-Inversion-for-Image-Editing
 data_path: /net/pr2/projects/plgrid/plggdiffusion/plgatarsander/data/raw/PIE-Bench_v1
-output_path: ${repo_dir}/pnp_inversion/output
+output_path: ${repo_dir}/masactrl_lora_eval_outputs
 
 edit_category_list:
   - "0"
@@ -16,7 +16,7 @@ edit_category_list:
   - "8"
   - "9"
 edit_method_list:
-  - lora+pnp
+  - lora+masactrl
 rerun_exist_images: false
 
 lora:

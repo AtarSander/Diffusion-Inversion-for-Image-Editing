@@ -8,7 +8,7 @@ mem_gb: 128
 nodes: 1
 name: ${hydra.job.name}
 _target_: hydra_plugins.hydra_submitit_launcher.submitit_launcher.SlurmLauncher
-account: plgzzsn2026-gpu-a100
+account: plgdiffusion3-gpu-a100
 partition: plgrid-gpu-a100
 additional_parameters:
   time: "13:00:00"
