@@ -1,1 +1,1 @@
-from diff_inversion import config  # noqa: F401
+"""Diffusion inversion package."""
