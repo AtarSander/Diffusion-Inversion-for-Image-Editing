@@ -51,13 +51,16 @@ def init_latent(latent, model, height, width, generator, batch_size):
             (1, model.unet.in_channels, height // 8, width // 8),
             generator=generator,
         )
-    latents = latent.expand(batch_size,  model.unet.in_channels, height // 8, width // 8).to(model.device)
+    latents = latent.expand(batch_size, model.unet.in_channels, height // 8, width // 8).to(
+        device=model.device, dtype=model.unet.dtype)
     return latent, latents
 
 
 @torch.no_grad()
 def latent2image(model, latents, return_type='np'):
-    latents = 1 / 0.18215 * latents.detach()
+    parameter = next(model.parameters())
+    latents = (1 / 0.18215 * latents.detach()).to(
+        device=parameter.device, dtype=parameter.dtype)
     image = model.decode(latents)['sample']
     if return_type == 'np':
         image = (image / 2 + 0.5).clamp(0, 1)
@@ -74,7 +77,9 @@ def image2latent(model, image):
             latents = image
         else:
             image = torch.from_numpy(image).float() / 127.5 - 1
-            image = image.permute(2, 0, 1).unsqueeze(0).to(model.device)
+            parameter = next(model.parameters())
+            image = image.permute(2, 0, 1).unsqueeze(0).to(
+                device=parameter.device, dtype=parameter.dtype)
             latents = model.encode(image)['latent_dist'].mean
             latents = latents * 0.18215
     return latents
@@ -143,11 +148,11 @@ def txt_draw(text,
     canvas = FigureCanvasAgg(plt.gcf())
     canvas.draw()
     w, h = canvas.get_width_height()
-    buf = np.fromstring(canvas.tostring_argb(), dtype=np.uint8)
+    buf = np.frombuffer(canvas.tostring_argb(), dtype=np.uint8)
     buf.shape = (w, h, 4)
     buf = np.roll(buf, 3, axis=2)
-    image = Image.frombytes("RGBA", (w, h), buf.tostring())
-    image = image.resize(target_size,Image.ANTIALIAS)
+    image = Image.frombytes("RGBA", (w, h), buf.tobytes())
+    image = image.resize(target_size, Image.Resampling.LANCZOS)
     image = np.asarray(image)[:,:,:3]
     
     plt.close('all')

@@ -3,13 +3,26 @@ import torch
 from models.p2p.attention_control import register_attention_control
 from utils.utils import init_latent
 
+
+def _unet_forward(model, latents, timestep, context):
+    with torch.autocast(
+        device_type=model.device.type,
+        dtype=model.unet.dtype,
+        enabled=(
+            model.device.type == "cuda"
+            and model.unet.dtype in (torch.float16, torch.bfloat16)
+        ),
+    ):
+        return model.unet(latents, timestep, encoder_hidden_states=context)["sample"]
+
+
 def p2p_guidance_diffusion_step(model, controller, latents, context, t, guidance_scale, low_resource=False):
     if low_resource:
-        noise_pred_uncond = model.unet(latents, t, encoder_hidden_states=context[0])["sample"]
-        noise_prediction_text = model.unet(latents, t, encoder_hidden_states=context[1])["sample"]
+        noise_pred_uncond = _unet_forward(model, latents, t, context[0])
+        noise_prediction_text = _unet_forward(model, latents, t, context[1])
     else:
         latents_input = torch.cat([latents] * 2)
-        noise_pred = model.unet(latents_input, t, encoder_hidden_states=context)["sample"]
+        noise_pred = _unet_forward(model, latents_input, t, context)
         noise_pred_uncond, noise_prediction_text = noise_pred.chunk(2)
     noise_pred = noise_pred_uncond + guidance_scale * (noise_prediction_text - noise_pred_uncond)
     latents = model.scheduler.step(noise_pred, t, latents)["prev_sample"]
@@ -102,11 +115,11 @@ def p2p_guidance_forward_single_branch(
 
 def direct_inversion_p2p_guidance_diffusion_step(model, controller, latents, context, t, guidance_scale, noise_loss, low_resource=False,add_offset=True):
     if low_resource:
-        noise_pred_uncond = model.unet(latents, t, encoder_hidden_states=context[0])["sample"]
-        noise_prediction_text = model.unet(latents, t, encoder_hidden_states=context[1])["sample"]
+        noise_pred_uncond = _unet_forward(model, latents, t, context[0])
+        noise_prediction_text = _unet_forward(model, latents, t, context[1])
     else:
         latents_input = torch.cat([latents] * 2)
-        noise_pred = model.unet(latents_input, t, encoder_hidden_states=context)["sample"]
+        noise_pred = _unet_forward(model, latents_input, t, context)
         noise_pred_uncond, noise_prediction_text = noise_pred.chunk(2)
     noise_pred = noise_pred_uncond + guidance_scale * (noise_prediction_text - noise_pred_uncond)
     latents = model.scheduler.step(noise_pred, t, latents)["prev_sample"]
@@ -118,11 +131,11 @@ def direct_inversion_p2p_guidance_diffusion_step(model, controller, latents, con
 
 def direct_inversion_p2p_guidance_diffusion_step_add_target(model, controller, latents, context, t, guidance_scale, noise_loss, low_resource=False,add_offset=True):
     if low_resource:
-        noise_pred_uncond = model.unet(latents, t, encoder_hidden_states=context[0])["sample"]
-        noise_prediction_text = model.unet(latents, t, encoder_hidden_states=context[1])["sample"]
+        noise_pred_uncond = _unet_forward(model, latents, t, context[0])
+        noise_prediction_text = _unet_forward(model, latents, t, context[1])
     else:
         latents_input = torch.cat([latents] * 2)
-        noise_pred = model.unet(latents_input, t, encoder_hidden_states=context)["sample"]
+        noise_pred = _unet_forward(model, latents_input, t, context)
         noise_pred_uncond, noise_prediction_text = noise_pred.chunk(2)
     noise_pred = noise_pred_uncond + guidance_scale * (noise_prediction_text - noise_pred_uncond)
     latents = model.scheduler.step(noise_pred, t, latents)["prev_sample"]

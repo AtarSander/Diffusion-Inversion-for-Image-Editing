@@ -56,7 +56,7 @@ class DDIMInversion(BasePipeline):
         return_dict: bool = True,
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
         img=None, # the input image as a PIL image
-        torch_dtype=torch.float32,
+        torch_dtype=None,
 
         # inversion regularization parameters
         lambda_ac: float = 20.0,
@@ -76,12 +76,14 @@ class DDIMInversion(BasePipeline):
         self.scheduler.set_timesteps(num_inversion_steps, device=device)
         timesteps = self.scheduler.timesteps
 
-        # Encode the input image with the first stage model
-        x0 = np.array(img)/255
-        x0 = torch.from_numpy(x0).type(torch_dtype).permute(2, 0, 1).unsqueeze(dim=0).repeat(1, 1, 1, 1).to(device)
+        # Encode the input image with the first stage model. The input must match
+        # the loaded VAE dtype (fp16 for the SD1.5 LoRA evaluation pipeline).
+        vae_dtype = self.vae.dtype if torch_dtype is None else torch_dtype
+        x0 = np.array(img) / 255
+        x0 = torch.from_numpy(x0).to(dtype=vae_dtype).permute(2, 0, 1).unsqueeze(dim=0).to(device)
         x0 = (x0 - 0.5) * 2.
         with torch.no_grad():
-            x0_enc = self.vae.encode(x0).latent_dist.sample().to(device, torch_dtype)
+            x0_enc = self.vae.encode(x0).latent_dist.sample().to(device=device, dtype=vae_dtype)
         latents = x0_enc = 0.18215 * x0_enc
 
         # Decode and return the image
@@ -102,7 +104,7 @@ class DDIMInversion(BasePipeline):
             for i, t in enumerate(timesteps.flip(0)):
                 # expand the latents if we are doing classifier free guidance
                 latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
-                latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+                latent_model_input = self.scheduler.scale_model_input(latent_model_input, t).to(dtype=self.unet.dtype)
 
                 # predict the noise residual
                 with torch.no_grad():

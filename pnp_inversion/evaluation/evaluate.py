@@ -193,6 +193,13 @@ if __name__=="__main__":
                                                                     "1_null-text-inversion+p2p_3090", "1_negative-prompt-inversion+p2p",
                                                                     "1_stylediffusion+p2p", "1_directinversion+p2p",
                                                                   ])
+    parser.add_argument(
+        '--tgt_image_folder',
+        action='append',
+        default=[],
+        metavar='NAME=PATH',
+        help='Explicit target image folder. Can be supplied multiple times.',
+    )
     parser.add_argument('--result_path', type=str, default="evaluation_result.csv")
     parser.add_argument('--device', type=str, default="cuda")
     parser.add_argument('--edit_category_list',  nargs = '+', type=str, default=[
@@ -215,12 +222,21 @@ if __name__=="__main__":
     metrics=args.metrics
     src_image_folder=args.src_image_folder
     tgt_methods=args.tgt_methods
+    explicit_tgt_image_folders=args.tgt_image_folder
     edit_category_list=args.edit_category_list
     evaluate_whole_table=args.evaluate_whole_table
     
     tgt_image_folders={}
     
-    if evaluate_whole_table:
+    if explicit_tgt_image_folders:
+        for item in explicit_tgt_image_folders:
+            if '=' not in item:
+                raise ValueError(f"Expected NAME=PATH for --tgt_image_folder, got: {item}")
+            name, path = item.split('=', 1)
+            if not name or not path:
+                raise ValueError(f"Expected non-empty NAME=PATH for --tgt_image_folder, got: {item}")
+            tgt_image_folders[name] = path
+    elif evaluate_whole_table:
         for key in all_tgt_image_folders:
             if key[0] in tgt_methods:
                 tgt_image_folders[key]=all_tgt_image_folders[key]
@@ -234,7 +250,6 @@ if __name__=="__main__":
     
     with open(result_path,'w',newline="") as f:
         csv_write = csv.writer(f)
-        
         csv_head=[]
         for tgt_image_folder_key,_ in tgt_image_folders.items():
             for metric in metrics:
@@ -259,8 +274,6 @@ if __name__=="__main__":
         
         src_image_path=os.path.join(src_image_folder, base_image_path)
         src_image = Image.open(src_image_path)
-        
-        
         evaluation_result=[key]
         
         for tgt_image_folder_key,tgt_image_folder in tgt_image_folders.items():
@@ -281,5 +294,3 @@ if __name__=="__main__":
         with open(result_path,'a+',newline="") as f:
             csv_write = csv.writer(f)
             csv_write.writerow(evaluation_result)
-        
-        

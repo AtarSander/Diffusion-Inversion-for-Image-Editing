@@ -88,7 +88,7 @@ class EditingPipeline(BasePipeline):
                 for i, t in enumerate(timesteps):
                     # expand the latents if we are doing classifier free guidance
                     latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
-                    latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+                    latent_model_input = self.scheduler.scale_model_input(latent_model_input, t).to(dtype=self.unet.dtype)
 
                     # predict the noise residual
                     noise_pred = self.unet(latent_model_input,t,encoder_hidden_states=prompt_embeds,cross_attention_kwargs=cross_attention_kwargs,).sample
@@ -97,7 +97,7 @@ class EditingPipeline(BasePipeline):
                     d_ref_t2attn[t.item()] = {}
                     for name, module in self.unet.named_modules():
                         module_name = type(module).__name__
-                        if module_name == "CrossAttention" and 'attn2' in name:
+                        if module_name == "Attention" and 'attn2' in name:
                             attn_mask = module.attn_probs # size is num_channel,s*s,77
                             d_ref_t2attn[t.item()][name] = attn_mask.detach().cpu()
 
@@ -107,7 +107,7 @@ class EditingPipeline(BasePipeline):
                         noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
 
                     # compute the previous noisy sample x_t -> x_t-1
-                    latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs).prev_sample
+                    latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs).prev_sample.to(dtype=self.unet.dtype)
                     if latent_list is not None:
                         noise_loss_list.append(latent_list[-2-i]-latents)
                         latents=latents+noise_loss_list[-1]
@@ -147,7 +147,7 @@ class EditingPipeline(BasePipeline):
                 loss = 0.0
                 for name, module in self.unet.named_modules():
                     module_name = type(module).__name__
-                    if module_name == "CrossAttention" and 'attn2' in name:
+                    if module_name == "Attention" and 'attn2' in name:
                         curr = module.attn_probs # size is num_channel,s*s,77
                         ref = d_ref_t2attn[t.item()][name].detach().to(device)
                         loss += ((curr-ref)**2).sum((1,2)).mean(0)
@@ -166,7 +166,7 @@ class EditingPipeline(BasePipeline):
                     noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
 
                 # compute the previous noisy sample x_t -> x_t-1
-                latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs).prev_sample
+                latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs).prev_sample.to(dtype=self.unet.dtype)
                 if latent_list is not None:
                     latents=latents+noise_loss_list[i]
 

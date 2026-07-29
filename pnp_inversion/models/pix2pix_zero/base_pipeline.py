@@ -4,11 +4,12 @@ import inspect
 from packaging import version
 from typing import Any, Callable, Dict, List, Optional, Union
 
-from transformers import CLIPFeatureExtractor, CLIPTextModel, CLIPTokenizer
+from transformers import CLIPImageProcessor, CLIPTextModel, CLIPTokenizer
 from diffusers import DiffusionPipeline
 from diffusers.models import AutoencoderKL, UNet2DConditionModel
 from diffusers.schedulers import KarrasDiffusionSchedulers
-from diffusers.utils import deprecate, is_accelerate_available, logging, randn_tensor, replace_example_docstring
+from diffusers.utils import deprecate, is_accelerate_available, logging, replace_example_docstring
+from diffusers.utils.torch_utils import randn_tensor
 from diffusers import StableDiffusionPipeline
 from diffusers.pipelines.stable_diffusion.safety_checker import StableDiffusionSafetyChecker
 
@@ -24,7 +25,7 @@ class BasePipeline(DiffusionPipeline):
         unet: UNet2DConditionModel,
         scheduler: KarrasDiffusionSchedulers,
         safety_checker: StableDiffusionSafetyChecker,
-        feature_extractor: CLIPFeatureExtractor,
+        feature_extractor: CLIPImageProcessor,
         requires_safety_checker: bool = True,
     ):
         super().__init__()
@@ -267,7 +268,7 @@ class BasePipeline(DiffusionPipeline):
 
     # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.decode_latents
     def decode_latents(self, latents):
-        latents = 1 / 0.18215 * latents
+        latents = (1 / 0.18215 * latents).to(device=self.vae.device, dtype=self.vae.dtype)
         image = self.vae.decode(latents).sample
         image = (image / 2 + 0.5).clamp(0, 1)
         # we always cast to float32 as this does not cause significant overhead and is compatible with bfloa16

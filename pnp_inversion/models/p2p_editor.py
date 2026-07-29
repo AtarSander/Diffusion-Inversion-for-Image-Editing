@@ -1,7 +1,10 @@
 
+import os
+import torch
+
 from models.p2p.scheduler_dev import DDIMSchedulerDev
 from models.p2p.inversion import NegativePromptInversion, NullInversion, DirectInversion
-from models.p2p.attention_control import EmptyControl, AttentionStore, make_controller
+from models.p2p.attention_control import EmptyControl, AttentionStore, make_controller, register_attention_control
 from models.p2p.p2p_guidance_forward import p2p_guidance_forward, direct_inversion_p2p_guidance_forward, direct_inversion_p2p_guidance_forward_add_target,p2p_guidance_forward_single_branch
 from models.p2p.proximal_guidance_forward import proximal_guidance_forward
 from diffusers import StableDiffusionPipeline
@@ -10,7 +13,7 @@ from PIL import Image
 import numpy as np
 
 class P2PEditor:
-    def __init__(self, method_list, device, num_ddim_steps=50) -> None:
+    def __init__(self, method_list, device, num_ddim_steps=50, model_key="CompVis/stable-diffusion-v1-4") -> None:
         self.device=device
         self.method_list=method_list
         self.num_ddim_steps=num_ddim_steps
@@ -20,9 +23,77 @@ class P2PEditor:
                                     beta_schedule="scaled_linear",
                                     clip_sample=False,
                                     set_alpha_to_one=False)
+        precision = os.environ.get("P2P_DTYPE", "fp16").lower()
+        dtype_by_name = {
+            "fp16": torch.float16,
+            "float16": torch.float16,
+            "bf16": torch.bfloat16,
+            "bfloat16": torch.bfloat16,
+            "fp32": torch.float32,
+            "float32": torch.float32,
+        }
+        if precision not in dtype_by_name:
+            raise ValueError(
+                f"Unsupported P2P_DTYPE={precision!r}; use fp16, bf16, or fp32."
+            )
+        dtype = dtype_by_name[precision] if device.type == "cuda" else torch.float32
         self.ldm_stable = StableDiffusionPipeline.from_pretrained(
-            "CompVis/stable-diffusion-v1-4", scheduler=self.scheduler).to(device)
+            model_key, scheduler=self.scheduler, torch_dtype=dtype).to(device)
+        print(f"[INFO] loaded P2P base model with dtype={dtype}")
         self.ldm_stable.scheduler.set_timesteps(self.num_ddim_steps)
+        self.lora_loaded = False
+        self.lora_adapter_name = "inversion"
+
+    def load_lora(self, checkpoint_path, rank=16, lora_alpha=8, lora_dropout=0.0,
+                  adapter_name="inversion", scale=1.0):
+        from peft import LoraConfig, inject_adapter_in_model, set_peft_model_state_dict
+
+        if self.lora_loaded:
+            raise RuntimeError("Only one inversion LoRA adapter is supported per P2P editor.")
+        checkpoint_path = os.path.abspath(os.path.expanduser(checkpoint_path))
+        if not os.path.exists(checkpoint_path):
+            raise FileNotFoundError(f"LoRA checkpoint does not exist: {checkpoint_path}")
+        lora_config = LoraConfig(
+            r=rank,
+            lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
+            bias="none",
+            init_lora_weights=True,
+            target_modules=["to_q", "to_k", "to_v", "to_out.0"],
+        )
+        inject_adapter_in_model(lora_config, self.ldm_stable.unet, adapter_name=adapter_name)
+        try:
+            state_dict = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        except TypeError:
+            state_dict = torch.load(checkpoint_path, map_location="cpu")
+        if isinstance(state_dict, dict) and "lora_state_dict" in state_dict:
+            state_dict = state_dict["lora_state_dict"]
+        set_peft_model_state_dict(self.ldm_stable.unet, state_dict, adapter_name=adapter_name)
+        if scale is not None and hasattr(self.ldm_stable.unet, "set_adapters"):
+            self.ldm_stable.unet.set_adapters([adapter_name], weights=[float(scale)])
+        self.lora_loaded = True
+        self.lora_adapter_name = adapter_name
+        self.set_lora_enabled(False)
+        print(f"[INFO] loaded inversion LoRA from {checkpoint_path}")
+
+    def set_lora_enabled(self, enabled):
+        if not self.lora_loaded:
+            return
+        for module in self.ldm_stable.unet.modules():
+            if module is self.ldm_stable.unet:
+                continue
+            if hasattr(module, "enable_adapters"):
+                module.enable_adapters(enabled)
+
+    def autocast(self):
+        return torch.autocast(
+            device_type=self.device.type,
+            dtype=self.ldm_stable.unet.dtype,
+            enabled=(
+                self.device.type == "cuda"
+                and self.ldm_stable.unet.dtype in (torch.float16, torch.bfloat16)
+            ),
+        )
 
         
     def __call__(self, 
@@ -47,6 +118,11 @@ class P2PEditor:
             return self.edit_image_ddim(image_path, prompt_src, prompt_tar, guidance_scale=guidance_scale, 
                                         cross_replace_steps=cross_replace_steps, self_replace_steps=self_replace_steps, 
                                         blend_word=blend_word, eq_params=eq_params, is_replace_controller=is_replace_controller)
+        elif edit_method == "lora+p2p":
+            return self.edit_image_lora_inversion(image_path=image_path, prompt_src=prompt_src, prompt_tar=prompt_tar,
+                                        guidance_scale=guidance_scale, cross_replace_steps=cross_replace_steps,
+                                        self_replace_steps=self_replace_steps, blend_word=blend_word, eq_params=eq_params,
+                                        is_replace_controller=is_replace_controller)
         elif edit_method in ["null-text-inversion+p2p", "null-text-inversion+p2p_a800", "null-text-inversion+p2p_3090"]:
             return self.edit_image_null_text_inversion(image_path, prompt_src, prompt_tar, guidance_scale=guidance_scale, 
                                         cross_replace_steps=cross_replace_steps, self_replace_steps=self_replace_steps, 
@@ -133,6 +209,49 @@ class P2PEditor:
                                         blend_word=blend_word, eq_params=eq_params, is_replace_controller=is_replace_controller)
         else:
             raise NotImplementedError(f"No edit method named {edit_method}")
+
+    def edit_image_lora_inversion(self, image_path, prompt_src, prompt_tar, guidance_scale=7.5,
+                                  cross_replace_steps=0.4, self_replace_steps=0.6, blend_word=None,
+                                  eq_params=None, is_replace_controller=False):
+        if not self.lora_loaded:
+            raise RuntimeError("LoRA inversion requested, but no LoRA checkpoint was loaded.")
+
+        image_gt = load_512(image_path)
+        prompts = [prompt_src, prompt_tar]
+
+        # The adapter predicts only the DDIM inversion trajectory. Reconstruction
+        # and P2P editing deliberately run with the base SD1.5 UNet.
+        register_attention_control(self.ldm_stable, None)
+        inversion = NullInversion(model=self.ldm_stable, num_ddim_steps=self.num_ddim_steps)
+        inversion.init_prompt(prompt_src)
+        self.set_lora_enabled(True)
+        try:
+            with self.autocast():
+                _, x_stars = inversion.ddim_inversion(image_gt)
+        finally:
+            self.set_lora_enabled(False)
+        x_t = x_stars[-1]
+
+        controller = AttentionStore()
+        with self.autocast():
+            reconstruct_latent, _ = p2p_guidance_forward(
+                model=self.ldm_stable, prompt=[prompt_src], controller=controller, latent=x_t,
+                num_inference_steps=self.num_ddim_steps, guidance_scale=guidance_scale, generator=None)
+        reconstruct_image = latent2image(model=self.ldm_stable.vae, latents=reconstruct_latent)[0]
+
+        controller = make_controller(
+            pipeline=self.ldm_stable, prompts=prompts, is_replace_controller=is_replace_controller,
+            cross_replace_steps={"default_": cross_replace_steps}, self_replace_steps=self_replace_steps,
+            blend_words=blend_word, equilizer_params=eq_params, num_ddim_steps=self.num_ddim_steps,
+            device=self.device)
+        with self.autocast():
+            latents, _ = p2p_guidance_forward(
+                model=self.ldm_stable, prompt=prompts, controller=controller, latent=x_t,
+                num_inference_steps=self.num_ddim_steps, guidance_scale=guidance_scale, generator=None)
+        image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
+        images = latent2image(model=self.ldm_stable.vae, latents=latents)
+        return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image, images[-1]), axis=1))
+
 
     def edit_image_ddim(
         self,

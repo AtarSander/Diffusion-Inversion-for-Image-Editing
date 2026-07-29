@@ -58,11 +58,12 @@ class MasaCtrlPipeline(StableDiffusionPipeline):
 
     @torch.no_grad()
     def image2latent(self, image):
-        DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+        vae_parameter = next(self.vae.parameters())
         if type(image) is Image:
             image = np.array(image)
             image = torch.from_numpy(image).float() / 127.5 - 1
-            image = image.permute(2, 0, 1).unsqueeze(0).to(DEVICE)
+            image = image.permute(2, 0, 1).unsqueeze(0)
+        image = image.to(device=vae_parameter.device, dtype=vae_parameter.dtype)
         # input image density range [-1, 1]
         latents = self.vae.encode(image)['latent_dist'].mean
         latents = latents * 0.18215
@@ -70,7 +71,9 @@ class MasaCtrlPipeline(StableDiffusionPipeline):
 
     @torch.no_grad()
     def latent2image(self, latents, return_type='np'):
-        latents = 1 / 0.18215 * latents.detach()
+        vae_parameter = next(self.vae.parameters())
+        latents = (1 / 0.18215 * latents.detach()).to(
+            device=vae_parameter.device, dtype=vae_parameter.dtype)
         image = self.vae.decode(latents)['sample']
         if return_type == 'np':
             image = (image / 2 + 0.5).clamp(0, 1)
@@ -80,6 +83,7 @@ class MasaCtrlPipeline(StableDiffusionPipeline):
             image = (image / 2 + 0.5).clamp(0, 1)
 
         return image
+
 
     def latent2image_grad(self, latents):
         latents = 1 / 0.18215 * latents

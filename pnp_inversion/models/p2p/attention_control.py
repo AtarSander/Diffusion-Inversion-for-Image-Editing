@@ -12,44 +12,67 @@ LOW_RESOURCE = False
 def register_attention_control(model, controller):
     def ca_forward(self, place_in_unet):
         to_out = self.to_out
-        if type(to_out) is torch.nn.modules.container.ModuleList:
-            to_out = self.to_out[0]
+        if isinstance(to_out, torch.nn.modules.container.ModuleList):
+            output_layers = list(to_out)
         else:
-            to_out = self.to_out
+            output_layers = [to_out]
 
-        def forward(x, context=None, mask=None, **kwargs):
-            if isinstance(context, dict):  # NOTE: compatible with ELITE (0.11.1)
+        def forward(x, context=None, mask=None, encoder_hidden_states=None,
+                    attention_mask=None, **kwargs):
+            # Diffusers renamed CrossAttention to Attention and its forward
+            # arguments in 0.16. Keep the original P2P controller interface.
+            if encoder_hidden_states is not None:
+                context = encoder_hidden_states
+            if attention_mask is not None:
+                mask = attention_mask
+            if isinstance(context, dict):
                 context = context['CONTEXT_TENSOR']
-            batch_size, sequence_length, dim = x.shape
-            h = self.heads
-            q = self.to_q(x)
+
             is_cross = context is not None
             context = context if is_cross else x
+            q = self.to_q(x)
             k = self.to_k(context)
             v = self.to_v(context)
-            q = self.reshape_heads_to_batch_dim(q)
-            k = self.reshape_heads_to_batch_dim(k)
-            v = self.reshape_heads_to_batch_dim(v)
 
-            sim = torch.einsum("b i d, b j d -> b i j", q, k) * self.scale
+            if hasattr(self, 'reshape_heads_to_batch_dim'):
+                batch_size, _, _ = x.shape
+                h = self.heads
+                q = self.reshape_heads_to_batch_dim(q)
+                k = self.reshape_heads_to_batch_dim(k)
+                v = self.reshape_heads_to_batch_dim(v)
+                sim = torch.einsum('b i d, b j d -> b i j', q, k) * self.scale
+                if mask is not None:
+                    mask = mask.reshape(batch_size, -1)
+                    max_neg_value = -torch.finfo(sim.dtype).max
+                    mask = mask[:, None, :].repeat(h, 1, 1)
+                    sim.masked_fill_(~mask, max_neg_value)
+                attn = sim.softmax(dim=-1)
+                attn = controller(attn, is_cross, place_in_unet)
+                out = torch.einsum('b i j, b j d -> b i d', attn, v)
+                out = self.reshape_batch_dim_to_heads(out)
+            else:
+                batch_size = x.shape[0]
+                q = self.head_to_batch_dim(q)
+                k = self.head_to_batch_dim(k)
+                v = self.head_to_batch_dim(v)
+                prepared_mask = None
+                if mask is not None:
+                    prepared_mask = self.prepare_attention_mask(mask, k.shape[1], batch_size)
+                sim = torch.bmm(q, k.transpose(-1, -2)) * self.scale
+                if prepared_mask is not None:
+                    sim = sim + prepared_mask
+                attn = sim.softmax(dim=-1)
+                attn = controller(attn, is_cross, place_in_unet)
+                out = torch.bmm(attn, v)
+                out = self.batch_to_head_dim(out)
 
-            if mask is not None:
-                mask = mask.reshape(batch_size, -1)
-                max_neg_value = -torch.finfo(sim.dtype).max
-                mask = mask[:, None, :].repeat(h, 1, 1)
-                sim.masked_fill_(~mask, max_neg_value)
-
-            # attention, what we cannot get enough of
-            attn = sim.softmax(dim=-1)
-            attn = controller(attn, is_cross, place_in_unet)
-            out = torch.einsum("b i j, b j d -> b i d", attn, v)
-            out = self.reshape_batch_dim_to_heads(out)
-            return to_out(out)
+            for layer in output_layers:
+                out = layer(out)
+            return out
 
         return forward
 
     class DummyController:
-
         def __call__(self, *args):
             return args[0]
 
@@ -60,23 +83,22 @@ def register_attention_control(model, controller):
         controller = DummyController()
 
     def register_recr(net_, count, place_in_unet):
-        if net_.__class__.__name__ == 'CrossAttention':
+        if net_.__class__.__name__ in {'CrossAttention', 'Attention'}:
             net_.forward = ca_forward(net_, place_in_unet)
             return count + 1
-        elif hasattr(net_, 'children'):
+        if hasattr(net_, 'children'):
             for net__ in net_.children():
                 count = register_recr(net__, count, place_in_unet)
         return count
 
     cross_att_count = 0
-    sub_nets = model.unet.named_children()
-    for net in sub_nets:
-        if "down" in net[0]:
-            cross_att_count += register_recr(net[1], 0, "down")
-        elif "up" in net[0]:
-            cross_att_count += register_recr(net[1], 0, "up")
-        elif "mid" in net[0]:
-            cross_att_count += register_recr(net[1], 0, "mid")
+    for name, net in model.unet.named_children():
+        if 'down' in name:
+            cross_att_count += register_recr(net, 0, 'down')
+        elif 'up' in name:
+            cross_att_count += register_recr(net, 0, 'up')
+        elif 'mid' in name:
+            cross_att_count += register_recr(net, 0, 'mid')
 
     controller.num_att_layers = cross_att_count
 

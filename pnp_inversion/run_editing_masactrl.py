@@ -56,7 +56,7 @@ def load_image(image_path, device):
 
 
 class MasaCtrlEditor:
-    def __init__(self, method_list, device, num_ddim_steps=50) -> None:
+    def __init__(self, method_list, device, num_ddim_steps=50, model_key="CompVis/stable-diffusion-v1-4") -> None:
         self.device=device
         self.method_list=method_list
         self.num_ddim_steps=num_ddim_steps
@@ -66,9 +66,51 @@ class MasaCtrlEditor:
                                     beta_schedule="scaled_linear",
                                     clip_sample=False,
                                     set_alpha_to_one=False)
+        dtype = torch.float16 if device.type == "cuda" else torch.float32
         self.model = MasaCtrlPipeline.from_pretrained(
-            "CompVis/stable-diffusion-v1-4", scheduler=self.scheduler).to(device)
+            model_key, scheduler=self.scheduler, torch_dtype=dtype).to(device)
         self.model.scheduler.set_timesteps(self.num_ddim_steps)
+        self.lora_loaded = False
+
+    def load_lora(self, checkpoint_path, rank=16, lora_alpha=8, lora_dropout=0.0,
+                  adapter_name="inversion", scale=1.0):
+        from peft import LoraConfig, inject_adapter_in_model, set_peft_model_state_dict
+
+        checkpoint_path = os.path.abspath(os.path.expanduser(checkpoint_path))
+        if not os.path.exists(checkpoint_path):
+            raise FileNotFoundError(f"LoRA checkpoint does not exist: {checkpoint_path}")
+        lora_config = LoraConfig(
+            r=rank, lora_alpha=lora_alpha, lora_dropout=lora_dropout, bias="none",
+            init_lora_weights=True, target_modules=["to_q", "to_k", "to_v", "to_out.0"])
+        inject_adapter_in_model(lora_config, self.model.unet, adapter_name=adapter_name)
+        try:
+            state_dict = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        except TypeError:
+            state_dict = torch.load(checkpoint_path, map_location="cpu")
+        if isinstance(state_dict, dict) and "lora_state_dict" in state_dict:
+            state_dict = state_dict["lora_state_dict"]
+        set_peft_model_state_dict(self.model.unet, state_dict, adapter_name=adapter_name)
+        if scale is not None and hasattr(self.model.unet, "set_adapters"):
+            self.model.unet.set_adapters([adapter_name], weights=[float(scale)])
+        self.lora_loaded = True
+        self.set_lora_enabled(False)
+        print(f"[INFO] loaded inversion LoRA from {checkpoint_path}")
+
+    def set_lora_enabled(self, enabled):
+        if not self.lora_loaded:
+            return
+        for module in self.model.unet.modules():
+            if module is self.model.unet:
+                continue
+            if hasattr(module, "enable_adapters"):
+                module.enable_adapters(enabled)
+
+    def autocast(self):
+        return torch.autocast(
+            device_type=self.device.type,
+            dtype=self.model.unet.dtype,
+            enabled=self.device.type == "cuda",
+        )
 
         
     def __call__(self, 
@@ -83,6 +125,8 @@ class MasaCtrlEditor:
             return self.edit_image_ddim_MasaCtrl(image_path,prompt_src,prompt_tar,guidance_scale,step=step,layper=layper)
         elif edit_method=="directinversion+masactrl":
             return self.edit_image_directinversion_MasaCtrl(image_path,prompt_src,prompt_tar,guidance_scale,step=step,layper=layper)
+        elif edit_method=="lora+masactrl":
+            return self.edit_image_lora_MasaCtrl(image_path,prompt_src,prompt_tar,guidance_scale,step=step,layper=layper)
         else:
             raise NotImplementedError(f"No edit method named {edit_method}")
 
@@ -128,6 +172,47 @@ class MasaCtrlEditor:
         
         return Image.fromarray(out_image)
     
+    def edit_image_lora_MasaCtrl(self, image_path, prompt_src, prompt_tar, guidance_scale, step=4, layper=10):
+        if not self.lora_loaded:
+            raise RuntimeError("LoRA inversion requested, but no LoRA checkpoint was loaded.")
+        source_image = load_image(image_path, self.device)
+        image_gt = load_512(image_path)
+        prompts = ["", prompt_tar]
+
+        # Use the learned SD1.5 inversion only; MasaCtrl sampling remains base SD1.5.
+        from models.p2p.attention_control import register_attention_control
+        register_attention_control(self.model, None)
+        inversion = DirectInversion(model=self.model, num_ddim_steps=self.num_ddim_steps)
+        inversion.init_prompt(prompt_src)
+        self.set_lora_enabled(True)
+        try:
+            with self.autocast():
+                _, x_stars = inversion.ddim_inversion(image_gt)
+        finally:
+            self.set_lora_enabled(False)
+        x_t = x_stars[-1]
+
+        editor = AttentionBase()
+        regiter_attention_editor_diffusers(self.model, editor)
+        with self.autocast():
+            image_fixed = self.model([prompt_tar], latents=x_t, num_inference_steps=self.num_ddim_steps,
+                                     guidance_scale=guidance_scale, noise_loss_list=None)
+
+        editor = MutualSelfAttentionControl(step, layper)
+        regiter_attention_editor_diffusers(self.model, editor)
+        with self.autocast():
+            image_masactrl = self.model(prompts, latents=x_t.expand(len(prompts), -1, -1, -1),
+                                        guidance_scale=guidance_scale, noise_loss_list=None)
+
+        image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
+        out_image = np.concatenate((
+            np.array(image_instruct),
+            ((source_image[0].permute(1,2,0).detach().cpu().numpy() * 0.5 + 0.5) * 255).astype(np.uint8),
+            (image_masactrl[0].permute(1,2,0).detach().cpu().numpy() * 255).astype(np.uint8),
+            (image_masactrl[-1].permute(1,2,0).detach().cpu().numpy() * 255).astype(np.uint8)), 1)
+        return Image.fromarray(out_image)
+
+
     def edit_image_ddim_MasaCtrl(self, image_path,prompt_src,prompt_tar,guidance_scale,step=4,layper=10):
         source_image=load_image(image_path, self.device)
         
@@ -172,6 +257,7 @@ class MasaCtrlEditor:
 
 image_save_paths={
     "ddim+masactrl":"ddim+masactrl",
+    "lora+masactrl":"lora+masactrl",
     "directinversion+masactrl":"directinversion+masactrl",
     }
 
@@ -183,6 +269,12 @@ if __name__ == "__main__":
     parser.add_argument('--output_path', type=str, default="output") # the editing category that needed to run
     parser.add_argument('--edit_category_list', nargs = '+', type=str, default=["0","1","2","3","4","5","6","7","8","9"]) # the editing category that needed to run
     parser.add_argument('--edit_method_list', nargs = '+', type=str, default=["ddim+masactrl","directinversion+masactrl"]) # the editing methods that needed to run
+    parser.add_argument('--model_key', type=str, default=None)
+    parser.add_argument('--lora_checkpoint', type=str, default=None)
+    parser.add_argument('--lora_rank', type=int, default=16)
+    parser.add_argument('--lora_alpha', type=int, default=8)
+    parser.add_argument('--lora_dropout', type=float, default=0.0)
+    parser.add_argument('--lora_scale', type=float, default=1.0)
     args = parser.parse_args()
     
     rerun_exist_images=args.rerun_exist_images
@@ -190,9 +282,16 @@ if __name__ == "__main__":
     output_path=args.output_path
     edit_category_list=args.edit_category_list
     edit_method_list=args.edit_method_list
-    
-        
-    masactrl_editor=MasaCtrlEditor(edit_method_list, torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu') )
+    use_lora = "lora+masactrl" in edit_method_list
+    if use_lora and args.lora_checkpoint is None:
+        raise ValueError("--lora_checkpoint is required when using edit method lora+masactrl")
+    model_key = args.model_key or ("runwayml/stable-diffusion-v1-5" if use_lora else "CompVis/stable-diffusion-v1-4")
+
+    masactrl_editor=MasaCtrlEditor(edit_method_list, torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'), model_key=model_key)
+    if use_lora:
+        masactrl_editor.load_lora(checkpoint_path=args.lora_checkpoint, rank=args.lora_rank,
+                                  lora_alpha=args.lora_alpha, lora_dropout=args.lora_dropout,
+                                  scale=args.lora_scale)
 
     
     with open(f"{data_path}/mapping_file.json", "r") as f:

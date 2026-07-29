@@ -1,6 +1,7 @@
 
 import torch
 from diffusers import AutoencoderKL, UNet2DConditionModel, DDIMScheduler, StableDiffusionPipeline
+from diffusers.utils.import_utils import is_xformers_available
 import numpy as np
 from PIL import Image
 from tqdm import tqdm
@@ -47,13 +48,24 @@ class Preprocess(nn.Module):
 
         print(f'[INFO] loading stable diffusion...')
         # Create model
-        self.vae = AutoencoderKL.from_pretrained(model_key, subfolder="vae", 
-                                                 torch_dtype=torch.float16).to(self.device)
+        self.vae = AutoencoderKL.from_pretrained(
+            model_key,
+            subfolder="vae",
+            variant="fp16",
+            torch_dtype=torch.float16,
+        ).to(self.device)
         self.tokenizer = CLIPTokenizer.from_pretrained(model_key, subfolder="tokenizer")
-        self.text_encoder = CLIPTextModel.from_pretrained(model_key, subfolder="text_encoder", revision="fp16",
-                                                          torch_dtype=torch.float16).to(self.device)
-        self.unet = UNet2DConditionModel.from_pretrained(model_key, subfolder="unet", revision="fp16",
-                                                         torch_dtype=torch.float16).to(self.device)
+        self.text_encoder = CLIPTextModel.from_pretrained(
+            model_key,
+            subfolder="text_encoder",
+            torch_dtype=torch.float16,
+        ).to(self.device)
+        self.unet = UNet2DConditionModel.from_pretrained(
+            model_key,
+            subfolder="unet",
+            variant="fp16",
+            torch_dtype=torch.float16,
+        ).to(self.device)
         self.scheduler = DDIMScheduler.from_pretrained(model_key, subfolder="scheduler")
         self.lora_loaded = False
         self.lora_adapter_name = "inversion"
@@ -362,7 +374,10 @@ class PNP(nn.Module):
         print('Loading SD model')
 
         pipe = StableDiffusionPipeline.from_pretrained(model_key, torch_dtype=torch.float16).to("cuda")
-        pipe.enable_xformers_memory_efficient_attention()
+        if is_xformers_available():
+            pipe.enable_xformers_memory_efficient_attention()
+        else:
+            print("[INFO] xFormers is unavailable; using standard attention.")
 
         self.vae = pipe.vae
         self.tokenizer = pipe.tokenizer
@@ -547,6 +562,30 @@ def edit_image_lora_PnP(
         np.uint8(255*np.array(edited_image[0].permute(1,2,0).cpu().detach())),
         ),1))
 
+def edit_image_directinversionLora_PnP(
+    image_path,
+    prompt_src,
+    prompt_tar,
+    guidance_scale=7.5,
+    image_shape=[512,512]
+):
+    torch.cuda.empty_cache()
+    image_gt = load_512(image_path)
+    _, rgb_reconstruction, latent_reconstruction = model.extract_latents(data_path=image_path,
+                                         num_steps=NUM_DDIM_STEPS,
+                                         inversion_prompt=prompt_src,
+                                         use_lora_inversion=True)
+
+    edited_image=pnp.run_pnp(image_path,latent_reconstruction,prompt_tar,guidance_scale)
+    
+    image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
+
+    return Image.fromarray(np.concatenate((
+        image_instruct,
+        image_gt,
+        np.uint8(255*np.array(rgb_reconstruction[0].permute(1,2,0).cpu().detach())),
+        np.uint8(255*np.array(edited_image[0].permute(1,2,0).cpu().detach())),
+        ),1))
 
 def mask_decode(encoded_mask,image_shape=[512,512]):
     length=image_shape[0]*image_shape[1]
