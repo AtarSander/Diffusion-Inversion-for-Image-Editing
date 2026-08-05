@@ -3,7 +3,7 @@ defaults:
   - _self_
 
 root_dirs:
-  - /scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/data/processed/sd15_trajectories_stacked_fp32/all
+  - data/processed/sd15_trajectories_stacked_fp32/all
 
 sample_glob: sample_*
 start_index: 0

@@ -5,10 +5,10 @@ defaults:
 
 # Use a distinct directory so existing FP16 trajectories cannot be mixed with this
 # full-FP32 dataset.
-output_dir: /scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/data/processed/sd15_trajectories_stacked_fp32/all
+output_dir: data/processed/sd15_trajectories_stacked_fp32/all
 
 data:
-  prompts_jsonl: /scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/data/processed/recap_coco/all_prompts.jsonl
+  prompts_jsonl: data/processed/recap_coco/all_prompts.jsonl
 
 # variant: null loads the regular FP32 checkpoint rather than the fp16 variant.
 # The generator allocates and saves latents/conditioning/targets in this dtype.

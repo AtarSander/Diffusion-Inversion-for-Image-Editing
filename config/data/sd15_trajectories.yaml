@@ -1,5 +1,5 @@
-root_dir: /scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/data/processed/sd15_trajectories_stacked_fp32/all
-val_root_dir: /scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/data/processed/sd15_trajectories_stacked_fp32/all
+root_dir: data/processed/sd15_trajectories_stacked_fp32/all
+val_root_dir: data/processed/sd15_trajectories_stacked_fp32/all
 latents_file_name: trajectory.pt
 conditioning_file_name: conditioning.pt
 targets_dir_name: targets

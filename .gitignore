@@ -1,6 +1,7 @@
 # Data
-/data/
-
+data
+checkpoints
+cache
 logs
 # Mac OS-specific storage files
 .DS_Store

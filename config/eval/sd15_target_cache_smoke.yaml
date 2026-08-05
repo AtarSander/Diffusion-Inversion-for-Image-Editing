@@ -4,7 +4,7 @@ defaults:
   - /model: sd15
   - _self_
 
-root_dir: /scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/data/processed/sd15_trajectories_stacked_fp32/all
+root_dir: data/processed/sd15_trajectories_stacked_fp32/all
 max_samples: 2
 max_steps: 5
 device: cuda

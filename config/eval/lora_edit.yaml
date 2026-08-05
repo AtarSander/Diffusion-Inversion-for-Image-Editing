@@ -2,16 +2,16 @@
 
 # Shared settings for every LoRA editing backend. Method, rank, checkpoint,
 # output directory, and guidance can all be overridden independently.
-repo_dir: /net/obelix/homes/aszymczy/Diffusion-Inversion-for-Image-Editing
-data_path: /scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/data/raw/PIE-Bench_v1
-output_path: /scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/evaluation/r32
-cache_root: /scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/cache/h86/r32
+repo_dir: .
+data_path: data/raw/PIE-Bench_v1
+output_path: evaluation/r32
+cache_root: cache/h86/r32
 
 edit_category_list: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
 rerun_exist_images: false
 
 lora:
-  checkpoint_path: /scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/checkpoints/r32/checkpoint_step_125000.pt
+  checkpoint_path: checkpoints/r32/checkpoint_step_125000.pt
   scale: 1.0
 
 guidance:

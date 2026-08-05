@@ -3,7 +3,7 @@ defaults:
   - model: sdxl
   - _self_
 
-output_dir: /scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/data/processed/sdxl_trajectories
+output_dir: data/processed/sdxl_trajectories
 num_samples: 27396
 start_index: 0
 seed: 1234

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 import subprocess
 import sys
@@ -11,6 +10,8 @@ import hydra
 from hydra.utils import to_absolute_path
 from loguru import logger
 from omegaconf import DictConfig, OmegaConf
+
+from diff_inversion.eval.runtime import build_subprocess_environment
 
 
 def _resolve_path(path: str | Path) -> Path:
@@ -32,6 +33,12 @@ def main(cfg: DictConfig) -> None:
     data_path = _resolve_path(cfg.data_path)
     output_path = _resolve_path(cfg.output_path)
     lora_checkpoint = _resolve_path(cfg.lora.checkpoint_path)
+    cache_root_config = OmegaConf.select(cfg, "cache_root", default=None)
+    cache_root = (
+        _resolve_path(cache_root_config)
+        if cache_root_config
+        else repo_dir / ".cache" / "editing-eval"
+    )
 
     if not pnp_dir.exists():
         raise FileNotFoundError(f"PnP directory does not exist: {pnp_dir}")
@@ -63,17 +70,13 @@ def main(cfg: DictConfig) -> None:
         str(cfg.lora.lora_dropout),
         "--lora_scale",
         str(cfg.lora.scale),
+        "--inversion_guidance_scale",
+        str(OmegaConf.select(cfg, "guidance.inversion_scale", default=1.0)),
     ]
     if bool(cfg.rerun_exist_images):
         cmd.append("--rerun_exist_images")
 
-    env = os.environ.copy()
-    env.setdefault("HF_HOME", "/net/tscratch/people/plgatarsander/hf-cache")
-    env.setdefault("WANDB_CACHE_DIR", "/net/tscratch/people/plgatarsander/wandb-cache")
-    env.setdefault("MPLCONFIGDIR", "/net/tscratch/people/plgatarsander/matplotlib-cache")
-    env.setdefault("TOKENIZERS_PARALLELISM", "false")
-    for directory_var in ("HF_HOME", "WANDB_CACHE_DIR", "MPLCONFIGDIR"):
-        Path(env[directory_var]).mkdir(parents=True, exist_ok=True)
+    env = build_subprocess_environment(cache_root)
 
     logger.info("Running PnP command from {}: {}", pnp_dir, " ".join(cmd))
     subprocess.run(cmd, cwd=pnp_dir, env=env, check=True)

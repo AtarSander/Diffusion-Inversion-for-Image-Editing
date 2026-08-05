@@ -6,9 +6,10 @@ import csv
 import json
 import math
 import os
-from pathlib import Path
 import statistics
 import subprocess
+import sys
+from pathlib import Path
 
 import hydra
 from hydra.utils import to_absolute_path
@@ -56,7 +57,8 @@ def main(cfg: DictConfig) -> None:
 
     repo_dir = _resolve_path(cfg.repo_dir)
     pnp_dir = repo_dir / "pnp_inversion"
-    python = Path(to_absolute_path(str(cfg.python)))
+    python_config = cfg.get("python")
+    python = _resolve_path(python_config) if python_config else Path(sys.executable).resolve()
     data_path = _resolve_path(cfg.data_path)
     generated_root = _resolve_path(cfg.generated_root)
     result_path = _resolve_path(cfg.result_path)
@@ -112,12 +114,16 @@ def main(cfg: DictConfig) -> None:
         *_as_str_list(cfg.edit_category_list),
     ]
 
+    cache_root = _resolve_path(cfg.get("cache_root", repo_dir / ".cache" / "metrics"))
+    cache_directories = {
+        "HF_HOME": _resolve_path(cfg.get("hf_home", cache_root / "huggingface")),
+        "MPLCONFIGDIR": _resolve_path(cfg.get("matplotlib_cache", cache_root / "matplotlib")),
+        "TORCH_HOME": _resolve_path(cfg.get("torch_home", cache_root / "torch")),
+    }
     env = os.environ.copy()
-    env.setdefault("HF_HOME", "/net/tscratch/people/plgatarsander/hf-cache")
-    env.setdefault("MPLCONFIGDIR", "/net/tscratch/people/plgatarsander/matplotlib-cache")
-    env.setdefault("TORCH_HOME", "/net/tscratch/people/plgatarsander/torch-cache")
-    for directory_var in ("HF_HOME", "MPLCONFIGDIR", "TORCH_HOME"):
-        Path(env[directory_var]).mkdir(parents=True, exist_ok=True)
+    for directory_var, directory in cache_directories.items():
+        directory.mkdir(parents=True, exist_ok=True)
+        env[directory_var] = str(directory)
 
     logger.info("Running PnP metrics from {}: {}", pnp_dir, " ".join(cmd))
     subprocess.run(cmd, cwd=pnp_dir, env=env, check=True)

@@ -1,11 +1,11 @@
 # @package _global_
 
-repo_dir: /net/obelix/homes/aszymczy/Diffusion-Inversion-for-Image-Editing
-data_path: /scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/data/raw/PIE-Bench_v1
-generated_root: /scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/evaluation/r32
-metrics_root: /scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/evaluation/metrics/r32
-log_root: /scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/logs/metrics/r32
-cache_root: /scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/cache/h86/r32/metrics
+repo_dir: .
+data_path: data/raw/PIE-Bench_v1
+generated_root: logs/evaluation/r32
+metrics_root: logs/evaluation/metrics/r32
+log_root: logs/metrics/r32
+cache_root: cache/h86/r32/metrics
 hf_home: ${cache_root}/huggingface
 matplotlib_cache: ${cache_root}/matplotlib
 torch_home: ${cache_root}/torch
