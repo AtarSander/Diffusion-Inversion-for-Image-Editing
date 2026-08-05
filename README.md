@@ -1,76 +1,108 @@
 # Diffusion Inversion for Image Editing
 
-This project improves DDIM inversion for Stable Diffusion XL and SD1.5 by
-fine-tuning a lightweight LoRA adapter on the diffusion UNet. The adapter is
-trained to produce a better inversion-time approximation of the frozen base
-model's noise prediction at the next, noisier latent state:
+This project trains LoRA adapters to improve diffusion inversion and evaluates
+them with P2P, PnP, MasaCtrl, and Pix2Pix-Zero. Each editor supports:
 
-```text
-eps_phi(x_{t-1}, t, c) ~= eps_theta(x_t, t, c)
-```
-
-The base model stays frozen. Only LoRA parameters injected into UNet attention
-projections (`to_q`, `to_k`, `to_v`, `to_out.0`) are trained. The adapter can
-be enabled only for inversion, leaving normal sampling unchanged unless the
-LoRA is explicitly activated.
-
-## Project Layout
-
-```text
-diff_inversion/
-  data/
-    generate_sdxl_samples.py       # Generate SDXL/SD1.5 images and trajectories
-    latent_trajectory_dataset.py   # Dataset of latent transitions for training
-    precompute_training_cache.py   # Add conditioning.pt and target_eps.pt
-  modeling/
-    train.py                       # Train UNet LoRA
-    sdxl_sampling.py               # Shared DDIM sampling/inversion helpers
-    validation_preview.py          # Optional previews during training
-  eval/
-    invert_sdxl.py                 # DDIM inversion, optionally with LoRA
-    pnp_lora.py                    # Submit PnP editing with SD1.5 LoRA inversion
-    reconstruct_sdxl.py            # Reconstruct images from inverted_noise.pt
-    run.py                         # Metrics and preview report
-    reporting.py                   # JSON/CSV/Markdown/W&B output helpers
-
-config/
-  model/sdxl.yaml                  # SDXL base, DDIM, 50 steps, 1024x1024
-  model/sd15.yaml                  # SD1.5 base, DDIM, 50 steps, 512x512
-  sample_gather*.yaml              # Train/val/test trajectory generation
-  precompute_training_cache*.yaml  # Cached training target generation
-  train/sdxl_lora*.yaml            # LoRA variants: r8/r16/r32
-  train/sd15_lora*.yaml            # SD1.5 LoRA training configs
-  eval/*.yaml                      # Inversion, reconstruction, and reporting
-
-scripts/
-  launch_sample_gather_submitit.sh
-  launch_sd15_sample_gather_submitit.sh
-  launch_sample_gather_eval_submitit.sh
-  launch_precompute_training_cache_{train,val,test}_submitit.sh
-  launch_sdxl_lora_train_submitit.sh
-  launch_sd15_lora_train_submitit.sh
-  launch_sdxl_eval_{invert,reconstruct,run}_submitit.sh
-  launch_pnp_lora_eval_submitit.sh
-  submit_sdxl_eval_chain.sh
-```
+- `lora+<editor>`: LoRA inversion followed by the standard editor.
+- `lora+directinversion+<editor>`: LoRA inversion followed by Direct
+  Inversion's trajectory correction and then editing.
 
 ## Environment
 
-The project targets Python 3.11 and `uv`. Dependencies are defined in
-`pyproject.toml`; PyTorch is configured for CUDA 12.8 through the PyTorch CUDA
-index.
+The project uses Python 3.11 and `uv`:
 
 ```bash
 uv sync --frozen
 ```
 
-Some scripts and configs contain machine-specific default paths. Before running
-them, check `REPO_DIR`, `PYTHON`, `OUTPUT_DIR`, `input_dir`, `root_dir`, and
-`checkpoint_dir`, or override them with environment variables / Hydra overrides.
+Cluster jobs use `gpu-l` on `h86`, create a job-local virtual environment,
+and write Slurm stdout/stderr to `logs/slurm/`.
 
-## Data Format
+W&B credentials belong in the ignored repository `.env`:
 
-Each generated example is stored in a `sample_XXXXXX` directory:
+```dotenv
+WANDB_API_KEY=...
+```
+
+Training loads this file automatically. The secret is passed through the
+environment and is never stored in Hydra's resolved configuration.
+
+## Configuration
+
+Hydra settings are organized by concern rather than by experiment matrix:
+
+```text
+config/
+  model/
+    sd15.yaml
+    sdxl.yaml
+  data/
+    sd15_trajectories.yaml
+    sdxl_trajectories.yaml
+  lora/
+    base.yaml
+    r8.yaml
+    r16.yaml
+    r32.yaml
+  wandb/
+    online.yaml
+    offline.yaml
+    disabled.yaml
+  lr_scheduler/
+    cosine.yaml
+    constant.yaml
+  train/
+    base.yaml
+    sd15.yaml
+    sdxl.yaml
+  eval/
+    lora_edit.yaml
+    p2p_lora.yaml
+    pnp_lora.yaml
+    masactrl_lora.yaml
+    pix2pix_zero_lora.yaml
+    pnp_lora_metrics.yaml
+  train_sd15.yaml
+  train_sdxl.yaml
+  sample_gather_sd15.yaml
+  sample_gather.yaml
+  precompute_training_cache.yaml
+```
+
+`train_sd15.yaml` only composes independent choices:
+
+```yaml
+defaults:
+  - model: sd15
+  - data: sd15_trajectories
+  - lora: r16
+  - wandb: online
+  - lr_scheduler: cosine
+  - train: sd15
+```
+
+Precision is an ordinary model setting:
+
+```yaml
+model:
+  torch_dtype: float32
+  variant: null
+```
+
+LoRA architecture variants live in their own files. Checkpoints, output paths,
+and inversion guidance remain ordinary runtime overrides.
+
+## Trajectory data
+
+The SD1.5 gather config reads all 30,441 Recap-COCO prompts and writes one
+unified dataset:
+
+```text
+/scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/
+  data/processed/sd15_trajectories_stacked_fp32/all/
+```
+
+Each sample contains:
 
 ```text
 sample_000000/
@@ -78,264 +110,136 @@ sample_000000/
   prompt.json
   meta.json
   timesteps.json
-  latents/
-    trajectory.pt
+  latents/trajectory.pt
   conditioning.pt
-  targets/
-    target_eps.pt
+  targets/target_eps.pt
 ```
 
-`trajectory.pt` stores the full latent trajectory as one stacked tensor. For
-SDXL 1024x1024 images, one latent has shape `4 x 128 x 128`; for SD1.5
-512x512 images, one latent has shape `4 x 64 x 64`.
-
-`conditioning.pt` stores UNet conditioning. SDXL samples include:
-
-```text
-prompt_embeds
-pooled_prompt_embeds
-add_time_ids
-```
-
-SD1.5 samples store only:
-
-```text
-prompt_embeds
-```
-
-`target_eps.pt` stores cached teacher noise predictions from the frozen base
-UNet. This avoids recomputing the teacher target during every LoRA training
-step.
-
-## Data Preparation
-
-Prompts come from Recap-COCO (`config/data/recap_coco.yaml`). Trajectory
-generation uses `StableDiffusionXLPipeline` with
-`stabilityai/stable-diffusion-xl-base-1.0`, DDIM scheduling, 50 inference
-steps, guidance scale `1.0`, and 1024x1024 resolution.
-
-Generate train trajectories:
+Generate trajectories:
 
 ```bash
-scripts/launch_sample_gather_submitit.sh
+sbatch scripts/slurm/generate_sd15_trajectories_fp32_h86.sbatch
 ```
 
-Generate val/test trajectories:
+The generator uses batch size one per prompt. The Slurm array partitions the
+prompt indices; all tasks write to the same dataset directory.
 
-```bash
-scripts/launch_sample_gather_eval_submitit.sh
-```
+## LoRA training
 
-The default job specs split train generation into 8 chunks and eval generation
-into separate val/test chunks.
+The current SD1.5 run settings are in `config/train/sd15.yaml`; LoRA,
+scheduler, W&B, model, and dataset settings come from their respective groups:
 
-SD1.5 uses the same generation and training code with
-`StableDiffusionPipeline`, `runwayml/stable-diffusion-v1-5`, 512x512 images,
-and prompt embeddings only:
-
-```bash
-scripts/launch_sd15_sample_gather_submitit.sh
-scripts/launch_sd15_val_sample_gather_submitit.sh
-scripts/launch_sd15_test_sample_gather_submitit.sh
-```
-
-If trajectories already exist but `conditioning.pt` and `targets/target_eps.pt`
-are missing, add the training cache without regenerating images:
-
-```bash
-scripts/launch_precompute_training_cache_train_submitit.sh
-scripts/launch_precompute_training_cache_val_submitit.sh
-scripts/launch_precompute_training_cache_test_submitit.sh
-```
-
-## LoRA Training
-
-Training is implemented in `diff_inversion/modeling/train.py`. The dataset
-treats each saved trajectory as a set of latent transitions. For transition
-`i`, the loader returns:
-
-```text
-x_clean             # cleaner latent used as the student input
-timestep            # target timestep
-prompt_embeds
-pooled_prompt_embeds # SDXL only
-add_time_ids         # SDXL only
-target_eps           # eps_theta for the next/noisier latent state
-```
-
-Training loss:
-
-```text
-MSE(student_eps, target_eps)
-```
-
-LoRA configs:
-
-```text
-config/train/sdxl_lora.yaml      # r=16, alpha=8
-config/train/sdxl_lora_r8.yaml   # r=8,  alpha=4
-config/train/sdxl_lora_r32.yaml  # r=32, alpha=16
-config/train/sd15_lora.yaml      # SD1.5 r=16, alpha=8
-```
-
-Shared training settings:
-
-```text
+```yaml
+max_train_steps: 35676       # three epochs
+gradient_accumulation_steps: 1
 learning_rate: 5e-5
-lr_scheduler: cosine
-warmup_steps: 1000
-batch_size: 2
-gradient_accumulation_steps: 4
-gradient_checkpointing: true
-max_grad_norm: 1.0
-save_every_steps: 5000
-save_training_state: true
+model:
+  torch_dtype: float32
+  variant: null
 ```
 
-Run the default r16 variant:
+Submit rank 8, 16, or 32:
 
 ```bash
-scripts/launch_sdxl_lora_train_submitit.sh train=sdxl_lora
+sbatch scripts/slurm/train_sd15_lora_h86.sbatch 8
+sbatch scripts/slurm/train_sd15_lora_h86.sbatch 16
+sbatch scripts/slurm/train_sd15_lora_h86.sbatch 32
 ```
 
-Run comparison variants:
+The launcher selects `lora=r8`, `lora=r16`, or `lora=r32`; the corresponding
+file defines both rank and alpha. It also gives each run a separate checkpoint
+directory. Additional Hydra choices can follow the rank:
 
 ```bash
-scripts/launch_sdxl_lora_train_submitit.sh train=sdxl_lora_r8
-scripts/launch_sdxl_lora_train_submitit.sh train=sdxl_lora_r32
+sbatch scripts/slurm/train_sd15_lora_h86.sbatch 8 wandb=offline
+sbatch scripts/slurm/train_sd15_lora_h86.sbatch 32 lr_scheduler=constant
 ```
 
-Run SD1.5 LoRA training:
-
-```bash
-scripts/launch_sd15_lora_train_submitit.sh
-```
-
-For SD1.5 rank variants, pass rank overrides directly:
-
-```bash
-scripts/launch_sd15_lora_train_submitit.sh lora.r=8 lora.lora_alpha=4
-scripts/launch_sd15_lora_train_submitit.sh lora.r=32 lora.lora_alpha=16
-```
-
-Checkpoints are saved as:
+Training checkpoints include:
 
 ```text
-checkpoint_step_*.pt        # LoRA adapter weights only
-training_state_step_*.pt    # LoRA + optimizer + scheduler + RNG state
+checkpoint_step_*.pt
+training_state_step_*.pt
 checkpoint_final.pt
 training_state_final.pt
 ```
 
-Resume from full training state:
+## Final-step oversampling
+
+Training defaults to `sampling=uniform`. To oversample the final DDIM
+trajectory transitions while keeping each epoch the same length, select:
 
 ```bash
-scripts/launch_sdxl_lora_train_submitit.sh \
-  train=sdxl_lora \
-  resume.enabled=true \
-  resume.mode=training_state \
-  resume.checkpoint_path=/path/to/training_state_step_30000.pt
+sbatch scripts/slurm/train_sd15_lora_h86.sbatch 8 sampling=final_tail
 ```
 
-Resume from adapter weights only. This restores the LoRA weights and advances
-the scheduler to the requested step, but optimizer moments are not restored:
+The `final_tail` profile makes the final 10% of transitions from every
+trajectory account for 50% of training draws. Both fractions are configurable:
 
 ```bash
-scripts/launch_sdxl_lora_train_submitit.sh \
-  train=sdxl_lora \
-  resume.enabled=true \
-  resume.mode=adapter \
-  resume.checkpoint_path=/path/to/checkpoint_step_15000.pt \
-  resume.global_step=15000
+sbatch scripts/slurm/train_sd15_lora_h86.sbatch 8 \
+  sampling=final_tail \
+  sampling.final_step_fraction=0.2 \
+  sampling.target_draw_fraction=0.5
 ```
 
-## Evaluation
+Validation remains uniformly sampled in both modes.
 
-Evaluation has three stages:
+## Editing evaluation
 
-1. `invert_sdxl.py` runs DDIM inversion from the final image latent to
-   `inverted_noise.pt`; LoRA can be enabled here.
-2. `reconstruct_sdxl.py` reconstructs `reconstructed.png` from
-   `inverted_noise.pt`; LoRA is disabled by default to isolate the adapter's
-   effect on inversion.
-3. `run.py` computes metrics and writes the report.
+`config/eval/lora_edit.yaml` contains shared paths. Evaluation selects the same
+`lora=r8/r16/r32` group used by training; the four method configs only select
+their editor-specific method names.
 
-Run the full sequential eval chain for one LoRA variant:
+Run all pure and Direct-Inversion-fused variants for an existing rank:
 
 ```bash
-scripts/submit_sdxl_eval_chain.sh r8
-scripts/submit_sdxl_eval_chain.sh r16
-scripts/submit_sdxl_eval_chain.sh r32
+sbatch scripts/slurm/eval_lora_h86.sbatch 8
+sbatch scripts/slurm/eval_lora_h86.sbatch 16
+sbatch scripts/slurm/eval_lora_h86.sbatch 32
 ```
 
-The chain script creates a separate output directory and runs
-inversion -> reconstruction -> report in order.
-
-PnP editing can run with SD1.5 LoRA-assisted inversion through the
-`lora+pnp` method. The wrapper loads the LoRA checkpoint into
-`pnp_inversion/run_editing_pnp.py`, enables it only for inversion, and then
-runs Plug-and-Play editing:
-
-```bash
-scripts/launch_pnp_lora_eval_submitit.sh \
-  lora.r=16 \
-  lora.lora_alpha=8 \
-  lora.checkpoint_path=/path/to/checkpoint_step_15000.pt
-```
-
-Override input/output locations:
-
-```bash
-INPUT_DIR=/path/to/test \
-EVAL_ROOT=/path/to/reports/eval \
-RUN_ID=my_run \
-scripts/submit_sdxl_eval_chain.sh r16
-```
-
-If inversion and reconstruction artifacts already exist, rerun only the report:
-
-```bash
-scripts/launch_sdxl_eval_run_submitit.sh \
-  input_dir=/path/to/sdxl_trajectories_stacked/test \
-  artifact_dir=/path/to/eval_run/artifacts \
-  output_dir=/path/to/eval_run \
-  inverted_noise_name=inverted_noise.pt \
-  reconstructed_image_name=reconstructed.png \
-  save_noise_previews=false \
-  save_image_previews=true \
-  image_preview_max_samples=32 \
-  save_normality_plots=false \
-  calculate_lpips=false \
-  inversion_diagnostics.enabled=false \
-  inversion_diagnostics.save_plots=false
-```
-
-Report outputs:
+The eight array indices are:
 
 ```text
-evaluation_summary.json
-evaluation_summary.md
-noise_comparisons/noise_comparisons.{json,csv}
-normality/normality_comparisons.{json,csv}
-image_comparisons/image_comparisons.{json,csv}
-image_comparisons/*.png
-inversion_diagnostics/*       # if diagnostics are enabled
+0  lora+p2p
+1  lora+directinversion+p2p
+2  lora+pnp
+3  lora+directinversion+pnp
+4  lora+masactrl
+5  lora+directinversion+masactrl
+6  lora+pix2pix-zero
+7  lora+directinversion+pix2pix-zero
 ```
 
-Main metric groups:
+To evaluate only fused methods with inversion guidance 2.5:
+
+```bash
+sbatch --array=1,3,5,7 scripts/slurm/eval_lora_h86.sbatch 32 2.5
+```
+
+## Metrics
+
+Calculate all eight editing metrics for one rank:
+
+```bash
+sbatch scripts/slurm/eval_lora_metrics_h86_all_ranks.sbatch 8
+sbatch scripts/slurm/eval_lora_metrics_h86_all_ranks.sbatch 16
+sbatch scripts/slurm/eval_lora_metrics_h86_all_ranks.sbatch 32
+```
+
+Metrics and summaries are written below
+`/scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/evaluation/metrics/`.
+
+## Main modules
 
 ```text
-aggregate/initial_vs_inverted_noise/*
-aggregate/inversion_error_stats/*
-aggregate/final_vs_reconstructed_image/mse|rmse|mae|psnr_db|ssim
-aggregate/initial_vs_inverted_noise_normality/*
+diff_inversion/data/generate_sdxl_samples.py
+diff_inversion/data/latent_trajectory_dataset.py
+diff_inversion/data/precompute_training_cache.py
+diff_inversion/modeling/train.py
+diff_inversion/eval/{p2p,pnp,masactrl,pix2pix_zero}_lora.py
+diff_inversion/eval/pnp_lora_metrics.py
 ```
 
-## Documentation
-
-Project documentation:
-
-```text
-reports/ZZSN_Dokumentacja_Wstepna.pdf
-reports/ZZSN_Dokumentacja_Końcowa.pdf
-```
+Project reports are under `reports/`.
