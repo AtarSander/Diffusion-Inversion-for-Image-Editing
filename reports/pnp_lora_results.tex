@@ -36,34 +36,55 @@ Table~\ref{tab:lora-pnp} reports mean $\pm$ population standard deviation over
 the generated PIE-Bench results. Structure distance and LPIPS are scaled by $10^3$, MSE by $10^4$, and SSIM by $10^2$. Structure distance, LPIPS, and MSE are lower-is-better.
 PSNR, SSIM, and CLIP scores are higher-is-better. The unedited-region metrics have
 $n=556$ valid images because 144 PIE-Bench samples have no unedited region; all other
-metrics use $n=700$.
+metrics use $n=700$. Rows marked ``+ DirectInv'' use the R32 LoRA checkpoint for
+inversion followed by Direct Inversion editing.
 
 \begin{table*}[htbp]
   \centering
   \small
-  \caption{SD1.5 LoRA inversion on PIE-Bench with four editing methods.}
+  \caption{Original paper baselines and SD1.5 LoRA inversion on PIE-Bench with four editing methods. Bold marks the best value within each editor block; original rows are paper means without standard deviations.}
   \label{tab:lora-pnp}
   \resizebox{\textwidth}{!}{%
   \begin{tabular}{llrrrrrrrr}
     \toprule
-    Editor & Rank & $\alpha$ & Structure ($\times 10^3$) $\downarrow$ & PSNR (dB) $\uparrow$ & LPIPS ($\times 10^3$) $\downarrow$ &
+    Editor & Inversion / rank & $\alpha$ & Structure ($\times 10^3$) $\downarrow$ & PSNR (dB) $\uparrow$ & LPIPS ($\times 10^3$) $\downarrow$ &
     MSE ($\times 10^4$) $\downarrow$ & SSIM ($\times 10^2$) $\uparrow$ & CLIP target $\uparrow$ & CLIP target (edit) $\uparrow$ \\
     \midrule
-    PnP & r8  & 4  & $27.347 \pm 25.199$ & $22.2856 \pm 4.4530$ & $114.421 \pm 64.992$ & $83.254 \pm 60.374$ & $79.430 \pm 12.895$ & $25.6356 \pm 3.7154$ & $22.7179 \pm 4.7900$ \\
-    PnP & r16 & 8  & $27.178 \pm 24.677$ & $22.3235 \pm 4.5144$ & $114.157 \pm 64.640$ & $82.440 \pm 59.256$ & $79.455 \pm 12.868$ & $25.6510 \pm 3.7378$ & $22.7767 \pm 4.8115$ \\
-    PnP & r32 & 16 & $27.077 \pm 24.675$ & $22.3287 \pm 4.2773$ & $113.467 \pm 64.744$ & $81.698 \pm 58.700$ & $79.540 \pm 12.846$ & $25.6141 \pm 3.7604$ & $22.8051 \pm 4.8448$ \\
+    PnP & Original DDIM & -- & $28.22$ & $22.28$ & $113.46$ & $83.64$ & $79.05$ & $25.41$ & $22.55$ \\
+    PnP & Original DirectInv & -- & $\textbf{24.29}$ & $\textbf{22.46}$ & $\textbf{106.06}$ & $\textbf{80.45}$ & $79.68$ & $25.41$ & $22.62$ \\
+    PnP & r8  & 4  & $27.35 \pm 25.20$ & $22.29 \pm 4.45$ & $114.42 \pm 64.99$ & $83.25 \pm 60.37$ & $79.43 \pm 12.89$ & $25.64 \pm 3.72$ & $22.72 \pm 4.79$ \\
+    PnP & r16 & 8  & $27.18 \pm 24.68$ & $22.32 \pm 4.51$ & $114.16 \pm 64.64$ & $82.44 \pm 59.26$ & $79.45 \pm 12.87$ & $25.65 \pm 3.74$ & $22.78 \pm 4.81$ \\
+    PnP & r32 & 16 & $27.08 \pm 24.68$ & $22.33 \pm 4.28$ & $113.47 \pm 64.74$ & $81.70 \pm 58.70$ & $79.54 \pm 12.85$ & $25.61 \pm 3.76$ & $22.81 \pm 4.84$ \\
+    PnP + DirectInv & r8  & 4  & $24.45 \pm 20.52$ & $22.38 \pm 4.54$ & $110.48 \pm 62.69$ & $81.77 \pm 60.05$ & $79.85 \pm 12.80$ & $\textbf{25.81 \pm 3.71}$ & $22.85 \pm 4.85$ \\
+    PnP + DirectInv & r16 & 8  & $24.28 \pm 20.21$ & $22.40 \pm 4.55$ & $110.24 \pm 62.55$ & $81.56 \pm 59.99$ & $79.88 \pm 12.80$ & $25.80 \pm 3.73$ & $\textbf{22.86 \pm 4.86}$ \\
+    PnP + DirectInv & r32 & 16 & $\textbf{24.24 \pm 20.14}$ & $22.40 \pm 4.53$ & $110.08 \pm 62.43$ & $81.43 \pm 59.91$ & $\textbf{79.90 \pm 12.79}$ & $25.80 \pm 3.72$ & $22.84 \pm 4.88$ \\
     \midrule
-    P2P & r8  & 4  & $70.454 \pm 39.602$ & $17.8081 \pm 3.9172$ & $211.100 \pm 106.517$ & $221.318 \pm 145.762$ & $71.370 \pm 15.855$ & $25.3785 \pm 3.6391$ & $22.5749 \pm 4.5293$ \\
-    P2P & r16 & 8  & $70.401 \pm 38.766$ & $17.8174 \pm 3.9122$ & $210.983 \pm 106.113$ & $220.656 \pm 144.994$ & $71.366 \pm 15.785$ & $25.3632 \pm 3.6187$ & $22.5695 \pm 4.5753$ \\
-    P2P & r32 & 16 & $70.469 \pm 40.181$ & $17.8209 \pm 3.8950$ & $210.948 \pm 106.102$ & $220.220 \pm 145.218$ & $71.394 \pm 15.868$ & $25.3638 \pm 3.5874$ & $22.5507 \pm 4.5221$ \\
+    P2P & Original DDIM & -- & $69.43$ & $17.87$ & $208.80$ & $219.88$ & $71.14$ & $25.01$ & $22.44$ \\
+    P2P & Original DirectInv & -- & $\textbf{11.65}$ & $\textbf{27.22}$ & $\textbf{54.55}$ & $\textbf{32.86}$ & $\textbf{84.76}$ & $25.02$ & $22.10$ \\
+    P2P & r8  & 4  & $70.45 \pm 39.60$ & $17.81 \pm 3.92$ & $211.10 \pm 106.52$ & $221.32 \pm 145.76$ & $71.37 \pm 15.86$ & $\textbf{25.38 \pm 3.64}$ & $\textbf{22.57 \pm 4.53}$ \\
+    P2P & r16 & 8  & $70.40 \pm 38.77$ & $17.82 \pm 3.91$ & $210.98 \pm 106.11$ & $220.66 \pm 144.99$ & $71.37 \pm 15.79$ & $25.36 \pm 3.62$ & $22.57 \pm 4.58$ \\
+    P2P & r32 & 16 & $70.47 \pm 40.18$ & $17.82 \pm 3.90$ & $210.95 \pm 106.10$ & $220.22 \pm 145.22$ & $71.39 \pm 15.87$ & $25.36 \pm 3.59$ & $22.55 \pm 4.52$ \\
+    P2P + DirectInv & r8  & 4  & $14.46 \pm 11.87$ & $25.96 \pm 5.43$ & $73.96 \pm 51.91$ & $44.87 \pm 46.73$ & $83.40 \pm 12.24$ & $25.27 \pm 3.87$ & $22.33 \pm 4.91$ \\
+    P2P + DirectInv & r16 & 8  & $14.30 \pm 11.91$ & $25.95 \pm 5.37$ & $73.20 \pm 50.93$ & $44.76 \pm 46.29$ & $83.48 \pm 12.19$ & $25.31 \pm 3.82$ & $22.39 \pm 4.84$ \\
+    P2P + DirectInv & r32 & 16 & $14.30 \pm 11.78$ & $25.95 \pm 5.22$ & $72.31 \pm 48.55$ & $43.62 \pm 43.56$ & $83.50 \pm 12.12$ & $25.29 \pm 3.91$ & $22.35 \pm 4.82$ \\
     \midrule
-    MasaCtrl & r8  & 4  & $26.557 \pm 19.334$ & $22.2538 \pm 4.6902$ & $106.534 \pm 61.469$ & $87.907 \pm 70.679$ & $80.285 \pm 12.743$ & $24.1593 \pm 3.8027$ & $21.1248 \pm 4.6742$ \\
-    MasaCtrl & r16 & 8  & $26.489 \pm 19.745$ & $22.2899 \pm 4.7143$ & $105.299 \pm 60.893$ & $87.572 \pm 72.821$ & $80.369 \pm 12.767$ & $24.2166 \pm 3.8033$ & $21.1784 \pm 4.6505$ \\
-    MasaCtrl & r32 & 16 & $26.667 \pm 19.936$ & $22.2832 \pm 4.6892$ & $105.378 \pm 61.602$ & $87.273 \pm 72.328$ & $80.452 \pm 12.654$ & $24.1279 \pm 3.7872$ & $21.1821 \pm 4.6847$ \\
+    MasaCtrl & Original DDIM & -- & $28.38$ & $22.17$ & $106.62$ & $86.97$ & $79.67$ & $23.96$ & $21.16$ \\
+    MasaCtrl & Original DirectInv & -- & $\textbf{24.70}$ & $\textbf{22.64}$ & $\textbf{87.94}$ & $\textbf{81.09}$ & $\textbf{81.33}$ & $24.38$ & $21.35$ \\
+    MasaCtrl & r8  & 4  & $26.56 \pm 19.33$ & $22.25 \pm 4.69$ & $106.53 \pm 61.47$ & $87.91 \pm 70.68$ & $80.28 \pm 12.74$ & $24.16 \pm 3.80$ & $21.12 \pm 4.67$ \\
+    MasaCtrl & r16 & 8  & $26.49 \pm 19.75$ & $22.29 \pm 4.71$ & $105.30 \pm 60.89$ & $87.57 \pm 72.82$ & $80.37 \pm 12.77$ & $24.22 \pm 3.80$ & $21.18 \pm 4.65$ \\
+    MasaCtrl & r32 & 16 & $26.67 \pm 19.94$ & $22.28 \pm 4.69$ & $105.38 \pm 61.60$ & $87.27 \pm 72.33$ & $80.45 \pm 12.65$ & $24.13 \pm 3.79$ & $21.18 \pm 4.68$ \\
+    MasaCtrl + DirectInv & r8  & 4  & $28.48 \pm 21.49$ & $21.89 \pm 4.87$ & $98.63 \pm 58.63$ & $99.08 \pm 85.44$ & $80.49 \pm 12.72$ & $\textbf{24.64 \pm 3.65}$ & $\textbf{21.50 \pm 4.66}$ \\
+    MasaCtrl + DirectInv & r16 & 8  & $28.50 \pm 21.47$ & $21.89 \pm 4.90$ & $98.89 \pm 58.64$ & $99.89 \pm 88.99$ & $80.47 \pm 12.72$ & $24.62 \pm 3.65$ & $21.49 \pm 4.67$ \\
+    MasaCtrl + DirectInv & r32 & 16 & $28.37 \pm 21.07$ & $21.89 \pm 4.84$ & $98.78 \pm 58.20$ & $98.68 \pm 85.10$ & $80.50 \pm 12.68$ & $24.60 \pm 3.60$ & $21.49 \pm 4.65$ \\
     \midrule
-    Pix2Pix-Zero & r8  & 4  & $51.593 \pm 51.822$ & $21.3347 \pm 5.5786$ & $145.870 \pm 119.774$ & $140.594 \pm 169.229$ & $76.981 \pm 15.830$ & $23.4618 \pm 4.2800$ & $20.9859 \pm 4.6982$ \\
-    Pix2Pix-Zero & r16 & 8  & $52.385 \pm 53.039$ & $21.2614 \pm 5.5527$ & $146.894 \pm 119.914$ & $142.566 \pm 177.526$ & $76.899 \pm 15.841$ & $23.3541 \pm 4.3416$ & $21.0480 \pm 4.7030$ \\
-    Pix2Pix-Zero & r32 & 16 & $51.652 \pm 52.878$ & $21.2867 \pm 5.5543$ & $147.021 \pm 120.497$ & $140.933 \pm 170.816$ & $77.032 \pm 15.819$ & $23.4061 \pm 4.4355$ & $21.0405 \pm 4.7464$ \\
+    Pix2Pix-Zero & Original DDIM & -- & $61.68$ & $20.44$ & $172.22$ & $144.12$ & $74.67$ & $22.80$ & $20.54$ \\
+    Pix2Pix-Zero & Original DirectInv & -- & $\textbf{49.22}$ & $\textbf{21.53}$ & $\textbf{138.98}$ & $\textbf{127.32}$ & $\textbf{77.05}$ & $23.31$ & $21.05$ \\
+    Pix2Pix-Zero & r8  & 4  & $51.59 \pm 51.82$ & $21.33 \pm 5.58$ & $145.87 \pm 119.77$ & $140.59 \pm 169.23$ & $76.98 \pm 15.83$ & $23.46 \pm 4.28$ & $20.99 \pm 4.70$ \\
+    Pix2Pix-Zero & r16 & 8  & $52.38 \pm 53.04$ & $21.26 \pm 5.55$ & $146.89 \pm 119.91$ & $142.57 \pm 177.53$ & $76.90 \pm 15.84$ & $23.35 \pm 4.34$ & $21.05 \pm 4.70$ \\
+    Pix2Pix-Zero & r32 & 16 & $51.65 \pm 52.88$ & $21.29 \pm 5.55$ & $147.02 \pm 120.50$ & $140.93 \pm 170.82$ & $77.03 \pm 15.82$ & $23.41 \pm 4.44$ & $21.04 \pm 4.75$ \\
+    Pix2Pix-Zero + DirectInv & r8  & 4  & $51.42 \pm 49.89$ & $21.27 \pm 5.53$ & $146.53 \pm 118.70$ & $139.61 \pm 161.66$ & $77.02 \pm 15.69$ & $23.36 \pm 4.34$ & $20.99 \pm 4.68$ \\
+    Pix2Pix-Zero + DirectInv & r16 & 8  & $51.62 \pm 50.63$ & $21.23 \pm 5.48$ & $147.11 \pm 120.67$ & $140.85 \pm 170.35$ & $77.04 \pm 15.68$ & $\textbf{23.49 \pm 4.28}$ & $21.02 \pm 4.78$ \\
+    Pix2Pix-Zero + DirectInv & r32 & 16 & $53.69 \pm 55.20$ & $21.16 \pm 5.57$ & $149.48 \pm 121.79$ & $144.91 \pm 171.78$ & $76.68 \pm 15.96$ & $23.46 \pm 4.35$ & $\textbf{21.11 \pm 4.80}$ \\
     \bottomrule
   \end{tabular}
   }
@@ -72,14 +93,16 @@ metrics use $n=700$.
 \begin{table}[htbp]
   \centering
   \small
-  \caption{CLIP similarity to the source prompt. This value is identical across all
-  editing methods and LoRA ranks.}
+  \caption{CLIP similarity to the source prompt. The small difference between the
+  previously reported LoRA rows and the recomputed DirectInv rows reflects the
+  metric environment used for each evaluation.}
   \label{tab:source-clip}
   \begin{tabular}{lr}
     \toprule
     Configuration & CLIP source $\uparrow$ \\
     \midrule
-    All methods and ranks & $26.0717 \pm 3.2916$ \\
+    Existing LoRA rows & $26.07 \pm 3.29$ \\
+    LoRA + DirectInv (all ranks) & $26.07 \pm 3.29$ \\
     \bottomrule
   \end{tabular}
 \end{table}

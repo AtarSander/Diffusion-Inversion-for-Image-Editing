@@ -113,6 +113,7 @@ class P2PEditor:
                 eq_params=None,
                 is_replace_controller=False,
                 use_inversion_guidance=False,
+                inversion_guidance_scale=1.0,
                 dilate_mask=1,):
         if edit_method=="ddim+p2p":
             return self.edit_image_ddim(image_path, prompt_src, prompt_tar, guidance_scale=guidance_scale, 
@@ -123,6 +124,20 @@ class P2PEditor:
                                         guidance_scale=guidance_scale, cross_replace_steps=cross_replace_steps,
                                         self_replace_steps=self_replace_steps, blend_word=blend_word, eq_params=eq_params,
                                         is_replace_controller=is_replace_controller)
+        elif edit_method == "lora+directinversion+p2p":
+            return self.edit_image_directinversion(
+                image_path=image_path,
+                prompt_src=prompt_src,
+                prompt_tar=prompt_tar,
+                guidance_scale=guidance_scale,
+                cross_replace_steps=cross_replace_steps,
+                self_replace_steps=self_replace_steps,
+                blend_word=blend_word,
+                eq_params=eq_params,
+                is_replace_controller=is_replace_controller,
+                use_lora_inversion=True,
+                inversion_guidance_scale=inversion_guidance_scale,
+            )
         elif edit_method in ["null-text-inversion+p2p", "null-text-inversion+p2p_a800", "null-text-inversion+p2p_3090"]:
             return self.edit_image_null_text_inversion(image_path, prompt_src, prompt_tar, guidance_scale=guidance_scale, 
                                         cross_replace_steps=cross_replace_steps, self_replace_steps=self_replace_steps, 
@@ -542,14 +557,45 @@ class P2PEditor:
         blend_word=None,
         eq_params=None,
         is_replace_controller=False,
+        use_lora_inversion=False,
+        inversion_guidance_scale=1.0,
     ):
         image_gt = load_512(image_path)
         prompts = [prompt_src, prompt_tar]
 
-        null_inversion = DirectInversion(model=self.ldm_stable,
-                                    num_ddim_steps=self.num_ddim_steps)
-        _, _, x_stars, noise_loss_list = null_inversion.invert(
-            image_gt=image_gt, prompt=prompts,guidance_scale=guidance_scale)
+        direct_inversion = DirectInversion(
+            model=self.ldm_stable,
+            num_ddim_steps=self.num_ddim_steps,
+        )
+        if use_lora_inversion:
+            if not self.lora_loaded:
+                raise RuntimeError(
+                    "LoRA + Direct Inversion requested, but no LoRA checkpoint was loaded."
+                )
+            direct_inversion.init_prompt(prompts)
+            register_attention_control(self.ldm_stable, None)
+            self.set_lora_enabled(True)
+            try:
+                with self.autocast():
+                    _, x_stars = direct_inversion.ddim_with_guidance_scale_inversion(
+                        image_gt, inversion_guidance_scale
+                    )
+            finally:
+                self.set_lora_enabled(False)
+
+            with self.autocast():
+                noise_loss_list = direct_inversion.offset_calculate(
+                    x_stars,
+                    num_inner_steps=10,
+                    epsilon=1e-5,
+                    guidance_scale=guidance_scale,
+                )
+        else:
+            _, _, x_stars, noise_loss_list = direct_inversion.invert(
+                image_gt=image_gt,
+                prompt=prompts,
+                guidance_scale=guidance_scale,
+            )
         x_t = x_stars[-1]
 
         controller = AttentionStore()

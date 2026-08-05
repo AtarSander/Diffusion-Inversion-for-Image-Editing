@@ -71,7 +71,7 @@ def main() -> None:
     parser.add_argument(
         "--root-dir",
         type=Path,
-        default=Path("/net/pr2/projects/plgrid/plggdiffusion/plgatarsander/data/processed/sd15_trajectories_stacked/train"),
+        default=Path("data/processed/sd15_trajectories_stacked_fp32/all"),
     )
     parser.add_argument("--max-samples", type=int, default=2)
     parser.add_argument("--max-steps", type=int, default=5)

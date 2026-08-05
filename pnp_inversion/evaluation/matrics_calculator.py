@@ -9,6 +9,29 @@ from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 from torchmetrics.regression import MeanSquaredError
 
 
+def _clip_feature_tensor(output):
+    """Normalize CLIP feature outputs across Transformers API versions."""
+    pooler_output = getattr(output, "pooler_output", None)
+    if pooler_output is not None:
+        return pooler_output
+    if isinstance(output, tuple):
+        return output[0]
+    return output
+
+
+def _patch_clip_feature_api(model):
+    """Make torchmetrics compatible with Transformers 5.6 CLIP outputs."""
+    for method_name in ("get_image_features", "get_text_features"):
+        method = getattr(model, method_name, None)
+        if method is None:
+            continue
+
+        def feature_method(*args, _method=method, **kwargs):
+            return _clip_feature_tensor(_method(*args, **kwargs))
+
+        setattr(model, method_name, feature_method)
+
+
 class VitExtractor:
     BLOCK_KEY = 'block'
     ATTN_KEY = 'attn'
@@ -272,6 +295,7 @@ class MetricsCalculator:
     def __init__(self, device) -> None:
         self.device=device
         self.clip_metric_calculator = CLIPScore(model_name_or_path="openai/clip-vit-large-patch14").to(device)
+        _patch_clip_feature_api(self.clip_metric_calculator.model)
         self.psnr_metric_calculator = PeakSignalNoiseRatio(data_range=1.0).to(device)
         self.lpips_metric_calculator = LearnedPerceptualImagePatchSimilarity(net_type='squeeze').to(device)
         self.mse_metric_calculator = MeanSquaredError().to(device)
@@ -403,4 +427,3 @@ class MetricsCalculator:
         structure_distance = self.structure_distance_metric_calculator.calculate_global_ssim_loss(img_gt, img_pred)
         
         return structure_distance.data.cpu().numpy()
-

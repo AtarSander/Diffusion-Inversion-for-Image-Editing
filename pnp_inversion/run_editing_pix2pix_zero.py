@@ -226,6 +226,48 @@ def edit_image_lora_pix2pix_zero(image_path,
         guidance_amount=XA_GUIDANCE,
         guidance_scale=guidance_scale,
         negative_prompt=prompt_str,
+    )
+    image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
+    return Image.fromarray(np.concatenate((np.array(image_instruct), np.array(image_gt),
+                                            np.array(rec_pil[0]), np.array(edit_pil[0])), 1))
+
+
+def edit_image_lora_directinversion_pix2pix_zero(
+                image_path,
+                prompt_src,
+                prompt_tar,
+                guidance_scale=7.5,
+                inversion_guidance_scale=1.0,
+                image_size=[512,512]):
+    image_gt = Image.open(image_path).resize(image_size, Image.Resampling.LANCZOS)
+    prompt_str = generate_caption(image_gt)
+
+    # Algorithm 1, inverse: replace DDIM inversion with the learned LoRA
+    # inversion while retaining its full latent trajectory.
+    set_lora_enabled(True)
+    try:
+        latent_list, _, _ = pipe(
+            prompt_str,
+            guidance_scale=inversion_guidance_scale,
+            num_inversion_steps=NUM_DDIM_STEPS,
+            img=image_gt,
+        )
+    finally:
+        set_lora_enabled(False)
+    inversion_latent = latent_list[-1].detach()
+
+    mean_emb_src = load_sentence_embeddings([prompt_src], edit_pipe.tokenizer, edit_pipe.text_encoder, device=device)
+    mean_emb_tar = load_sentence_embeddings([prompt_tar], edit_pipe.tokenizer, edit_pipe.text_encoder, device=device)
+    rec_pil, edit_pil = edit_pipe(
+        prompt_str,
+        num_inference_steps=NUM_DDIM_STEPS,
+        x_in=inversion_latent,
+        edit_dir=(mean_emb_tar.mean(0)-mean_emb_src.mean(0)).unsqueeze(0),
+        guidance_amount=XA_GUIDANCE,
+        guidance_scale=guidance_scale,
+        negative_prompt=prompt_str,
+        # Algorithm 1, editing: this enables the existing base-UNet Direct
+        # Inversion offset calculation and application.
         latent_list=latent_list,
     )
     image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
@@ -255,6 +297,7 @@ def mask_decode(encoded_mask,image_shape=[512,512]):
 image_save_paths={
     "ddim+pix2pix-zero":"ddim+pix2pix-zero",
     "lora+pix2pix-zero":"lora+pix2pix-zero",
+    "lora+directinversion+pix2pix-zero":"lora+directinversion+pix2pix-zero",
     "directinversion+pix2pix-zero":"directinversion+pix2pix-zero",
     }
 
@@ -271,6 +314,7 @@ if __name__ == "__main__":
     parser.add_argument('--lora_alpha', type=int, default=8)
     parser.add_argument('--lora_dropout', type=float, default=0.0)
     parser.add_argument('--lora_scale', type=float, default=1.0)
+    parser.add_argument('--inversion_guidance_scale', type=float, default=1.0)
     args = parser.parse_args()
     
     rerun_exist_images=args.rerun_exist_images
@@ -278,9 +322,13 @@ if __name__ == "__main__":
     output_path=args.output_path
     edit_category_list=args.edit_category_list
     edit_method_list=args.edit_method_list
-    use_lora = "lora+pix2pix-zero" in edit_method_list
+    lora_methods = {
+        "lora+pix2pix-zero",
+        "lora+directinversion+pix2pix-zero",
+    }
+    use_lora = any(method in lora_methods for method in edit_method_list)
     if use_lora and args.lora_checkpoint is None:
-        raise ValueError("--lora_checkpoint is required when using edit method lora+pix2pix-zero")
+        raise ValueError("--lora_checkpoint is required when using a LoRA edit method")
     model_key = "runwayml/stable-diffusion-v1-5" if use_lora else "CompVis/stable-diffusion-v1-4"
     pipe, edit_pipe = load_pipelines(model_key)
     if use_lora:
@@ -292,7 +340,7 @@ if __name__ == "__main__":
         editing_instruction = json.load(f)
 
     for key, item in editing_instruction.items():
-        
+
         if item["editing_type_id"] not in edit_category_list:
             continue
         
@@ -315,6 +363,7 @@ if __name__ == "__main__":
                         prompt_src=original_prompt,
                         prompt_tar=editing_prompt,
                         guidance_scale=7.5,
+                        inversion_guidance_scale=args.inversion_guidance_scale,
                     )
                 elif edit_method=="directinversion+pix2pix-zero":
                     edited_image = edit_image_directinversion_pix2pix_zero(
@@ -325,6 +374,13 @@ if __name__ == "__main__":
                     )
                 elif edit_method=="lora+pix2pix-zero":
                     edited_image = edit_image_lora_pix2pix_zero(
+                        image_path=image_path,
+                        prompt_src=original_prompt,
+                        prompt_tar=editing_prompt,
+                        guidance_scale=7.5,
+                    )
+                elif edit_method=="lora+directinversion+pix2pix-zero":
+                    edited_image = edit_image_lora_directinversion_pix2pix_zero(
                         image_path=image_path,
                         prompt_src=original_prompt,
                         prompt_tar=editing_prompt,
@@ -342,6 +398,3 @@ if __name__ == "__main__":
                 
             else:
                 print(f"skip image [{image_path}] with [{edit_method}]")
-        
-        
-        

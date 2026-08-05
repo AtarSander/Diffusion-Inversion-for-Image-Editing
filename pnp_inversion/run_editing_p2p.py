@@ -39,6 +39,7 @@ def setup_seed(seed=1234):
 image_save_paths={
     "ddim+p2p":"ddim+p2p",
     "lora+p2p":"lora+p2p",
+    "lora+directinversion+p2p":"lora+directinversion+p2p",
     "null-text-inversion+p2p":"null-text-inversion+p2p",
     "null-text-inversion+p2p_a800":"null-text-inversion+p2p_a800",
     "null-text-inversion+p2p_3090":"null-text-inversion+p2p_3090",
@@ -93,6 +94,7 @@ if __name__ == "__main__":
     parser.add_argument('--lora_alpha', type=int, default=8)
     parser.add_argument('--lora_dropout', type=float, default=0.0)
     parser.add_argument('--lora_scale', type=float, default=1.0)
+    parser.add_argument('--inversion_guidance_scale', type=float, default=1.0)
     args = parser.parse_args()
     
     rerun_exist_images=args.rerun_exist_images
@@ -100,9 +102,10 @@ if __name__ == "__main__":
     output_path=args.output_path
     edit_category_list=args.edit_category_list
     edit_method_list=args.edit_method_list
-    use_lora = "lora+p2p" in edit_method_list
+    lora_methods = {"lora+p2p", "lora+directinversion+p2p"}
+    use_lora = any(method in lora_methods for method in edit_method_list)
     if use_lora and args.lora_checkpoint is None:
-        raise ValueError("--lora_checkpoint is required when using edit method lora+p2p")
+        raise ValueError("--lora_checkpoint is required when using a LoRA edit method")
     model_key = args.model_key or ("runwayml/stable-diffusion-v1-5" if use_lora else "CompVis/stable-diffusion-v1-4")
 
     p2p_editor=P2PEditor(edit_method_list, torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'),
@@ -116,7 +119,7 @@ if __name__ == "__main__":
         editing_instruction = json.load(f)
     
     for key, item in editing_instruction.items():
-        
+
         if item["editing_type_id"] not in edit_category_list:
             continue
         
@@ -149,6 +152,7 @@ if __name__ == "__main__":
                                         proximal="l0",
                                         quantile=0.75,
                                         use_inversion_guidance=True,
+                                        inversion_guidance_scale=args.inversion_guidance_scale,
                                         recon_lr=1,
                                         recon_t=400,
                                         )
@@ -160,5 +164,3 @@ if __name__ == "__main__":
                 
             else:
                 print(f"skip image [{image_path}] with [{edit_method}]")
-        
-        

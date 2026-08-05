@@ -10,6 +10,7 @@ import os
 from diffusers import DDIMScheduler
 
 from models.p2p.inversion import DirectInversion
+from models.p2p.attention_control import register_attention_control
 from models.masactrl.diffuser_utils import MasaCtrlPipeline
 from models.masactrl.masactrl_utils import AttentionBase
 from models.masactrl.masactrl_utils import regiter_attention_editor_diffusers
@@ -112,7 +113,7 @@ class MasaCtrlEditor:
             enabled=self.device.type == "cuda",
         )
 
-        
+
     def __call__(self, 
                 edit_method,
                 image_path,
@@ -120,27 +121,80 @@ class MasaCtrlEditor:
                 prompt_tar,
                 guidance_scale,
                 step=4,
-                layper=10):
+                layper=10,
+                inversion_guidance_scale=1.0):
         if edit_method=="ddim+masactrl":
             return self.edit_image_ddim_MasaCtrl(image_path,prompt_src,prompt_tar,guidance_scale,step=step,layper=layper)
         elif edit_method=="directinversion+masactrl":
             return self.edit_image_directinversion_MasaCtrl(image_path,prompt_src,prompt_tar,guidance_scale,step=step,layper=layper)
         elif edit_method=="lora+masactrl":
             return self.edit_image_lora_MasaCtrl(image_path,prompt_src,prompt_tar,guidance_scale,step=step,layper=layper)
+        elif edit_method=="lora+directinversion+masactrl":
+            return self.edit_image_directinversion_MasaCtrl(
+                image_path,
+                prompt_src,
+                prompt_tar,
+                guidance_scale,
+                step=step,
+                layper=layper,
+                use_lora_inversion=True,
+                inversion_guidance_scale=inversion_guidance_scale,
+            )
         else:
             raise NotImplementedError(f"No edit method named {edit_method}")
 
-    def edit_image_directinversion_MasaCtrl(self,image_path,prompt_src,prompt_tar,guidance_scale,step=4,layper=10):
+    def edit_image_directinversion_MasaCtrl(
+        self,
+        image_path,
+        prompt_src,
+        prompt_tar,
+        guidance_scale,
+        step=4,
+        layper=10,
+        use_lora_inversion=False,
+        inversion_guidance_scale=1.0,
+    ):
         source_image=load_image(image_path, self.device)
         image_gt = load_512(image_path)
         
         prompts=["", prompt_tar]
         
-        null_inversion = DirectInversion(model=self.model,
-                                                num_ddim_steps=self.num_ddim_steps)
-        
-        _, image_enc_latent, x_stars, noise_loss_list = null_inversion.invert(
-            image_gt=image_gt, prompt=prompts, guidance_scale=guidance_scale)
+        direct_inversion = DirectInversion(
+            model=self.model,
+            num_ddim_steps=self.num_ddim_steps,
+        )
+        if use_lora_inversion:
+            if not self.lora_loaded:
+                raise RuntimeError(
+                    "LoRA + Direct Inversion requested, but no LoRA checkpoint was loaded."
+                )
+            register_attention_control(self.model, None)
+            direct_inversion.init_prompt([prompt_src])
+            self.set_lora_enabled(True)
+            try:
+                with self.autocast():
+                    _, x_stars = direct_inversion.ddim_with_guidance_scale_inversion(
+                        image_gt, inversion_guidance_scale
+                    )
+            finally:
+                self.set_lora_enabled(False)
+
+            # Restore the standard MasaCtrl Direct Inversion contexts before
+            # calculating offsets with the base UNet.
+            direct_inversion.init_prompt(prompts)
+            with self.autocast():
+                noise_loss_list = direct_inversion.offset_calculate(
+                    x_stars,
+                    num_inner_steps=10,
+                    epsilon=1e-5,
+                    guidance_scale=guidance_scale,
+                )
+        else:
+            _, _, x_stars, noise_loss_list = direct_inversion.invert(
+                image_gt=image_gt,
+                prompt=prompts,
+                guidance_scale=guidance_scale,
+            )
         x_t = x_stars[-1]
         
         # results of direct synthesis
@@ -180,10 +234,9 @@ class MasaCtrlEditor:
         prompts = ["", prompt_tar]
 
         # Use the learned SD1.5 inversion only; MasaCtrl sampling remains base SD1.5.
-        from models.p2p.attention_control import register_attention_control
         register_attention_control(self.model, None)
         inversion = DirectInversion(model=self.model, num_ddim_steps=self.num_ddim_steps)
-        inversion.init_prompt(prompt_src)
+        inversion.init_prompt([prompt_src])
         self.set_lora_enabled(True)
         try:
             with self.autocast():
@@ -258,6 +311,7 @@ class MasaCtrlEditor:
 image_save_paths={
     "ddim+masactrl":"ddim+masactrl",
     "lora+masactrl":"lora+masactrl",
+    "lora+directinversion+masactrl":"lora+directinversion+masactrl",
     "directinversion+masactrl":"directinversion+masactrl",
     }
 
@@ -275,6 +329,7 @@ if __name__ == "__main__":
     parser.add_argument('--lora_alpha', type=int, default=8)
     parser.add_argument('--lora_dropout', type=float, default=0.0)
     parser.add_argument('--lora_scale', type=float, default=1.0)
+    parser.add_argument('--inversion_guidance_scale', type=float, default=1.0)
     args = parser.parse_args()
     
     rerun_exist_images=args.rerun_exist_images
@@ -282,9 +337,10 @@ if __name__ == "__main__":
     output_path=args.output_path
     edit_category_list=args.edit_category_list
     edit_method_list=args.edit_method_list
-    use_lora = "lora+masactrl" in edit_method_list
+    lora_methods = {"lora+masactrl", "lora+directinversion+masactrl"}
+    use_lora = any(method in lora_methods for method in edit_method_list)
     if use_lora and args.lora_checkpoint is None:
-        raise ValueError("--lora_checkpoint is required when using edit method lora+masactrl")
+        raise ValueError("--lora_checkpoint is required when using a LoRA edit method")
     model_key = args.model_key or ("runwayml/stable-diffusion-v1-5" if use_lora else "CompVis/stable-diffusion-v1-4")
 
     masactrl_editor=MasaCtrlEditor(edit_method_list, torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'), model_key=model_key)
@@ -321,7 +377,8 @@ if __name__ == "__main__":
                                         prompt_tar=editing_prompt,
                                         guidance_scale=7.5,
                                         step=4,
-                                        layper=10
+                                        layper=10,
+                                        inversion_guidance_scale=args.inversion_guidance_scale,
                                         )
                 if not os.path.exists(os.path.dirname(present_image_save_path)):
                     os.makedirs(os.path.dirname(present_image_save_path))
@@ -331,5 +388,3 @@ if __name__ == "__main__":
                 
             else:
                 print(f"skip image [{image_path}] with [{edit_method}]")
-        
-        

@@ -154,7 +154,7 @@ class Preprocess(nn.Module):
         return latents
 
     @torch.no_grad()
-    def ddim_inversion(self, cond, latent):
+    def ddim_inversion(self, cond, latent, uncond=None, guidance_scale=1.0):
         latent_list=[latent]
         timesteps = list(reversed(self.scheduler.timesteps))
         with torch.autocast(device_type='cuda', dtype=torch.float32):
@@ -172,7 +172,15 @@ class Preprocess(nn.Module):
                 sigma = (1 - alpha_prod_t) ** 0.5
                 sigma_prev = (1 - alpha_prod_t_prev) ** 0.5
 
-                eps = self.unet(latent, t, encoder_hidden_states=cond_batch).sample
+                if uncond is None or guidance_scale == 1.0:
+                    eps = self.unet(latent, t, encoder_hidden_states=cond_batch).sample
+                else:
+                    uncond_batch = uncond.repeat(latent.shape[0], 1, 1)
+                    eps_uncond, eps_cond = self.unet(
+                        torch.cat([latent, latent]), t,
+                        encoder_hidden_states=torch.cat([uncond_batch, cond_batch]),
+                    ).sample.chunk(2)
+                    eps = eps_uncond + guidance_scale * (eps_cond - eps_uncond)
 
                 pred_x0 = (latent - sigma_prev * eps) / mu_prev
                 latent = mu * pred_x0 + sigma * eps
@@ -206,19 +214,22 @@ class Preprocess(nn.Module):
 
     @torch.no_grad()
     def extract_latents(self, num_steps, data_path,
-                        inversion_prompt='', use_lora_inversion=False):
+                        inversion_prompt='', use_lora_inversion=False,
+                        inversion_guidance_scale=1.0):
         if use_lora_inversion and not self.lora_loaded:
             raise RuntimeError("LoRA inversion requested, but no LoRA checkpoint was loaded.")
 
         self.scheduler.set_timesteps(num_steps)
 
-        cond = self.get_text_embeds(inversion_prompt, "")[1].unsqueeze(0)
+        uncond, cond = self.get_text_embeds(inversion_prompt, "").chunk(2)
         image = self.load_img(data_path)
         latent = self.encode_imgs(image)
 
         self.set_lora_enabled(use_lora_inversion)
         try:
-            inverted_x = self.ddim_inversion(cond, latent)
+            inverted_x = self.ddim_inversion(
+                cond, latent, uncond=uncond, guidance_scale=inversion_guidance_scale
+            )
         finally:
             self.set_lora_enabled(False)
 
@@ -450,7 +461,7 @@ class PNP(nn.Module):
         register_conv_control_efficient(self, self.conv_injection_timesteps)
 
     def run_pnp(self,image_path,noisy_latent,target_prompt,guidance_scale=7.5,pnp_f_t=0.8,pnp_attn_t=0.5):
-        
+
         # load image
         self.image = self.get_data(image_path)
         self.eps = noisy_latent[-1]
@@ -562,28 +573,32 @@ def edit_image_lora_PnP(
         np.uint8(255*np.array(edited_image[0].permute(1,2,0).cpu().detach())),
         ),1))
 
-def edit_image_directinversionLora_PnP(
+def edit_image_lora_directinversion_PnP(
     image_path,
     prompt_src,
     prompt_tar,
     guidance_scale=7.5,
+    inversion_guidance_scale=1.0,
     image_shape=[512,512]
 ):
     torch.cuda.empty_cache()
     image_gt = load_512(image_path)
-    _, rgb_reconstruction, latent_reconstruction = model.extract_latents(data_path=image_path,
+    inverted_x, _, _ = model.extract_latents(data_path=image_path,
                                          num_steps=NUM_DDIM_STEPS,
                                          inversion_prompt=prompt_src,
-                                         use_lora_inversion=True)
+                                         use_lora_inversion=True,
+                                         inversion_guidance_scale=inversion_guidance_scale)
 
-    edited_image=pnp.run_pnp(image_path,latent_reconstruction,prompt_tar,guidance_scale)
+    # Use the LoRA-produced inversion trajectory as the per-step source
+    # reference, exactly as in the standard Direct Inversion + PnP path.
+    edited_image=pnp.run_pnp(image_path,inverted_x,prompt_tar,guidance_scale)
     
     image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
 
     return Image.fromarray(np.concatenate((
         image_instruct,
         image_gt,
-        np.uint8(255*np.array(rgb_reconstruction[0].permute(1,2,0).cpu().detach())),
+        np.uint8(np.array(latent2image(model=pnp.vae, latents=inverted_x[1].to(pnp.vae.dtype))[0])),
         np.uint8(255*np.array(edited_image[0].permute(1,2,0).cpu().detach())),
         ),1))
 
@@ -609,6 +624,7 @@ image_save_paths={
     "ddim+pnp":"ddim+pnp",
     "directinversion+pnp":"directinversion+pnp",
     "lora+pnp":"lora+pnp",
+    "lora+directinversion+pnp":"lora+directinversion+pnp",
     }
 
 
@@ -624,6 +640,7 @@ if __name__ == "__main__":
     parser.add_argument('--lora_alpha', type=int, default=8)
     parser.add_argument('--lora_dropout', type=float, default=0.0)
     parser.add_argument('--lora_scale', type=float, default=1.0)
+    parser.add_argument('--inversion_guidance_scale', type=float, default=1.0)
     args = parser.parse_args()
     
     rerun_exist_images=args.rerun_exist_images
@@ -632,9 +649,10 @@ if __name__ == "__main__":
     edit_category_list=args.edit_category_list
     edit_method_list=args.edit_method_list
 
-    if "lora+pnp" in edit_method_list:
+    lora_methods = {"lora+pnp", "lora+directinversion+pnp"}
+    if any(method in lora_methods for method in edit_method_list):
         if args.lora_checkpoint is None:
-            raise ValueError("--lora_checkpoint is required when using edit method lora+pnp")
+            raise ValueError("--lora_checkpoint is required when using a LoRA edit method")
         model.load_lora(
             checkpoint_path=args.lora_checkpoint,
             rank=args.lora_rank,
@@ -670,6 +688,7 @@ if __name__ == "__main__":
                         prompt_src=original_prompt,
                         prompt_tar=editing_prompt,
                         guidance_scale=7.5,
+                        inversion_guidance_scale=args.inversion_guidance_scale,
                     )
                 elif edit_method=="directinversion+pnp":
                     edited_image = edit_image_directinversion_PnP(
@@ -680,6 +699,13 @@ if __name__ == "__main__":
                     )
                 elif edit_method=="lora+pnp":
                     edited_image = edit_image_lora_PnP(
+                        image_path=image_path,
+                        prompt_src=original_prompt,
+                        prompt_tar=editing_prompt,
+                        guidance_scale=7.5,
+                    )
+                elif edit_method=="lora+directinversion+pnp":
+                    edited_image = edit_image_lora_directinversion_PnP(
                         image_path=image_path,
                         prompt_src=original_prompt,
                         prompt_tar=editing_prompt,
@@ -697,6 +723,3 @@ if __name__ == "__main__":
                 
             else:
                 print(f"skip image [{image_path}] with [{edit_method}]")
-        
-        
-        

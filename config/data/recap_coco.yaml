@@ -3,8 +3,8 @@ repo_type: dataset
 revision: main
 name: recap_coco
 split: train
-parquet_path: /scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/data/raw/recap_coco/new_data.parquet
-prompts_jsonl: /scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/data/processed/recap_coco/all_prompts.jsonl
+parquet_path: data/raw/recap_coco/new_data.parquet
+prompts_jsonl: data/processed/recap_coco/all_prompts.jsonl
 prompt_column: recaption
 keep_columns:
   - image_id
@@ -14,8 +14,8 @@ keep_columns:
 drop_columns:
   - image
 
-output_dir: /scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/data/raw/recap_coco
-processed_dir: /scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/data/processed/recap_coco
+output_dir: data/raw/recap_coco
+processed_dir: data/processed/recap_coco
 prepare_input_parquet: null
 prepare_output_dir: null
 deduplicate: true
