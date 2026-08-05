@@ -1,4 +1,0 @@
-defaults:
-  - eval/masactrl_lora
-  - override /hydra/launcher: plgrid_submitit_slurm
-  - _self_

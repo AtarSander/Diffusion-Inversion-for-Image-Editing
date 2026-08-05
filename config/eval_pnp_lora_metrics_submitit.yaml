@@ -1,4 +1,0 @@
-defaults:
-  - eval/pnp_lora_metrics
-  - override /hydra/launcher: plgrid_submitit_slurm
-  - _self_

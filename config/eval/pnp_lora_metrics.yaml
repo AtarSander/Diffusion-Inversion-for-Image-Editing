@@ -1,12 +1,18 @@
 # @package _global_
 
-repo_dir: /net/people/plgrid/plgatarsander/Diffusion-Inversion-for-Image-Editing
-python: ${repo_dir}/.venv-pnp-metrics/bin/python
-data_path: /net/pr2/projects/plgrid/plggdiffusion/plgatarsander/data/raw/PIE-Bench_v1
-generated_root: /net/pr2/projects/plgrid/plggdiffusion/plgatarsander/pnp_lora_eval_outputs/r8
+repo_dir: /net/obelix/homes/aszymczy/Diffusion-Inversion-for-Image-Editing
+data_path: /scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/data/raw/PIE-Bench_v1
+generated_root: /scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/evaluation/r32
+metrics_root: /scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/evaluation/metrics/r32
+log_root: /scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/logs/metrics/r32
+cache_root: /scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/cache/h86/r32/metrics
+hf_home: ${cache_root}/huggingface
+matplotlib_cache: ${cache_root}/matplotlib
+torch_home: ${cache_root}/torch
+
 method_name: lora+pnp
-result_path: ${generated_root}/metrics.csv
-summary_path: ${generated_root}/metrics_summary.json
+result_path: ${metrics_root}/${method_name}.csv
+summary_path: ${metrics_root}/${method_name}_summary.json
 device: cuda
 
 edit_category_list:
@@ -30,3 +36,9 @@ metrics:
   - clip_similarity_source_image
   - clip_similarity_target_image
   - clip_similarity_target_image_edit_part
+
+hydra:
+  run:
+    dir: ${log_root}/hydra/${method_name}
+  job:
+    chdir: false

@@ -1,27 +1,10 @@
 # @package _global_
 
-repo_dir: /net/people/plgrid/plgatarsander/Diffusion-Inversion-for-Image-Editing
-data_path: /net/pr2/projects/plgrid/plggdiffusion/plgatarsander/data/raw/PIE-Bench_v1
-output_path: ${repo_dir}/pnp_inversion/output
+defaults:
+  - /lora: r32
+  - lora_edit
+  - _self_
 
-edit_category_list:
-  - "0"
-  - "1"
-  - "2"
-  - "3"
-  - "4"
-  - "5"
-  - "6"
-  - "7"
-  - "8"
-  - "9"
 edit_method_list:
   - lora+pnp
-rerun_exist_images: false
-
-lora:
-  checkpoint_path: /net/pr2/projects/plgrid/plggdiffusion/plgatarsander/checkpoints/sd15_inversion_lora_r16_lr5e-5_cosine_bf16/checkpoint_step_130000.pt
-  r: 16
-  lora_alpha: 8
-  lora_dropout: 0.0
-  scale: 1.0
+  - lora+directinversion+pnp

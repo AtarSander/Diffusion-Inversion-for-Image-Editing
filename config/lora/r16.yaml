@@ -1,0 +1,7 @@
+defaults:
+  - base
+  - _self_
+
+r: 16
+lora_alpha: 8
+

@@ -1,0 +1,6 @@
+# The final 10% of transitions in every trajectory account for 50% of
+# fixed-length training draws. Both values are overrideable per run.
+mode: final_tail
+final_step_fraction: 0.10
+target_draw_fraction: 0.50
+

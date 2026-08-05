@@ -1,0 +1,18 @@
+# @package _global_
+
+defaults:
+  - base
+  - _self_
+
+run_name: sdxl-inversion-lora-r16
+checkpoint_dir: /scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/checkpoints/sdxl_inversion_lora_r16
+max_train_steps: 171225
+gradient_accumulation_steps: 4
+
+model:
+  torch_dtype: bfloat16
+  variant: fp16
+
+lr_scheduler:
+  warmup_steps: 1000
+

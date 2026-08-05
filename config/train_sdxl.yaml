@@ -1,9 +1,9 @@
 defaults:
-  - model: sd15
-  - data: sd15_trajectories
+  - model: sdxl
+  - data: sdxl_trajectories
   - lora: r16
   - wandb: online
   - lr_scheduler: cosine
   - sampling: uniform
-  - train: sd15
+  - train: sdxl
   - _self_

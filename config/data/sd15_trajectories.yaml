@@ -1,17 +1,11 @@
-# @package _global_
-
-defaults:
-  - /model: sd15
-  - _self_
-
 root_dir: /scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/data/processed/sd15_trajectories_stacked_fp32/all
-max_samples: 2
-max_steps: 5
-device: cuda
-
-latents_dir_name: latents
+val_root_dir: /scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/data/processed/sd15_trajectories_stacked_fp32/all
 latents_file_name: trajectory.pt
 conditioning_file_name: conditioning.pt
 targets_dir_name: targets
 target_eps_file_name: target_eps.pt
-output_json: null
+require_training_cache: true
+batch_size: 128
+num_workers: 4
+pin_memory: true
+

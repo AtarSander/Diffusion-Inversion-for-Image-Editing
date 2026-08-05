@@ -1,11 +1,9 @@
 defaults:
-  - model: sdxl
+  - model: sd15
   - _self_
 
 root_dirs:
-  - /net/tscratch/people/plgmichalsadowski/ZZSN_data/processed/sdxl_trajectories_stacked/train
-  - /net/tscratch/people/plgmichalsadowski/ZZSN_data/processed/sdxl_trajectories_stacked/val
-  - /net/tscratch/people/plgmichalsadowski/ZZSN_data/processed/sdxl_trajectories_stacked/test
+  - /scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/data/processed/sd15_trajectories_stacked_fp32/all
 
 sample_glob: sample_*
 start_index: 0
@@ -19,3 +17,7 @@ latents_file_name: trajectory.pt
 conditioning_file_name: conditioning.pt
 targets_dir_name: targets
 target_eps_file_name: target_eps.pt
+
+model:
+  torch_dtype: float32
+  variant: null

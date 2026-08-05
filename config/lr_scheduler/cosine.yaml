@@ -1,0 +1,5 @@
+name: cosine
+warmup_steps: 714
+num_cycles: 1
+power: 1.0
+

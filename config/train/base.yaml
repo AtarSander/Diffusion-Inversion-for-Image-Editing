@@ -1,0 +1,32 @@
+# @package _global_
+
+learning_rate: 5e-5
+weight_decay: 0.0
+gradient_checkpointing: true
+max_grad_norm: 1.0
+save_training_state: true
+
+resume:
+  enabled: false
+  mode: adapter
+  checkpoint_path: null
+  global_step: null
+
+log_every_steps: 50
+eval_every_steps: 1000
+save_every_steps: 5000
+max_val_batches: 128
+
+validation_preview:
+  enabled: false
+  every_steps: 5000
+  num_samples: 2
+  output_dir: null
+  final_image_name: final.png
+  plain_threshold: 0.03
+  calculate_lpips: false
+  log_predicted_noise: true
+  log_inverted_noise: true
+  use_lora_for_reconstruction: false
+  noise_inversion_steps: [0, 10, 25, 49]
+

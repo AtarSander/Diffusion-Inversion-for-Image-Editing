@@ -1,0 +1,5 @@
+name: constant
+warmup_steps: 0
+num_cycles: 1
+power: 1.0
+
