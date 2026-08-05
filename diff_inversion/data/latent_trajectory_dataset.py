@@ -1,5 +1,6 @@
 import json
 from bisect import bisect_right
+from math import ceil
 from pathlib import Path
 from typing import Any
 
@@ -76,6 +77,58 @@ class LatentTrajectoryDataset(Dataset):
 
     def __len__(self) -> int:
         return self.cumulative_lengths[-1] if self.cumulative_lengths else 0
+
+    def final_tail_sampling_weights(
+        self,
+        final_step_fraction: float,
+        target_draw_fraction: float,
+    ) -> tuple[torch.Tensor, int, int]:
+        """Build per-transition weights for final-trajectory-step oversampling.
+
+        The final `ceil(final_step_fraction * transitions)` transitions of
+        every trajectory form the tail. The tail and non-tail transitions are
+        assigned `target_draw_fraction` and its complement of the total
+        sampling mass respectively.
+        """
+        final_step_fraction = float(final_step_fraction)
+        target_draw_fraction = float(target_draw_fraction)
+        if not 0.0 < final_step_fraction < 1.0:
+            raise ValueError("final_step_fraction must be strictly between 0 and 1.")
+        if not 0.0 < target_draw_fraction < 1.0:
+            raise ValueError("target_draw_fraction must be strictly between 0 and 1.")
+        if not self.samples:
+            raise ValueError("Cannot build sampling weights for an empty trajectory dataset.")
+
+        tail_counts = [
+            min(
+                int(sample["num_transitions"]),
+                ceil(final_step_fraction * sample["num_transitions"]),
+            )
+            for sample in self.samples
+        ]
+        tail_transition_count = sum(tail_counts)
+        total_transition_count = len(self)
+        other_transition_count = total_transition_count - tail_transition_count
+        if tail_transition_count == 0 or other_transition_count == 0:
+            raise ValueError(
+                "Final-tail sampling requires at least one tail and one non-tail transition; "
+                f"got tail={tail_transition_count}, non_tail={other_transition_count}."
+            )
+
+        tail_weight = target_draw_fraction / tail_transition_count
+        other_weight = (1.0 - target_draw_fraction) / other_transition_count
+        weights = torch.empty(total_transition_count, dtype=torch.double)
+
+        offset = 0
+        for sample, tail_count in zip(self.samples, tail_counts):
+            transition_count = int(sample["num_transitions"])
+            other_count = transition_count - tail_count
+            if other_count:
+                weights[offset : offset + other_count] = other_weight
+            weights[offset + other_count : offset + transition_count] = tail_weight
+            offset += transition_count
+
+        return weights, tail_transition_count, other_transition_count
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
         sample, step_idx = self._locate(idx)

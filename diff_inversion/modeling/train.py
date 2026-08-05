@@ -10,11 +10,12 @@ import torch.nn.functional as F
 import wandb
 from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
 from diffusers.optimization import get_scheduler
+from dotenv import load_dotenv
 from loguru import logger
 from omegaconf import DictConfig, OmegaConf
 from peft import LoraConfig, inject_adapter_in_model, set_peft_model_state_dict
 from peft.utils import get_peft_model_state_dict
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 from tqdm import tqdm
 
 from diff_inversion.data.latent_trajectory_dataset import LatentTrajectoryDataset
@@ -518,8 +519,46 @@ def _resolve_resume_step(resume_cfg: DictConfig, checkpoint_path: Path) -> int:
     )
 
 
-@hydra.main(config_path="../../config", config_name="train_config", version_base=None)
+def build_train_sampler(
+    dataset: LatentTrajectoryDataset,
+    sampling_cfg: DictConfig | None,
+) -> WeightedRandomSampler | None:
+    """Create an optional final-tail sampler; uniform mode keeps normal shuffling."""
+    mode = str(sampling_cfg.get("mode", "uniform")) if sampling_cfg is not None else "uniform"
+    if mode == "uniform":
+        return None
+    if mode != "final_tail":
+        raise ValueError(f"Unknown training sampling mode: {mode!r}.")
+
+    final_step_fraction = sampling_cfg.get("final_step_fraction")
+    target_draw_fraction = sampling_cfg.get("target_draw_fraction")
+    if final_step_fraction is None or target_draw_fraction is None:
+        raise ValueError(
+            "sampling.final_step_fraction and sampling.target_draw_fraction are required "
+            "for sampling.mode=final_tail."
+        )
+
+    weights, tail_count, other_count = dataset.final_tail_sampling_weights(
+        final_step_fraction=final_step_fraction,
+        target_draw_fraction=target_draw_fraction,
+    )
+    logger.info(
+        "Final-tail sampling: {} tail transitions, {} non-tail transitions; "
+        "tail fraction={} target draw fraction={}",
+        tail_count,
+        other_count,
+        final_step_fraction,
+        target_draw_fraction,
+    )
+    return WeightedRandomSampler(weights, num_samples=len(dataset), replacement=True)
+
+
+@hydra.main(config_path="../../config", config_name="train_sd15", version_base=None)
 def main(cfg: DictConfig) -> None:
+    # Keep secrets out of Hydra: W&B reads WANDB_API_KEY from the environment.
+    # Loading the repository .env here covers local runs and every Slurm launcher.
+    load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
+
     logger.info("Training {}", cfg.model.model_id)
     model_cfg = cfg.model
     lora_cfg = cfg.lora
@@ -527,9 +566,6 @@ def main(cfg: DictConfig) -> None:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if model_cfg.require_cuda and device != "cuda":
         raise RuntimeError("This script is intended to run on CUDA.")
-
-    pipe = make_pipe(model_cfg, device)
-    lora_config = get_lora_config(lora_cfg)
 
     run = wandb.init(
         project=cfg.wandb.project,
@@ -539,6 +575,9 @@ def main(cfg: DictConfig) -> None:
         resume=cfg.wandb.get("resume"),
         config=OmegaConf.to_container(cfg, resolve=True),
     )
+
+    pipe = make_pipe(model_cfg, device)
+    lora_config = get_lora_config(lora_cfg)
 
     trainer = SDXLInversionTrainer(
         pipe=pipe,
@@ -613,10 +652,12 @@ def main(cfg: DictConfig) -> None:
     logger.info("Loaded {:,} train transitions", len(train_dataset))
     logger.info("Loaded {:,} val transitions", len(val_dataset))
 
+    train_sampler = build_train_sampler(train_dataset, cfg.get("sampling"))
     train_loader = DataLoader(
         train_dataset,
         batch_size=cfg.data.batch_size,
-        shuffle=True,
+        shuffle=train_sampler is None,
+        sampler=train_sampler,
         num_workers=cfg.data.num_workers,
         pin_memory=cfg.data.pin_memory,
     )

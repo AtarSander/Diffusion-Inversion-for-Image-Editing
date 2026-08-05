@@ -376,7 +376,7 @@ def save_sample(
 
 
 def apply_job_spec(gather_cfg: DictConfig) -> None:
-    """Apply optional per-job overrides from sample_gather_*_submitit configs."""
+    """Apply optional per-job overrides from array-style gather configs."""
     if "job_specs" not in gather_cfg or "job_id" not in gather_cfg:
         return
 
@@ -391,7 +391,7 @@ def apply_job_spec(gather_cfg: DictConfig) -> None:
         gather_cfg.data.prompts_jsonl = str(job_spec.prompts_jsonl)
 
 
-@hydra.main(config_path="../../config", config_name="sample_gather_submitit", version_base=None)
+@hydra.main(config_path="../../config", config_name="sample_gather", version_base=None)
 def main(cfg: DictConfig) -> None:
     """CLI entrypoint for generating SDXL samples from prepared prompts."""
     model_cfg = cfg.model
