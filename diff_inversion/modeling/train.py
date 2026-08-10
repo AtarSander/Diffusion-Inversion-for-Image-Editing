@@ -64,8 +64,6 @@ class SDXLInversionTrainer:
         validation_preview_config: DictConfig | None = None,
         training_target_mode: str = "conditional",
         training_guidance_scale: float | None = None,
-        cfg_branch_loss_weight: float = 0.0,
-        branch_pair_cfg_loss_weight: float = 0.0,
     ):
         self.pipe = pipe
         self.lora_config = lora_config
@@ -88,12 +86,6 @@ class SDXLInversionTrainer:
         self.training_guidance_scale = (
             None if training_guidance_scale is None else float(training_guidance_scale)
         )
-        self.cfg_branch_loss_weight = float(cfg_branch_loss_weight)
-        if self.cfg_branch_loss_weight < 0.0:
-            raise ValueError("cfg_branch_loss_weight must be non-negative.")
-        self.branch_pair_cfg_loss_weight = float(branch_pair_cfg_loss_weight)
-        if self.branch_pair_cfg_loss_weight < 0.0:
-            raise ValueError("branch_pair_cfg_loss_weight must be non-negative.")
         if (
             self.training_target_mode in CFG_REQUIRED_MODES
             and self.training_guidance_scale is not None
@@ -131,12 +123,9 @@ class SDXLInversionTrainer:
             sum(p.numel() for p in self.trainable_parameters),
         )
         logger.info(
-            "Training target mode: {} guidance_scale={} branch_loss_weight={} "
-            "branch_pair_cfg_loss_weight={}",
+            "Training target mode: {} guidance_scale={}",
             self.training_target_mode,
             self.training_guidance_scale,
-            self.cfg_branch_loss_weight,
-            self.branch_pair_cfg_loss_weight,
         )
 
     def train(
@@ -424,8 +413,6 @@ class SDXLInversionTrainer:
         loss_cfg = F.mse_loss(pred_cfg.float(), target_cfg.float())
 
         loss = loss_cond + loss_uncond
-        if self.branch_pair_cfg_loss_weight > 0.0:
-            loss = loss + self.branch_pair_cfg_loss_weight * loss_cfg
 
         return loss, {
             "loss": loss,
@@ -498,8 +485,6 @@ class SDXLInversionTrainer:
         loss_cfg = F.mse_loss(pred_cfg.float(), target_cfg.float())
 
         loss = loss_cond + loss_uncond
-        if self.branch_pair_cfg_loss_weight > 0.0:
-            loss = loss + self.branch_pair_cfg_loss_weight * loss_cfg
 
         return loss, {
             "loss": loss,
@@ -560,12 +545,8 @@ class SDXLInversionTrainer:
         loss_cfg = F.mse_loss(pred_cfg.float(), target_cfg.float())
         loss_cond = F.mse_loss(pred_cond.float(), target_eps.float())
         loss_uncond = F.mse_loss(pred_uncond.float(), target_eps_uncond.float())
-        loss = loss_cfg
-        if self.cfg_branch_loss_weight > 0.0:
-            loss = loss + self.cfg_branch_loss_weight * (loss_cond + loss_uncond)
-
-        return loss, {
-            "loss": loss,
+        return loss_cfg, {
+            "loss": loss_cfg,
             "loss_cfg": loss_cfg,
             "loss_cond": loss_cond,
             "loss_uncond": loss_uncond,
@@ -1252,8 +1233,6 @@ def main(cfg: DictConfig) -> None:
     training_guidance_scale = (
         None if training_guidance_scale is None else float(training_guidance_scale)
     )
-    cfg_branch_loss_weight = float(cfg.training_target.branch_loss_weight)
-    branch_pair_cfg_loss_weight = float(cfg.training_target.cfg_loss_weight)
     run = wandb.init(
         project=cfg.wandb.project,
         name=cfg.run_name,
@@ -1284,8 +1263,6 @@ def main(cfg: DictConfig) -> None:
         validation_preview_config=cfg if bool(cfg.validation_preview.enabled) else None,
         training_target_mode=training_target_mode,
         training_guidance_scale=training_guidance_scale,
-        cfg_branch_loss_weight=cfg_branch_loss_weight,
-        branch_pair_cfg_loss_weight=branch_pair_cfg_loss_weight,
     )
 
     initial_global_step = 0
