@@ -1,0 +1,26 @@
+# 1.5k-caption trajectory set for the reconstruction go/no-go.
+# Small enough to finish in hours on one GPU, large enough to train a rank-8 LoRA.
+#
+# Run (per GPU shard, N shards):
+#   uv run --python .venv/bin/python src/inversion_lora/generate_trajectories.py \
+#     --config-name generate_trajectories_gonogo device=cuda:0 start_index=0 num_samples=375
+#
+# Then gate the dataset before training:
+#   uv run --python .venv/bin/python src/inversion_lora/verify_trajectories.py \
+#     --root_dir <output_dir> --check_step 16
+
+defaults:
+  - generate_trajectories
+  - _self_
+
+output_dir: /nas/lstanisz/data/lorainv/audioldm2_trajectories_gonogo_fp32
+num_samples: 1500
+
+# 200 steps matches edit_audioldm_medleydb.py, so the LoRA is trained on the same DDIM grid
+# the baselines are evaluated on. 1500 x 200 = 300k teacher forwards.
+num_inference_steps: 200
+
+# Off for the go/no-go: it costs a second teacher forward per step (300k -> 600k), and the
+# no-CFG loss does not use it. Turn it on for the full corpus, where not having to regenerate
+# for the CFG loss variants is worth the extra pass.
+save_uncond_target: false
