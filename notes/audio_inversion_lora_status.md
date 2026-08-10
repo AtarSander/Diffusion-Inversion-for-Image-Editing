@@ -61,9 +61,21 @@ beat plain DDIM inversion on real audio, corpus size will not rescue it.
      (see "Real-audio trajectories" below). Optional for the go/no-go.
    - **MedleyDB V1** → *required* for the go/no-go, since the whole question is reconstruction
      error on real music. Licensed request.
-3. **`audio/editing/AudioEditingCode/code/env.py` is all placeholders** — six paths, none set:
-   `PATH_AUDIOS_MEDLEY`, `PATH_PROMPTS_MEDLEY`, `PATH_LOWER_BOUND_MEDLEY`, `PATH_MUSICCAPS`,
-   `ALDM2_TEMP_DIR`, `PATH_EDIT_OUTPUTS`.
+3. ~~`env.py` placeholders~~ **resolved**. Repo-relative paths derive from `__file__` (so they
+   survive a `git pull` onto another server); dataset dirs come from `audio/.env` overrides.
+   Verified all **696/696** benchmark rows resolve to an existing mix file.
+
+   | Path | Value |
+   | --- | --- |
+   | `PATH_AUDIOS_MEDLEY` | `/nas/lstanisz/data/medleydb/V1_mix` (`MEDLEYDB_AUDIO_DIR`) |
+   | `PATH_PROMPTS_MEDLEY` | `MedleyMDPrompts/captions_gpt5.csv` — the **only** CSV with all four driver columns; `captions_targets_with_sources.csv` has no `edit` column and would `KeyError` on the hook lookup |
+   | `PATH_EDIT_OUTPUTS` | `audio/outputs/edits` |
+   | `PATH_LOWER_BOUND_MEDLEY` | `audio/outputs/medleymd/lower_bound/audios` (still to be generated) |
+   | `ALDM2_TEMP_DIR` | `audio/.temp/audioldm2` |
+   | `PATH_MUSICCAPS` | `audio/data/musiccaps/audio` (not populated) |
+
+   `audio/.gitignore` already covers `outputs/`, `data/*`, `.temp`. All values stay `str`
+   because callers do `PATH_EDIT_OUTPUTS + "/medleymd"`.
 4. ~~Trainer~~ **done** — verified by overfitting the smoke set on CPU.
 5. **Reconstruction eval not written** — this *is* the go/no-go measurement. Next code task.
 6. **Metric checkpoints** for the editing comparison (step 5, not the go/no-go):
@@ -107,6 +119,15 @@ beat plain DDIM inversion on real audio, corpus size will not rescue it.
   `get_filename_intersection_ratio`. Open question: reference = raw source audio, or the VAE
   round-trip of the source? Round-trip is the *achievable* ceiling and isolates edit drift;
   raw source conflates codec loss with edit drift. Plan: generate both, report vs round-trip.
+- **The lower-bound wavs must be truncated exactly like the edits.** MedleyDB mixes run
+  **13.1 s – 302.8 s** (mean 60.8 s, 44.1 kHz stereo, 375 MB), and **14/35 exceed 60 s** so
+  `audioldm_run.create_truncated_audio()` cuts them to 60 s. A reference built from the *full*
+  source would make mel PSNR/SSIM compare e.g. 60 s against 303 s. `eval_medley.py` has its
+  sample-rate/length assertion **commented out** (:36-40) and LPAPS/CLAP window internally, so
+  this mismatch would not raise — it would just silently produce wrong paired numbers.
+- **Benchmark class balance is extremely skewed**: GENRE 397, INSTR 195, MOOD 34, VOICE 31,
+  OTHER 27, **TEMPO 12** (696 total over 35 tracks). GENRE+INSTR is 85%, so any headline
+  average is effectively a GENRE score and the four small classes are directional only.
 - **DDPM-inversion cannot be beaten on fidelity** — `inversion_forward_process` does not
   invert: `sample_xts_from_x0` draws xts straight from x0 and `get_zs_from_xts` solves for the
   noise making the reverse step exact. Reconstruction is exact *by construction*. So the honest
