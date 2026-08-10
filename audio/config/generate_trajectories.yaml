@@ -1,0 +1,27 @@
+# AudioLDM2 DDIM trajectory generation for inversion-LoRA training.
+# Run: uv run --python .venv/bin/python src/inversion_lora/generate_trajectories.py
+
+device: cpu # set to cuda:N explicitly; never auto-grab a shared GPU
+
+model_id: cvssp/audioldm2-large
+num_inference_steps: 200 # matches the editing baselines (edit_audioldm_medleydb.py)
+guidance_scale: 1.0 # 1.0 => conditional-only DDIM, self-consistent with the no-CFG loss
+audio_length_in_s: 10.24 # MusicCaps clips are 10 s; this is AudioLDM2's native length
+
+captions_csv: editing/music_caps_dl/metadata/musiccaps-public.csv
+caption_column: caption
+
+output_dir: /nas/lstanisz/data/lorainv/audioldm2_trajectories_fp32
+start_index: 0
+num_samples: null # null => all captions from start_index
+seed: 42
+
+store_dtype: float32
+save_final_audio: false
+save_uncond_target: false # enables the CFG loss variants later without regenerating
+overwrite: false
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
