@@ -2,6 +2,7 @@
 # ABOUTME: pairs (cleaner latent, timestep) -> frozen-teacher epsilon, with T5-padding collate.
 
 import json
+import random
 from bisect import bisect_right
 from pathlib import Path
 from typing import Any
@@ -20,13 +21,20 @@ class AudioLDM2TrajectoryDataset(Dataset):
     frozen teacher's epsilon at the *noisier* `trajectory[i]`, which is `target_eps[i]`.
     """
 
-    def __init__(self, root_dir: str | Path, mmap: bool = True):
+    def __init__(
+        self,
+        root_dir: str | Path,
+        mmap: bool = True,
+        sample_ids: set[int] | None = None,
+    ):
         """Index the dataset without loading any latents.
 
         Args:
             root_dir: Directory containing `sample_*` subdirectories.
             mmap: Memory-map trajectory/target files so a single transition reads only its own
                 pages instead of the whole multi-megabyte trajectory.
+            sample_ids: Restrict to these `sample_idx` values. Splits happen at trajectory
+                level so transitions from one trajectory never straddle a train/val boundary.
         """
         self.root_dir = Path(root_dir)
         self.mmap = mmap
@@ -41,6 +49,8 @@ class AudioLDM2TrajectoryDataset(Dataset):
                     "src/inversion_lora/verify_trajectories.py to find every partial sample."
                 )
             meta = json.loads(meta_path.read_text())
+            if sample_ids is not None and int(meta["sample_idx"]) not in sample_ids:
+                continue
             num_transitions = int(meta["num_transitions"])
             if num_transitions <= 0:
                 continue
@@ -111,6 +121,45 @@ class AudioLDM2TrajectoryDataset(Dataset):
             "sample_idx": sample["sample_idx"],
             "step_idx": step_idx,
         }
+
+
+def split_sample_ids(
+    root_dir: str | Path, val_fraction: float, seed: int = 0
+) -> tuple[set[int], set[int]]:
+    """Split trajectories (not transitions) into train and validation id sets.
+
+    Args:
+        root_dir: Dataset directory containing `sample_*` subdirectories.
+        val_fraction: Fraction of trajectories held out for validation.
+        seed: Seed for the deterministic shuffle.
+
+    Returns:
+        `(train_ids, val_ids)`, disjoint and jointly covering every complete sample.
+    """
+    if not 0.0 <= val_fraction < 1.0:
+        raise ValueError(f"val_fraction must be in [0, 1), got {val_fraction}")
+
+    ids = sorted(
+        int(json.loads((d / "meta.json").read_text())["sample_idx"])
+        for d in Path(root_dir).glob("sample_*")
+        if (d / "meta.json").exists()
+    )
+    if not ids:
+        raise FileNotFoundError(f"No complete samples in {root_dir}")
+
+    shuffled = list(ids)
+    random.Random(seed).shuffle(shuffled)
+    num_val = int(round(val_fraction * len(shuffled)))
+    if val_fraction > 0 and num_val == 0:
+        num_val = 1
+    val_ids = set(shuffled[:num_val])
+    train_ids = set(shuffled[num_val:])
+    if not train_ids:
+        raise ValueError(
+            f"val_fraction={val_fraction} leaves no training trajectories out of {len(ids)}"
+        )
+    assert train_ids.isdisjoint(val_ids)
+    return train_ids, val_ids
 
 
 def collate_trajectory_batch(items: list[dict[str, Any]]) -> dict[str, Any]:

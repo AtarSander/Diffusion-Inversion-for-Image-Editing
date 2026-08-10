@@ -1,0 +1,48 @@
+# Train the AudioLDM2 shifted-denoiser inversion LoRA on cached DDIM trajectories.
+# Run: uv run --python .venv/bin/python src/inversion_lora/train.py device=cuda:0
+
+device: cpu # set cuda:N explicitly; never auto-grab a shared GPU
+seed: 42
+
+model_id: cvssp/audioldm2-large
+num_inference_steps: 200 # must match the trajectory dataset's DDIM grid
+adapter_name: inversion
+
+data_root: /nas/lstanisz/data/lorainv/audioldm2_trajectories_gonogo_fp32
+val_fraction: 0.05 # split by trajectory, never by transition
+batch_size: 4
+num_workers: 4
+
+lora:
+  r: 8
+  lora_alpha: 4
+  lora_dropout: 0.0
+  init_lora_weights: true
+  target_modules:
+    - to_q
+    - to_k
+    - to_v
+    - to_out.0
+
+learning_rate: 5e-5
+weight_decay: 0.0
+max_grad_norm: 1.0
+gradient_accumulation_steps: 1
+max_train_steps: 20000
+
+log_every_steps: 50
+eval_every_steps: 1000
+save_every_steps: 2000
+max_val_batches: 50
+save_training_state: true
+checkpoint_dir: /nas/lstanisz/data/lorainv/checkpoints/audioldm2_inversion_r8
+resume_from: null
+
+wandb_project: audio-inversion-lora
+wandb_mode: online # disabled for CPU smoke runs
+run_name: null
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null

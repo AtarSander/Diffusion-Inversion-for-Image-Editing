@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.inversion_lora.dataset import (  # noqa: E402
     AudioLDM2TrajectoryDataset,
     collate_trajectory_batch,
+    split_sample_ids,
 )
 
 LATENT_SHAPE = (8, 16, 4)
@@ -117,6 +118,39 @@ def test_collate_right_pads_t5_to_batch_max(dataset_root: Path):
     assert torch.equal(batch["t5_prompt_embeds"][0, :3], ds[0]["t5_prompt_embeds"])
     assert batch["x_clean"].shape == (2, *LATENT_SHAPE)
     assert batch["generated_prompt_embeds"].shape == (2, 8, 12)
+
+
+def test_split_is_disjoint_and_complete(tmp_path: Path):
+    for idx in range(10):
+        write_sample(tmp_path, idx, num_transitions=3, t5_len=4)
+    train_ids, val_ids = split_sample_ids(tmp_path, val_fraction=0.2, seed=0)
+    assert train_ids.isdisjoint(val_ids)
+    assert train_ids | val_ids == set(range(10))
+    assert len(val_ids) == 2
+
+
+def test_split_is_deterministic(tmp_path: Path):
+    for idx in range(10):
+        write_sample(tmp_path, idx, num_transitions=3, t5_len=4)
+    assert split_sample_ids(tmp_path, 0.3, seed=7) == split_sample_ids(tmp_path, 0.3, seed=7)
+    assert split_sample_ids(tmp_path, 0.3, seed=7) != split_sample_ids(tmp_path, 0.3, seed=8)
+
+
+def test_split_never_straddles_a_trajectory(dataset_root: Path):
+    """Transitions of one trajectory must land wholly in train or wholly in val."""
+    train_ids, val_ids = split_sample_ids(dataset_root, val_fraction=0.5, seed=0)
+    train_ds = AudioLDM2TrajectoryDataset(dataset_root, sample_ids=train_ids)
+    val_ds = AudioLDM2TrajectoryDataset(dataset_root, sample_ids=val_ids)
+    train_samples = {train_ds[i]["sample_idx"] for i in range(len(train_ds))}
+    val_samples = {val_ds[i]["sample_idx"] for i in range(len(val_ds))}
+    assert train_samples.isdisjoint(val_samples)
+    assert len(train_ds) + len(val_ds) == 10
+
+
+def test_split_rejects_fraction_that_empties_train(tmp_path: Path):
+    write_sample(tmp_path, 0, num_transitions=3, t5_len=4)
+    with pytest.raises(ValueError, match="leaves no training trajectories"):
+        split_sample_ids(tmp_path, val_fraction=0.9, seed=0)
 
 
 def test_collate_is_order_preserving(dataset_root: Path):

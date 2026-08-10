@@ -198,3 +198,7 @@ cython_debug/
 
 outputs
 slurm_runs
+
+# Large downloaded datasets (MedleyDB tarball etc.) must never enter the repo
+*.tar.gz
+audio_medleydb

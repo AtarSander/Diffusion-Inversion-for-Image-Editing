@@ -22,8 +22,10 @@ beat plain DDIM inversion on real audio, corpus size will not rescue it.
 | Env (torch 2.4.1 / diffusers 0.32.2 / transformers 4.47 / peft 0.15.2) | `audio/.venv`, pins in `audio/requirements_lorainv.txt` | works |
 | Trajectory generation + target caching | `audio/src/inversion_lora/generate_trajectories.py` | smoke-tested on CPU |
 | Dataset completeness verifier | `audio/src/inversion_lora/verify_trajectories.py` | exits 1 on partial samples |
-| Dataset + T5-padding collate | `audio/src/inversion_lora/dataset.py` | 7 unit tests pass |
+| Dataset + T5-padding collate + trajectory-level split | `audio/src/inversion_lora/dataset.py` | 11 unit tests pass |
+| Trainer (no-CFG loss, ckpt/resume, W&B) | `audio/src/inversion_lora/train.py` | overfits smoke set on CPU |
 | Go/no-go run config | `audio/config/generate_trajectories_gonogo.yaml` | ready to fire |
+| Train config | `audio/config/train_inversion_lora.yaml` | ready |
 
 ### Verified, not assumed
 
@@ -39,7 +41,15 @@ beat plain DDIM inversion on real audio, corpus size will not rescue it.
   padding collate is safe.
 - AudioLDM2-large: ε-prediction, `DDIMScheduler`, 200 steps (996→1, spacing 5), 718M-param
   UNet, latents `[8, 256, 16]` at 10.24 s → **50 MiB/sample fp32**. rank-8 LoRA on
-  `to_q/to_k/to_v/to_out.0` = 7.68M trainable params.
+  `to_q/to_k/to_v/to_out.0` = 7.68M trainable params (2048 tensors).
+- **Gradients flow through the vendored `unet_forward`** into LoRA params, with **zero leakage
+  into frozen weights**. At init only `lora_B` has gradient (PEFT zero-inits B, so A's grad is
+  0 on step 0) — expected, not a bug.
+- **The LoRA learns**: on the 16-transition smoke set, loss goes from the LoRA-disabled
+  baseline **0.1180** to **4.7e-04** (~250×), so both A and B train. Baseline MSE 0.1180 is the
+  number to beat; anything at or above it means the adapter is not helping. The trainer logs it
+  at startup on every run.
+- CPU throughput ~15 s/step at batch 2 (context for why GPUs gate everything).
 
 ### Blocked / missing
 
@@ -54,9 +64,8 @@ beat plain DDIM inversion on real audio, corpus size will not rescue it.
 3. **`audio/editing/AudioEditingCode/code/env.py` is all placeholders** — six paths, none set:
    `PATH_AUDIOS_MEDLEY`, `PATH_PROMPTS_MEDLEY`, `PATH_LOWER_BOUND_MEDLEY`, `PATH_MUSICCAPS`,
    `ALDM2_TEMP_DIR`, `PATH_EDIT_OUTPUTS`.
-4. **Trainer not written** — next code task. GPU-free to write; verify by overfitting the
-   16-transition smoke set on CPU.
-5. **Reconstruction eval not written** — this *is* the go/no-go measurement.
+4. ~~Trainer~~ **done** — verified by overfitting the smoke set on CPU.
+5. **Reconstruction eval not written** — this *is* the go/no-go measurement. Next code task.
 6. **Metric checkpoints** for the editing comparison (step 5, not the go/no-go):
    `music_audioset_epoch_15_esc_90.14.pt` under `res/clap/pretrained`, `OpenMuQ/MuQ-MuLan-large`.
 7. **FAD/metrics env** not built (`requirements_fad_*.txt`: `audioldm_eval`, `ssr_eval`, skimage).
@@ -121,11 +130,22 @@ generator (pluggable initial latent), not a redesign.
 
 ### Next actions, in order
 
-1. `trainer.py` — no-CFG loss, LoRA r=8, ckpt/resume, W&B. Verify: overfits the 16-transition
-   smoke set to ~0 on CPU.
-2. `reconstruct.py` — LoRA-DDIM vs plain DDIM invert→denoise on real audio; report mel-domain
-   PSNR/SSIM + latent L2 vs the source. This is the go/no-go.
-3. When GPUs free: shard the 1.5k generation, then `verify_trajectories.py --check_step 16`
+1. `reconstruct.py` — LoRA-DDIM vs plain DDIM invert→denoise on real audio; report mel-domain
+   PSNR/SSIM + latent L2 vs the source. **This is the go/no-go.** GPU-free to write.
+2. When GPUs free: shard the 1.5k generation, then `verify_trajectories.py --check_step 16`
    as a hard gate before training. Local runs must be detached:
    `setsid bash -c 'CUDA_VISIBLE_DEVICES=N ... > run.log 2>&1' </dev/null &`
-4. Train, run the go/no-go, record the numbers **here** before touching editing metrics.
+3. Train (`train_inversion_lora.yaml`, ~20k steps), then run the go/no-go and record the
+   numbers **here** before touching editing metrics.
+4. Only if the go/no-go passes: full corpus with `save_uncond_target=true`, then the editing
+   comparison and the metrics/FAD envs.
+
+### Deliberately skipped (revisit if needed)
+
+- **Final-tail timestep oversampling** (`sampling=final_tail` on the SDXL side, with its own
+  test). Plausibly matters for audio too, since inversion error concentrates at low noise, but
+  not needed to answer the go/no-go. Uniform sampling for now.
+- **LR scheduler** — constant LR. The SDXL side has cosine/constant configs.
+- **`active_steps` / `active_fraction`** (LoRA on only the first K inversion steps). Already
+  proven useful on the image side and likely important for audio given the synthetic/real gap.
+  Belongs in the reconstruction eval as a swept knob, not in training.
