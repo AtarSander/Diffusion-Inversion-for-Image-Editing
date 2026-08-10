@@ -26,14 +26,13 @@ from diff_inversion.eval.previews import (
     write_noise_images,
 )
 from diff_inversion.eval.sample_metrics import image_pair_metrics, load_rgb_tensor, pair_metrics
-from diff_inversion.modeling.cfg_temb import cfg_temb_context
 from diff_inversion.modeling.sdxl_sampling import (
     invert_latent_sdxl,
     reconstruct_latent_sdxl,
 )
 
-CFG_TARGET_MODES = {"cfg", "cfg_temb"}
-CFG_SINGLE_PASS_TARGET_MODES = {"cfg_single_pass", "cfg_single_pass_temb"}
+CFG_TARGET_MODES = {"cfg"}
+CFG_SINGLE_PASS_TARGET_MODES = {"cfg_single_pass"}
 BRANCH_TARGET_MODES = {
     "unconditional",
     *CFG_TARGET_MODES,
@@ -372,27 +371,13 @@ def _write_noise_prediction_previews(
                 "text_embeds": text_embeds,
                 "time_ids": time_ids,
             }
-        conditioning_guidance_scale = None
-        if target_mode == "cfg_temb":
-            conditioning_guidance_scale = torch.tensor(
-                [guidance_scale, guidance_scale],
-                device=pipe.device,
-                dtype=torch.float32,
-            )
-        elif target_mode == "cfg_single_pass_temb":
-            conditioning_guidance_scale = torch.tensor(
-                [guidance_scale],
-                device=pipe.device,
-                dtype=torch.float32,
-            )
-        with cfg_temb_context(pipe.unet, conditioning_guidance_scale):
-            pred_eps = pipe.unet(
-                model_input,
-                model_timestep,
-                encoder_hidden_states=model_prompt_embeds,
-                return_dict=False,
-                **unet_kwargs,
-            )[0]
+        pred_eps = pipe.unet(
+            model_input,
+            model_timestep,
+            encoder_hidden_states=model_prompt_embeds,
+            return_dict=False,
+            **unet_kwargs,
+        )[0]
 
         target_cond = _squeeze_batch(target_eps[step_idx]).float()
         if target_mode in CFG_TARGET_MODES:

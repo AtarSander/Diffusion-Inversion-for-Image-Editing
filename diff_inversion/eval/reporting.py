@@ -52,9 +52,14 @@ def build_samples_table_rows(
     for sample_name, sample in results["samples"].items():
         row: dict[str, float | int | str | bool] = {"sample": sample_name}
         row.update(flatten_metrics(sample["metadata"], prefix="metadata"))
-        row.update(flatten_metrics(sample["trajectory"], prefix="trajectory"))
-        row.update(flatten_metrics(sample["initial_latent_stats"], prefix="initial_latent"))
-        row.update(flatten_metrics(sample["final_latent_stats"], prefix="final_latent"))
+        if "trajectory" in sample:
+            row.update(flatten_metrics(sample["trajectory"], prefix="trajectory"))
+        if "initial_latent_stats" in sample:
+            row.update(
+                flatten_metrics(sample["initial_latent_stats"], prefix="initial_latent")
+            )
+        if "final_latent_stats" in sample:
+            row.update(flatten_metrics(sample["final_latent_stats"], prefix="final_latent"))
         if "first_pred_noise_stats" in sample:
             row.update(
                 flatten_metrics(sample["first_pred_noise_stats"], prefix="first_pred_noise")
@@ -173,6 +178,7 @@ def log_to_wandb(results: dict[str, Any], output_dir: Path, config: Any) -> None
         wandb_config = {
             "input_dir": results["input_dir"],
             "output_dir": output_dir.as_posix(),
+            "image_only": results.get("image_only", False),
             "num_samples": results["num_samples"],
             "total_num_samples": results["total_num_samples"],
             "max_samples": _config_get(config, "max_samples"),

@@ -1,7 +1,9 @@
 """Generate SDXL samples and latent trajectories from prepared prompt files."""
 
 import json
+import math
 import os
+import random
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -39,6 +41,41 @@ def nested_get(data: Dict[str, Any], dotted_key: str) -> Any:
     return value
 
 
+def resolve_sample_guidance_scale(
+    model_cfg: DictConfig,
+    gather_cfg: DictConfig,
+    sample_idx: int,
+) -> float:
+    """Resolve a reproducible CFG value for one generated trajectory."""
+    sampling_cfg = OmegaConf.select(gather_cfg, "guidance_scale_sampling", default=None)
+    if sampling_cfg is None or not bool(sampling_cfg.get("enabled", False)):
+        return float(model_cfg.guidance_scale)
+
+    distribution = str(sampling_cfg.get("distribution", "uniform")).lower()
+    if distribution != "uniform":
+        raise ValueError(
+            f"guidance_scale_sampling.distribution must be 'uniform', got {distribution!r}."
+        )
+
+    minimum = sampling_cfg.get("min")
+    maximum = sampling_cfg.get("max")
+    if minimum is None or maximum is None:
+        raise ValueError(
+            "guidance_scale_sampling.min and .max are required when CFG sampling is enabled."
+        )
+    minimum = float(minimum)
+    maximum = float(maximum)
+    if not math.isfinite(minimum) or not math.isfinite(maximum):
+        raise ValueError("CFG sampling bounds must be finite numbers.")
+    if minimum <= 1.0 or maximum < minimum:
+        raise ValueError(
+            f"CFG sampling requires 1.0 < min <= max; got min={minimum}, max={maximum}."
+        )
+
+    seed = int(gather_cfg.seed) + int(sample_idx) + int(sampling_cfg.get("seed_offset", 0))
+    return random.Random(seed).uniform(minimum, maximum)
+
+
 def validate_existing_run_config(out_dir: Path, cfg: DictConfig) -> None:
     """Refuse to resume into a directory generated with incompatible settings."""
     if bool(OmegaConf.select(cfg, "overwrite", default=False)):
@@ -61,6 +98,7 @@ def validate_existing_run_config(out_dir: Path, cfg: DictConfig) -> None:
         "model.scheduler",
         "model.num_inference_steps",
         "model.guidance_scale",
+        "guidance_scale_sampling",
         "model.height",
         "model.width",
         "negative_prompt",
@@ -77,9 +115,7 @@ def validate_existing_run_config(out_dir: Path, cfg: DictConfig) -> None:
         current_value = OmegaConf.select(cfg, key, default=None)
         existing_value = nested_get(existing, key)
         if str(existing_value) != str(current_value):
-            mismatches.append(
-                f"{key}: existing={existing_value!r}, current={current_value!r}"
-            )
+            mismatches.append(f"{key}: existing={existing_value!r}, current={current_value!r}")
 
     if mismatches:
         joined = "\n  - ".join(mismatches)
@@ -282,9 +318,9 @@ def save_training_cache(
         conditioning_to_save.update(
             {
                 "pooled_prompt_embeds": conditioning["pooled_prompt_embeds"].detach().cpu(),
-                "negative_pooled_prompt_embeds": conditioning[
-                    "negative_pooled_prompt_embeds"
-                ].detach().cpu(),
+                "negative_pooled_prompt_embeds": conditioning["negative_pooled_prompt_embeds"]
+                .detach()
+                .cpu(),
                 "add_time_ids": conditioning["add_time_ids"].detach().cpu(),
             }
         )
@@ -367,6 +403,7 @@ def save_sample(
     model_cfg: DictConfig,
     gather_cfg: DictConfig,
     out_dir: Path,
+    guidance_scale: float,
 ) -> None:
     """Generate and persist one sample directory with images, latents, and metadata."""
     sample_dir = out_dir / gather_cfg.sample_dir_template.format(sample_idx=sample_idx)
@@ -399,13 +436,9 @@ def save_sample(
     )
     if not isinstance(save_cfg_branch_targets_value, bool):
         raise ValueError("save_cfg_branch_targets must be a boolean: true or false.")
-    if (
-        save_training_cache_enabled
-        and float(model_cfg.guidance_scale) > 1.0
-        and not save_cfg_branch_targets_value
-    ):
+    if save_training_cache_enabled and guidance_scale > 1.0 and not save_cfg_branch_targets_value:
         raise ValueError(
-            "model.guidance_scale > 1.0 requires save_cfg_branch_targets=true "
+            "guidance_scale > 1.0 requires save_cfg_branch_targets=true "
             "so unconditional target eps are saved."
         )
     save_cfg_branch_targets = save_training_cache_enabled and save_cfg_branch_targets_value
@@ -422,7 +455,7 @@ def save_sample(
         prompt=prompt,
         negative_prompt=gather_cfg.negative_prompt,
         num_inference_steps=model_cfg.num_inference_steps,
-        guidance_scale=model_cfg.guidance_scale,
+        guidance_scale=guidance_scale,
         height=model_cfg.height,
         width=model_cfg.width,
         seed=seed,
@@ -477,7 +510,7 @@ def save_sample(
         "seed": seed,
         "model_id": model_cfg.model_id,
         "num_inference_steps": model_cfg.num_inference_steps,
-        "guidance_scale": model_cfg.guidance_scale,
+        "guidance_scale": guidance_scale,
         "height": model_cfg.height,
         "width": model_cfg.width,
         "negative_prompt": gather_cfg.negative_prompt,
@@ -546,13 +579,14 @@ def main(cfg: DictConfig) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     validate_existing_run_config(out_dir, cfg)
     logger.info(
-        "Generating {} samples from records [{}:{}) into {} with guidance_scale={} "
-        "save_training_cache={} save_cfg_branch_targets={}",
+        "Generating {} samples from records [{}:{}) into {} with base_guidance_scale={} "
+        "guidance_scale_sampling={} save_training_cache={} save_cfg_branch_targets={}",
         len(prompts),
         start_index,
         end_index,
         out_dir,
         model_cfg.guidance_scale,
+        OmegaConf.select(gather_cfg, "guidance_scale_sampling", default=None),
         OmegaConf.select(gather_cfg, "save_training_cache", default=True),
         OmegaConf.select(gather_cfg, "save_cfg_branch_targets", default=False),
     )
@@ -568,7 +602,16 @@ def main(cfg: DictConfig) -> None:
         total=len(prompts),
         desc="Generating samples",
     ):
-        save_sample(pipe, record, sample_idx, model_cfg, gather_cfg, out_dir)
+        guidance_scale = resolve_sample_guidance_scale(model_cfg, gather_cfg, sample_idx)
+        save_sample(
+            pipe,
+            record,
+            sample_idx,
+            model_cfg,
+            gather_cfg,
+            out_dir,
+            guidance_scale,
+        )
 
     logger.success("Finished generating {} samples", len(prompts))
 

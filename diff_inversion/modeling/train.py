@@ -17,27 +17,18 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from diff_inversion.data.latent_trajectory_dataset import LatentTrajectoryDataset
-from diff_inversion.modeling.cfg_temb import (
-    CFG_TEMB_CONDITIONING_MODES,
-    cfg_temb_checkpoint_metadata,
-    cfg_temb_context,
-    extract_cfg_temb_checkpoint_metadata,
-    get_cfg_temb_conditioner,
-    install_cfg_temb_conditioner,
-    make_cfg_temb_checkpoint_state,
-    split_cfg_temb_checkpoint_state,
-)
+from diff_inversion.modeling.training_audit import mse_per_sample
 from diff_inversion.utils import make_pipe
 
 SINGLE_ADAPTER_NAME = "inversion"
 PAIR_CONDITIONAL_ADAPTER_NAME = "text_branch"
 PAIR_UNCONDITIONAL_ADAPTER_NAME = "null_branch"
 
-CFG_LOSS_MODES = frozenset({"cfg", "cfg_temb", "cfg_pair", "cfg_temb_pair"})
-CFG_SINGLE_PASS_MODES = frozenset({"cfg_single_pass", "cfg_single_pass_temb"})
-CFG_PAIR_MODES = frozenset({"cfg_pair", "cfg_temb_pair"})
-SHARED_BRANCH_LOSS_MODES = frozenset({"branch_pair_shared", "cfg_temb_branch"})
-PAIR_BRANCH_LOSS_MODES = frozenset({"branch_pair", "cfg_temb_branch_pair"})
+CFG_LOSS_MODES = frozenset({"cfg", "cfg_pair"})
+CFG_SINGLE_PASS_MODES = frozenset({"cfg_single_pass"})
+CFG_PAIR_MODES = frozenset({"cfg_pair"})
+SHARED_BRANCH_LOSS_MODES = frozenset({"branch_pair_shared"})
+PAIR_BRANCH_LOSS_MODES = frozenset({"branch_pair"})
 PAIR_ADAPTER_MODES = CFG_PAIR_MODES | PAIR_BRANCH_LOSS_MODES
 CFG_REQUIRED_MODES = (
     CFG_LOSS_MODES
@@ -47,6 +38,7 @@ CFG_REQUIRED_MODES = (
 )
 TRAINING_TARGET_MODES = CFG_REQUIRED_MODES | {"conditional", "unconditional"}
 CFG_BRANCH_TARGET_MODES = CFG_REQUIRED_MODES | {"unconditional"}
+PER_SAMPLE_LOSS_MODES = frozenset({"conditional"}) | CFG_SINGLE_PASS_MODES
 
 
 class SDXLInversionTrainer:
@@ -74,7 +66,6 @@ class SDXLInversionTrainer:
         training_guidance_scale: float | None = None,
         cfg_branch_loss_weight: float = 0.0,
         branch_pair_cfg_loss_weight: float = 0.0,
-        cfg_temb_conditioning_config: DictConfig | None = None,
     ):
         self.pipe = pipe
         self.lora_config = lora_config
@@ -113,8 +104,6 @@ class SDXLInversionTrainer:
                 "training_target.guidance_scale > 1.0 "
                 f"or null per-sample guidance; got {self.training_guidance_scale}."
             )
-        self.cfg_temb_conditioning_config = cfg_temb_conditioning_config
-
         self._freeze_pipeline_components()
         self._inject_lora_adapters(lora_config)
         self._freeze_non_lora_parameters()
@@ -138,17 +127,16 @@ class SDXLInversionTrainer:
 
         self.pipe.scheduler.set_timesteps(num_inference_steps, device=self.model.device)
         logger.info(
-            "LoRA and conditioning trainable parameters: {:,}",
+            "LoRA trainable parameters: {:,}",
             sum(p.numel() for p in self.trainable_parameters),
         )
         logger.info(
             "Training target mode: {} guidance_scale={} branch_loss_weight={} "
-            "branch_pair_cfg_loss_weight={} cfg_temb_conditioned={}",
+            "branch_pair_cfg_loss_weight={}",
             self.training_target_mode,
             self.training_guidance_scale,
             self.cfg_branch_loss_weight,
             self.branch_pair_cfg_loss_weight,
-            get_cfg_temb_conditioner(self.model) is not None,
         )
 
     def train(
@@ -241,7 +229,14 @@ class SDXLInversionTrainer:
     def forward_loss_with_metrics(
         self,
         batch: dict[str, Any],
+        *,
+        include_per_sample: bool = False,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        if include_per_sample and self.training_target_mode not in PER_SAMPLE_LOSS_MODES:
+            raise ValueError(
+                "Per-sample loss diagnostics currently support "
+                f"training_target.mode in {sorted(PER_SAMPLE_LOSS_MODES)}."
+            )
         x_clean = batch["x_clean"].to(device=self.model.device, dtype=self.model.dtype)
         timestep = batch["timestep"].to(device=self.model.device)
         target_eps = batch["target_eps"].to(device=self.model.device, dtype=self.model.dtype)
@@ -280,6 +275,7 @@ class SDXLInversionTrainer:
                 pooled_prompt_embeds=pooled_prompt_embeds,
                 add_time_ids=add_time_ids,
                 target_eps=target_eps,
+                include_per_sample=include_per_sample,
             )
         if self.training_target_mode == "unconditional":
             return self._forward_unconditional_loss(
@@ -318,11 +314,15 @@ class SDXLInversionTrainer:
             add_time_ids,
         )
 
-        loss = F.mse_loss(student_eps.float(), target_eps.float())
-        return loss, {
+        per_sample_loss = mse_per_sample(student_eps, target_eps)
+        loss = per_sample_loss.mean()
+        metrics = {
             "loss": loss,
             "loss_cond": loss,
         }
+        if include_per_sample:
+            metrics["loss_per_sample"] = per_sample_loss
+        return loss, metrics
 
     def _forward_unconditional_loss(
         self,
@@ -400,23 +400,22 @@ class SDXLInversionTrainer:
             batch_size=x_clean.shape[0],
             device=self.model.device,
         )
-        with cfg_temb_context(self.model, guidance_scale):
-            pred_cond = self.predict_noise_with_adapter(
-                SINGLE_ADAPTER_NAME,
-                x_clean,
-                scheduler_timesteps,
-                prompt_embeds,
-                pooled_prompt_embeds,
-                add_time_ids,
-            )
-            pred_uncond = self.predict_noise_with_adapter(
-                SINGLE_ADAPTER_NAME,
-                x_clean,
-                scheduler_timesteps,
-                negative_prompt_embeds,
-                negative_pooled_prompt_embeds,
-                add_time_ids,
-            )
+        pred_cond = self.predict_noise_with_adapter(
+            SINGLE_ADAPTER_NAME,
+            x_clean,
+            scheduler_timesteps,
+            prompt_embeds,
+            pooled_prompt_embeds,
+            add_time_ids,
+        )
+        pred_uncond = self.predict_noise_with_adapter(
+            SINGLE_ADAPTER_NAME,
+            x_clean,
+            scheduler_timesteps,
+            negative_prompt_embeds,
+            negative_pooled_prompt_embeds,
+            add_time_ids,
+        )
         loss_cond = F.mse_loss(pred_cond.float(), target_eps.float())
         loss_uncond = F.mse_loss(pred_uncond.float(), target_eps_uncond.float())
         guidance_scale = guidance_scale.reshape(x_clean.shape[0], *([1] * (target_eps.ndim - 1)))
@@ -471,23 +470,22 @@ class SDXLInversionTrainer:
             batch_size=x_clean.shape[0],
             device=self.model.device,
         )
-        with cfg_temb_context(self.model, guidance_scale):
-            pred_cond = self.predict_noise_with_adapter(
-                PAIR_CONDITIONAL_ADAPTER_NAME,
-                x_clean,
-                scheduler_timesteps,
-                prompt_embeds,
-                pooled_prompt_embeds,
-                add_time_ids,
-            )
-            pred_uncond = self.predict_noise_with_adapter(
-                PAIR_UNCONDITIONAL_ADAPTER_NAME,
-                x_clean,
-                scheduler_timesteps,
-                negative_prompt_embeds,
-                negative_pooled_prompt_embeds,
-                add_time_ids,
-            )
+        pred_cond = self.predict_noise_with_adapter(
+            PAIR_CONDITIONAL_ADAPTER_NAME,
+            x_clean,
+            scheduler_timesteps,
+            prompt_embeds,
+            pooled_prompt_embeds,
+            add_time_ids,
+        )
+        pred_uncond = self.predict_noise_with_adapter(
+            PAIR_UNCONDITIONAL_ADAPTER_NAME,
+            x_clean,
+            scheduler_timesteps,
+            negative_prompt_embeds,
+            negative_pooled_prompt_embeds,
+            add_time_ids,
+        )
         loss_cond = F.mse_loss(pred_cond.float(), target_eps.float())
         loss_uncond = F.mse_loss(pred_uncond.float(), target_eps_uncond.float())
 
@@ -550,7 +548,6 @@ class SDXLInversionTrainer:
             negative_pooled_prompt_embeds,
             pooled_prompt_embeds,
             add_time_ids,
-            guidance_scale,
         )
         guidance_scale = guidance_scale.reshape(
             x_clean.shape[0],
@@ -584,6 +581,7 @@ class SDXLInversionTrainer:
         pooled_prompt_embeds: torch.Tensor | None,
         add_time_ids: torch.Tensor | None,
         target_eps: torch.Tensor,
+        include_per_sample: bool = False,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         """Learn the combined CFG target with one conditional UNet prediction."""
         target_eps_uncond = self._required_tensor(batch, "target_eps_uncond").to(
@@ -603,19 +601,22 @@ class SDXLInversionTrainer:
             target_eps - target_eps_uncond
         )
 
-        with cfg_temb_context(self.model, guidance_scale):
-            pred_cfg = self.predict_noise(
-                x_clean,
-                scheduler_timesteps,
-                prompt_embeds,
-                pooled_prompt_embeds,
-                add_time_ids,
-            )
-        loss = F.mse_loss(pred_cfg.float(), target_cfg.float())
-        return loss, {
+        pred_cfg = self.predict_noise(
+            x_clean,
+            scheduler_timesteps,
+            prompt_embeds,
+            pooled_prompt_embeds,
+            add_time_ids,
+        )
+        per_sample_loss = mse_per_sample(pred_cfg, target_cfg)
+        loss = per_sample_loss.mean()
+        metrics = {
             "loss": loss,
             "loss_cfg_single_pass": loss,
         }
+        if include_per_sample:
+            metrics["loss_per_sample"] = per_sample_loss
+        return loss, metrics
 
     def predict_noise(
         self,
@@ -667,28 +668,26 @@ class SDXLInversionTrainer:
         negative_pooled_prompt_embeds: torch.Tensor | None,
         pooled_prompt_embeds: torch.Tensor | None,
         add_time_ids: torch.Tensor | None,
-        guidance_scale: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if self.training_target_mode in CFG_PAIR_MODES:
             if pooled_prompt_embeds is not None and negative_pooled_prompt_embeds is None:
                 raise KeyError("negative_pooled_prompt_embeds are required for SDXL CFG training.")
-            with cfg_temb_context(self.model, guidance_scale):
-                pred_uncond = self.predict_noise_with_adapter(
-                    PAIR_UNCONDITIONAL_ADAPTER_NAME,
-                    latents,
-                    scheduler_timesteps,
-                    negative_prompt_embeds,
-                    negative_pooled_prompt_embeds,
-                    add_time_ids,
-                )
-                pred_cond = self.predict_noise_with_adapter(
-                    PAIR_CONDITIONAL_ADAPTER_NAME,
-                    latents,
-                    scheduler_timesteps,
-                    prompt_embeds,
-                    pooled_prompt_embeds,
-                    add_time_ids,
-                )
+            pred_uncond = self.predict_noise_with_adapter(
+                PAIR_UNCONDITIONAL_ADAPTER_NAME,
+                latents,
+                scheduler_timesteps,
+                negative_prompt_embeds,
+                negative_pooled_prompt_embeds,
+                add_time_ids,
+            )
+            pred_cond = self.predict_noise_with_adapter(
+                PAIR_CONDITIONAL_ADAPTER_NAME,
+                latents,
+                scheduler_timesteps,
+                prompt_embeds,
+                pooled_prompt_embeds,
+                add_time_ids,
+            )
             return pred_uncond, pred_cond
 
         branch_latents = torch.cat([latents, latents], dim=0)
@@ -707,14 +706,13 @@ class SDXLInversionTrainer:
         if add_time_ids is not None:
             branch_add_time_ids = torch.cat([add_time_ids, add_time_ids], dim=0)
 
-        with cfg_temb_context(self.model, guidance_scale):
-            noise_pred = self.predict_noise(
-                branch_latents,
-                branch_timesteps,
-                branch_prompt_embeds,
-                branch_pooled_prompt_embeds,
-                branch_add_time_ids,
-            )
+        noise_pred = self.predict_noise(
+            branch_latents,
+            branch_timesteps,
+            branch_prompt_embeds,
+            branch_pooled_prompt_embeds,
+            branch_add_time_ids,
+        )
         noise_uncond, noise_cond = noise_pred.chunk(2)
         return noise_uncond, noise_cond
 
@@ -783,21 +781,16 @@ class SDXLInversionTrainer:
         save_path = self.checkpoint_dir / filename
         save_path.parent.mkdir(parents=True, exist_ok=True)
         if self._uses_pair_adapters():
-            lora_state = {
+            state = {
                 "branch_pair": True,
                 "adapters": {
                     "conditional": self._adapter_state_dict(PAIR_CONDITIONAL_ADAPTER_NAME),
                     "unconditional": self._adapter_state_dict(PAIR_UNCONDITIONAL_ADAPTER_NAME),
                 },
             }
-            state = make_cfg_temb_checkpoint_state(
-                lora_state_dict=lora_state,
-                conditioner=get_cfg_temb_conditioner(self.model),
-                prediction_mode=self._checkpoint_prediction_mode(),
-            )
             torch.save(state, save_path)
         else:
-            torch.save(self._single_adapter_checkpoint_state(), save_path)
+            torch.save(self._single_adapter_state_dict(), save_path)
         logger.info("Checkpoint saved to {}", save_path)
 
     def save_training_state(self, filename: str):
@@ -821,12 +814,6 @@ class SDXLInversionTrainer:
             }
         else:
             state["lora_state_dict"] = self._single_adapter_state_dict()
-        state.update(
-            cfg_temb_checkpoint_metadata(
-                get_cfg_temb_conditioner(self.model),
-                prediction_mode=self._checkpoint_prediction_mode(),
-            )
-        )
         torch.save(state, save_path)
         logger.info("Training state saved to {}", save_path)
 
@@ -838,25 +825,10 @@ class SDXLInversionTrainer:
             raise FileNotFoundError(f"Checkpoint path does not exist: {checkpoint_path}")
         state_dict = torch.load(checkpoint_path, map_location="cpu")
         if self._uses_pair_adapters():
-            lora_state, cfg_temb_state, cfg_temb_config = split_cfg_temb_checkpoint_state(
-                state_dict
-            )
-            self._load_branch_pair_checkpoint_state(lora_state, checkpoint_path)
-            self._restore_cfg_temb_metadata(
-                cfg_temb_state,
-                cfg_temb_config,
-                checkpoint_path,
-            )
+            self._load_branch_pair_checkpoint_state(state_dict, checkpoint_path)
             logger.info("Checkpoint loaded from {}", checkpoint_path)
             return
-        state_dict, cfg_temb_state, cfg_temb_config = split_cfg_temb_checkpoint_state(state_dict)
         self._load_single_adapter_state_dict(state_dict, checkpoint_path)
-        if cfg_temb_state is not None:
-            self._load_cfg_temb_state_dict(
-                cfg_temb_state,
-                cfg_temb_config,
-                checkpoint_path,
-            )
         logger.info("Checkpoint loaded from {}", checkpoint_path)
 
     def load_training_state(self, filename: str | Path) -> int:
@@ -878,12 +850,6 @@ class SDXLInversionTrainer:
             if "lora_state_dict" not in state:
                 raise ValueError(f"Not a full training-state checkpoint: {checkpoint_path}")
             self._load_single_adapter_state_dict(state["lora_state_dict"], checkpoint_path)
-        cfg_temb_state, cfg_temb_config = extract_cfg_temb_checkpoint_metadata(state)
-        self._restore_cfg_temb_metadata(
-            cfg_temb_state,
-            cfg_temb_config,
-            checkpoint_path,
-        )
         self.optimizer.load_state_dict(state["optimizer_state_dict"])
         self._pending_lr_scheduler_state = state["lr_scheduler_state_dict"]
         torch.set_rng_state(state["torch_rng_state"])
@@ -910,61 +876,12 @@ class SDXLInversionTrainer:
             )
         else:
             inject_adapter_in_model(lora_config, self.model, adapter_name=SINGLE_ADAPTER_NAME)
-        if self._uses_cfg_temb_conditioning():
-            if self.cfg_temb_conditioning_config is None:
-                raise ValueError(
-                    "training_target.cfg_temb_conditioning is required for "
-                    f"training_target.mode={self.training_target_mode}."
-                )
-            conditioning_cfg = self.cfg_temb_conditioning_config
-            conditioner = install_cfg_temb_conditioner(
-                self.model,
-                hidden_dim=int(conditioning_cfg.hidden_dim),
-                log_mean=float(conditioning_cfg.log_mean),
-                log_std=float(conditioning_cfg.log_std),
-                embedding_type=str(conditioning_cfg.get("embedding_type", "mlp")),
-                fourier_num_bands=int(conditioning_cfg.get("fourier_num_bands", 32)),
-                fourier_max_frequency=float(
-                    conditioning_cfg.get("fourier_max_frequency", 16.0)
-                ),
-            )
-            logger.info(
-                "Installed CFG timestep-embedding conditioner with embedding_type={} "
-                "hidden_dim={} temb_dim={} hooks={}",
-                conditioner.embedding_type,
-                conditioner.hidden_dim,
-                conditioner.temb_dim,
-                conditioner.num_hooks,
-            )
-
-    def _restore_cfg_temb_metadata(
-        self,
-        state_dict: dict[str, torch.Tensor] | None,
-        checkpoint_config: dict[str, Any] | None,
-        checkpoint_path: Path,
-    ) -> None:
-        if state_dict is not None:
-            self._load_cfg_temb_state_dict(state_dict, checkpoint_config, checkpoint_path)
-        elif get_cfg_temb_conditioner(self.model) is not None:
-            raise ValueError(f"CFG-temb checkpoint metadata is missing: {checkpoint_path}")
 
     def _single_adapter_state_dict(self) -> dict[str, torch.Tensor]:
-        state = get_peft_model_state_dict(self.model, adapter_name=SINGLE_ADAPTER_NAME)
-        return {key: value for key, value in state.items() if "_cfg_temb_conditioner" not in key}
-
-    def _single_adapter_checkpoint_state(self) -> dict[str, Any] | dict[str, torch.Tensor]:
-        return make_cfg_temb_checkpoint_state(
-            lora_state_dict=self._single_adapter_state_dict(),
-            conditioner=get_cfg_temb_conditioner(self.model),
-            prediction_mode=self._checkpoint_prediction_mode(),
+        return get_peft_model_state_dict(
+            self.model,
+            adapter_name=SINGLE_ADAPTER_NAME,
         )
-
-    def _checkpoint_prediction_mode(self) -> str:
-        if self.training_target_mode in SHARED_BRANCH_LOSS_MODES:
-            return "cfg_temb"
-        if self.training_target_mode in PAIR_BRANCH_LOSS_MODES:
-            return "cfg_temb_pair"
-        return self.training_target_mode
 
     def _load_single_adapter_state_dict(
         self,
@@ -974,22 +891,6 @@ class SDXLInversionTrainer:
         if not isinstance(state_dict, dict):
             raise ValueError(f"Not a LoRA checkpoint state dict: {checkpoint_path}")
         set_peft_model_state_dict(self.model, state_dict, adapter_name=SINGLE_ADAPTER_NAME)
-
-    def _load_cfg_temb_state_dict(
-        self,
-        state_dict: dict[str, torch.Tensor],
-        checkpoint_config: dict[str, Any] | None,
-        checkpoint_path: Path,
-    ) -> None:
-        cfg_temb_conditioner = get_cfg_temb_conditioner(self.model)
-        if cfg_temb_conditioner is None:
-            raise ValueError(
-                "Checkpoint contains CFG-temb conditioning state, but the trainer was not "
-                "created with a CFG-temb training mode: "
-                f"{checkpoint_path}"
-            )
-        cfg_temb_conditioner.validate_checkpoint_config(checkpoint_config)
-        cfg_temb_conditioner.load_state_dict(state_dict)
 
     def _adapter_state_dict(self, adapter_name: str) -> dict[str, torch.Tensor]:
         needle = f".{adapter_name}."
@@ -1047,16 +948,8 @@ class SDXLInversionTrainer:
                 component.eval()
 
     def _freeze_non_lora_parameters(self) -> None:
-        cfg_temb_conditioner = get_cfg_temb_conditioner(self.model)
-        cfg_temb_parameter_ids = (
-            {id(parameter) for parameter in cfg_temb_conditioner.parameters()}
-            if cfg_temb_conditioner is not None
-            else set()
-        )
         for name, parameter in self.model.named_parameters():
-            parameter.requires_grad_(
-                "lora" in name.lower() or id(parameter) in cfg_temb_parameter_ids
-            )
+            parameter.requires_grad_("lora" in name.lower())
 
     def _set_lora_parameters_trainable(self) -> None:
         for name, parameter in self.model.named_parameters():
@@ -1218,18 +1111,13 @@ class SDXLInversionTrainer:
         if mode not in TRAINING_TARGET_MODES:
             raise ValueError(
                 "training_target.mode must be 'conditional', 'unconditional', "
-                f"'cfg', 'cfg_single_pass', 'cfg_single_pass_temb', 'cfg_temb', "
-                f"'cfg_temb_pair', 'cfg_pair', "
-                f"'branch_pair_shared', 'branch_pair', 'cfg_temb_branch', or "
-                f"'cfg_temb_branch_pair', got {value!r}."
+                "'cfg', 'cfg_single_pass', 'cfg_pair', 'branch_pair_shared', or "
+                f"'branch_pair', got {value!r}."
             )
         return mode
 
     def _uses_pair_adapters(self) -> bool:
         return self.training_target_mode in PAIR_ADAPTER_MODES
-
-    def _uses_cfg_temb_conditioning(self) -> bool:
-        return self.training_target_mode in CFG_TEMB_CONDITIONING_MODES
 
     def _set_active_adapter(self, adapter_name: str) -> None:
         toggled = False
@@ -1344,6 +1232,12 @@ def main(cfg: DictConfig) -> None:
     model_cfg = cfg.model
     lora_cfg = cfg.lora
 
+    seed = int(cfg.get("seed", 42))
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    logger.info("Training seed: {}", seed)
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if model_cfg.require_cuda and device != "cuda":
         raise RuntimeError("This script is intended to run on CUDA.")
@@ -1360,8 +1254,6 @@ def main(cfg: DictConfig) -> None:
     )
     cfg_branch_loss_weight = float(cfg.training_target.branch_loss_weight)
     branch_pair_cfg_loss_weight = float(cfg.training_target.cfg_loss_weight)
-    cfg_temb_conditioning_config = cfg.training_target.cfg_temb_conditioning
-
     run = wandb.init(
         project=cfg.wandb.project,
         name=cfg.run_name,
@@ -1394,7 +1286,6 @@ def main(cfg: DictConfig) -> None:
         training_guidance_scale=training_guidance_scale,
         cfg_branch_loss_weight=cfg_branch_loss_weight,
         branch_pair_cfg_loss_weight=branch_pair_cfg_loss_weight,
-        cfg_temb_conditioning_config=cfg_temb_conditioning_config,
     )
 
     initial_global_step = 0
@@ -1456,10 +1347,13 @@ def main(cfg: DictConfig) -> None:
     logger.info("Loaded {:,} train transitions", len(train_dataset))
     logger.info("Loaded {:,} val transitions", len(val_dataset))
 
+    train_generator = torch.Generator()
+    train_generator.manual_seed(int(cfg.get("seed", 42)))
     train_loader = DataLoader(
         train_dataset,
         batch_size=cfg.data.batch_size,
         shuffle=True,
+        generator=train_generator,
         num_workers=cfg.data.num_workers,
         pin_memory=cfg.data.pin_memory,
     )

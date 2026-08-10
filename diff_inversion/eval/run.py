@@ -123,6 +123,13 @@ def _load_sample(
     pred_noise_paths = _load_noise_paths(sample_dir)
     pred_noises = [_as_sample_tensor(_load_tensor(path)) for path in pred_noise_paths]
     inverted_noise = _load_optional_sample_tensor(sample_dir / "inverted_noise.pt")
+    metadata = _load_sample_metadata(sample_dir)
+    metadata["pred_noises_count"] = len(pred_noises)
+    metadata["has_inverted_noise"] = inverted_noise is not None
+    return steps, pred_noises, inverted_noise, metadata
+
+
+def _load_sample_metadata(sample_dir: Path) -> dict[str, Any]:
     metadata: dict[str, Any] = {}
     for metadata_name in ("meta.json", "prompt.json", "timesteps.json"):
         metadata_path = sample_dir / metadata_name
@@ -131,10 +138,10 @@ def _load_sample(
                 metadata[metadata_name.removesuffix(".json")] = json.load(f)
     metadata["has_final_image"] = (sample_dir / "final.png").exists()
     metadata["has_reconstructed_image"] = (sample_dir / "reconstructed.png").exists()
-    metadata["pred_noises_count"] = len(pred_noises)
+    metadata["pred_noises_count"] = len(_load_noise_paths(sample_dir))
     metadata["has_initial_noise"] = (sample_dir / "initial_noise.pt").exists()
-    metadata["has_inverted_noise"] = inverted_noise is not None
-    return steps, pred_noises, inverted_noise, metadata
+    metadata["has_inverted_noise"] = (sample_dir / "inverted_noise.pt").exists()
+    return metadata
 
 
 def _prompt_text(metadata: dict[str, Any]) -> str:
@@ -471,6 +478,7 @@ def run_evaluation(
     calculate_lpips: bool,
     lpips_device: str,
     lpips_batch_size: int,
+    image_only: bool = False,
     reconstruction_image_name: str = "reconstructed.png",
     edited_image_name: str = "edited.png",
     clip_text_alignment: Any | None = None,
@@ -509,7 +517,9 @@ def run_evaluation(
     normality_dir = output_dir / "normality"
     image_comparison_dir = output_dir / "image_comparisons"
     preview_sample_dirs = set(select_evenly(sample_dirs, max_preview_samples))
-    diagnostics_enabled = bool(_config_get(inversion_diagnostics, "enabled", False))
+    diagnostics_enabled = not image_only and bool(
+        _config_get(inversion_diagnostics, "enabled", False)
+    )
     diagnostic_sample_dirs = set(
         select_evenly(sample_dirs, _config_get(inversion_diagnostics, "max_samples", 128))
         if diagnostics_enabled
@@ -536,13 +546,20 @@ def run_evaluation(
     for sample_dir in sample_dirs:
         save_sample_previews = save_noise_previews and sample_dir in preview_sample_dirs
         save_sample_normality_plots = save_normality_plots and sample_dir in preview_sample_dirs
-        steps, pred_noises, inverted_noise, metadata = _load_sample(sample_dir)
-        sample_results = {
-            "metadata": metadata,
-            "trajectory": trajectory_metrics(steps),
-            "initial_latent_stats": tensor_stats(steps[0], max_elements=max_elements),
-            "final_latent_stats": tensor_stats(steps[-1], max_elements=max_elements),
-        }
+        if image_only:
+            steps = None
+            pred_noises = []
+            inverted_noise = None
+            metadata = _load_sample_metadata(sample_dir)
+            sample_results = {"metadata": metadata}
+        else:
+            steps, pred_noises, inverted_noise, metadata = _load_sample(sample_dir)
+            sample_results = {
+                "metadata": metadata,
+                "trajectory": trajectory_metrics(steps),
+                "initial_latent_stats": tensor_stats(steps[0], max_elements=max_elements),
+                "final_latent_stats": tensor_stats(steps[-1], max_elements=max_elements),
+            }
         per_sample[sample_dir.name] = sample_results
 
         if pred_noises:
@@ -634,8 +651,9 @@ def run_evaluation(
         if edit_image_comparison is not None:
             edit_image_comparisons.append(edit_image_comparison)
 
-        initial_latents.append(steps[0])
-        final_latents.append(steps[-1])
+        if steps is not None:
+            initial_latents.append(steps[0])
+            final_latents.append(steps[-1])
 
     if calculate_lpips:
         _add_lpips_metrics(
@@ -650,14 +668,22 @@ def run_evaluation(
         clip_text_alignment,
     )
 
-    initial_batch = torch.stack(initial_latents)
-    final_batch = torch.stack(final_latents)
-    aggregate = {
-        "initial_latent_stats": tensor_stats(initial_batch, max_elements=max_elements),
-        "final_latent_stats": tensor_stats(final_batch, max_elements=max_elements),
-        "initial_patch_topk_correlation": patch_topk_corr(initial_batch, patch_size, top_k),
-        "final_patch_topk_correlation": patch_topk_corr(final_batch, patch_size, top_k),
-    }
+    aggregate = {}
+    if initial_latents:
+        initial_batch = torch.stack(initial_latents)
+        final_batch = torch.stack(final_latents)
+        aggregate.update(
+            {
+                "initial_latent_stats": tensor_stats(initial_batch, max_elements=max_elements),
+                "final_latent_stats": tensor_stats(final_batch, max_elements=max_elements),
+                "initial_patch_topk_correlation": patch_topk_corr(
+                    initial_batch, patch_size, top_k
+                ),
+                "final_patch_topk_correlation": patch_topk_corr(
+                    final_batch, patch_size, top_k
+                ),
+            }
+        )
     if first_pred_noises and len(first_pred_noises) == len(sample_dirs):
         aggregate["first_pred_noise_stats"] = tensor_stats(
             torch.stack(first_pred_noises),
@@ -793,26 +819,44 @@ def run_evaluation(
             write_prediction_error_plot(prediction_plot_path, prediction_summary_rows)
             diagnostic_results["prediction_error"]["plot_path"] = prediction_plot_path.as_posix()
 
+    notes = [
+        (
+            "Image-only mode evaluates saved final and reconstructed images without "
+            "loading latent trajectories or noise tensors."
+            if image_only
+            else "This runner evaluates saved generation trajectories."
+        )
+    ]
+    if not image_only:
+        notes.extend(
+            [
+                "If present, pred_noises are included as forward DDIM reference targets.",
+                "If present, inverted_noise is compared against initial latent noise x_T.",
+                "If present, normality diagnostics compare initial and inverted noise.",
+                "Latent normality reports patch top-k correlation computed on "
+                "inverted_noise; kl uses per-location Gaussian KL scaled by 100.",
+                "Inversion diagnostics include latent-location and prediction-error metrics.",
+            ]
+        )
+    notes.extend(
+        [
+            f"If present, {reconstruction_image_name} is compared against final.png.",
+            f"If present, {edited_image_name} is compared against final.png for editing metrics.",
+            "LPIPS uses the AlexNet v0.1 perceptual metric when available.",
+            "Plain-area reconstruction metrics use final.png local pixel differences.",
+            "CLIP target and directional metrics require target_prompt.",
+            "Editing metrics need paired edited images.",
+        ]
+    )
+
     logger.info("Evaluation metrics collected; returning results")
     return {
         "input_dir": input_dir.as_posix(),
         "num_samples": len(sample_dirs),
         "total_num_samples": total_sample_count,
+        "image_only": image_only,
         "num_preview_samples": len(preview_sample_dirs) if save_noise_previews else 0,
-        "notes": [
-            "This runner evaluates saved generation trajectories.",
-            "If present, pred_noises are included as forward DDIM reference targets.",
-            "If present, inverted_noise is compared against initial latent noise x_T.",
-            "If present, normality diagnostics compare initial and inverted noise.",
-            "Latent normality reports patch top-k correlation computed on inverted_noise; kl uses per-location Gaussian KL scaled by 100.",
-            f"If present, {reconstruction_image_name} is compared against final.png.",
-            f"If present, {edited_image_name} is compared against final.png for editing metrics.",
-            "LPIPS uses the AlexNet v0.1 perceptual metric when available.",
-            "Plain-area reconstruction metrics use final.png local pixel differences.",
-            "Inversion diagnostics include latent-location and prediction-error metrics.",
-            "CLIP target and directional metrics require target_prompt.",
-            "Editing metrics need paired edited images.",
-        ],
+        "notes": notes,
         "aggregate": aggregate,
         "inversion_diagnostics": diagnostic_results,
         "samples": per_sample,
@@ -847,6 +891,7 @@ def main(cfg: DictConfig) -> None:
         calculate_lpips=cfg.calculate_lpips,
         lpips_device=cfg.lpips_device,
         lpips_batch_size=cfg.lpips_batch_size,
+        image_only=bool(cfg.image_only),
         reconstruction_image_name=str(cfg.reconstruction_image_name),
         edited_image_name=str(cfg.edited_image_name),
         clip_text_alignment=cfg.clip_text_alignment,

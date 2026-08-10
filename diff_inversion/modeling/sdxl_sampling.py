@@ -6,8 +6,6 @@ import torch
 from diffusers import DDIMInverseScheduler
 from tqdm import tqdm
 
-from diff_inversion.modeling.cfg_temb import cfg_temb_context
-
 
 def _set_active_adapter(pipe, adapter_name: str) -> None:
     switched = False
@@ -100,26 +98,25 @@ def predict_noise_sdxl_branches(
         negative_pooled_prompt_embeds = cond.get("negative_pooled_prompt_embeds")
         add_time_ids = cond.get("add_time_ids")
 
-        with cfg_temb_context(pipe.unet, guidance_values):
-            _set_active_adapter(pipe, unconditional_adapter_name)
-            noise_uncond = _predict_noise_sdxl_single_branch(
-                pipe,
-                latents,
-                timestep,
-                cond["negative_prompt_embeds"],
-                negative_pooled_prompt_embeds,
-                add_time_ids,
-            )
+        _set_active_adapter(pipe, unconditional_adapter_name)
+        noise_uncond = _predict_noise_sdxl_single_branch(
+            pipe,
+            latents,
+            timestep,
+            cond["negative_prompt_embeds"],
+            negative_pooled_prompt_embeds,
+            add_time_ids,
+        )
 
-            _set_active_adapter(pipe, conditional_adapter_name)
-            noise_text = _predict_noise_sdxl_single_branch(
-                pipe,
-                latents,
-                timestep,
-                cond["prompt_embeds"],
-                pooled_prompt_embeds,
-                add_time_ids,
-            )
+        _set_active_adapter(pipe, conditional_adapter_name)
+        noise_text = _predict_noise_sdxl_single_branch(
+            pipe,
+            latents,
+            timestep,
+            cond["prompt_embeds"],
+            pooled_prompt_embeds,
+            add_time_ids,
+        )
 
         noise_cfg = _combine_cfg_predictions(noise_uncond, noise_text, guidance_values)
         return noise_uncond, noise_text, noise_cfg
@@ -143,14 +140,13 @@ def predict_noise_sdxl_branches(
             "time_ids": time_ids,
         }
 
-    with cfg_temb_context(pipe.unet, guidance_values):
-        noise_pred = pipe.unet(
-            latent_model_input,
-            timestep,
-            encoder_hidden_states=encoder_hidden_states,
-            return_dict=False,
-            **unet_kwargs,
-        )[0]
+    noise_pred = pipe.unet(
+        latent_model_input,
+        timestep,
+        encoder_hidden_states=encoder_hidden_states,
+        return_dict=False,
+        **unet_kwargs,
+    )[0]
 
     noise_uncond, noise_text = noise_pred.chunk(2)
     noise_cfg = _combine_cfg_predictions(noise_uncond, noise_text, guidance_values)
@@ -173,20 +169,14 @@ def predict_noise_sdxl(
             raise ValueError(
                 "single_conditional_prediction cannot be used with branch-pair adapters."
             )
-        guidance_values = _guidance_scale_tensor(
-            guidance_scale,
-            batch_size=latents.shape[0],
-            device=latents.device,
+        return _predict_noise_sdxl_single_branch(
+            pipe,
+            latents,
+            timestep,
+            cond["prompt_embeds"],
+            cond.get("pooled_prompt_embeds"),
+            cond.get("add_time_ids"),
         )
-        with cfg_temb_context(pipe.unet, guidance_values):
-            return _predict_noise_sdxl_single_branch(
-                pipe,
-                latents,
-                timestep,
-                cond["prompt_embeds"],
-                cond.get("pooled_prompt_embeds"),
-                cond.get("add_time_ids"),
-            )
 
     _, _, noise_cfg = predict_noise_sdxl_branches(
         pipe=pipe,

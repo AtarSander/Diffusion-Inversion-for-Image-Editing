@@ -66,6 +66,7 @@ class LatentTrajectoryDataset(Dataset):
                         )
                     self._add_sample(
                         {
+                            "sample_dir": sample_dir,
                             "format": "stacked_pt",
                             "trajectory_path": trajectory_path,
                             "trajectory_length": trajectory_length,
@@ -84,6 +85,7 @@ class LatentTrajectoryDataset(Dataset):
                 if len(latent_paths) >= 2:
                     self._add_sample(
                         {
+                            "sample_dir": sample_dir,
                             "format": "per_step_pt",
                             "latent_paths": latent_paths,
                             "trajectory_length": len(latent_paths),
@@ -134,6 +136,25 @@ class LatentTrajectoryDataset(Dataset):
         if self.load_cfg_branch_targets:
             item.update(self._cfg_branch_item(sample, conditioning, step_idx))
         return item
+
+    def transition_metadata(self, idx: int) -> dict[str, Any]:
+        """Return transition identity without loading trajectory or conditioning tensors."""
+        sample, step_idx = self._locate(idx)
+        num_transitions = int(sample["num_transitions"])
+        return {
+            "dataset_idx": int(idx),
+            "sample_idx": sample["sample_idx"],
+            "sample_dir": str(sample["sample_dir"]),
+            "step_idx": int(step_idx),
+            # Sampling is stored noise -> image, while inversion runs image -> noise.
+            "inversion_step": num_transitions - 1 - int(step_idx),
+            "num_transitions": num_transitions,
+            "timestep": self._transition_timestep(
+                self._timesteps(sample),
+                step_idx,
+                int(sample["trajectory_length"]),
+            ),
+        }
 
     def _cfg_branch_item(
         self,

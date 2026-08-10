@@ -8,22 +8,11 @@ from hydra.utils import to_absolute_path
 from loguru import logger
 from omegaconf import DictConfig
 
-from diff_inversion.modeling.cfg_temb import (
-    CFG_TEMB_CONDITIONING_MODES,
-    PREDICTION_MODE_KEY,
-    install_cfg_temb_conditioner,
-    set_cfg_temb_enabled,
-    split_cfg_temb_checkpoint_state,
-)
-
 BRANCH_PAIR_MODE = "branch_pair"
 CFG_SINGLE_PASS_MODE = "cfg_single_pass"
-CFG_SINGLE_PASS_TEMB_MODE = "cfg_single_pass_temb"
-CFG_TEMB_MODE = "cfg_temb"
-CFG_TEMB_PAIR_MODE = "cfg_temb_pair"
-BRANCH_PAIR_MODES = frozenset({BRANCH_PAIR_MODE, CFG_TEMB_PAIR_MODE})
-SINGLE_PREDICTION_MODES = frozenset({CFG_SINGLE_PASS_MODE, CFG_SINGLE_PASS_TEMB_MODE})
-SINGLE_LORA_MODES = frozenset({"single", CFG_TEMB_MODE}) | SINGLE_PREDICTION_MODES
+BRANCH_PAIR_MODES = frozenset({BRANCH_PAIR_MODE})
+SINGLE_PREDICTION_MODES = frozenset({CFG_SINGLE_PASS_MODE})
+SINGLE_LORA_MODES = frozenset({"single"}) | SINGLE_PREDICTION_MODES
 LORA_MODES = SINGLE_LORA_MODES | BRANCH_PAIR_MODES
 SINGLE_ADAPTER_NAME = "inversion"
 PAIR_CONDITIONAL_ADAPTER_NAME = "text_branch"
@@ -110,37 +99,6 @@ def _set_active_adapter(pipe, adapter_name: str) -> None:
         raise AttributeError("No LoRA adapter layers expose set_adapter().")
 
 
-def _configure_cfg_temb(
-    pipe,
-    *,
-    lora_cfg: DictConfig,
-    cfg_temb_state: dict[str, torch.Tensor],
-    cfg_temb_config: dict[str, Any],
-) -> None:
-    conditioning_cfg = lora_cfg.cfg_temb_conditioning
-    conditioner = install_cfg_temb_conditioner(
-        pipe.unet,
-        hidden_dim=int(conditioning_cfg.hidden_dim),
-        log_mean=float(conditioning_cfg.log_mean),
-        log_std=float(conditioning_cfg.log_std),
-        embedding_type=str(conditioning_cfg.get("embedding_type", "mlp")),
-        fourier_num_bands=int(conditioning_cfg.get("fourier_num_bands", 32)),
-        fourier_max_frequency=float(
-            conditioning_cfg.get("fourier_max_frequency", 16.0)
-        ),
-    )
-    conditioner.validate_checkpoint_config(cfg_temb_config)
-    conditioner.load_state_dict(cfg_temb_state)
-    logger.info(
-        "Enabled CFG timestep-embedding conditioner with embedding_type={} "
-        "hidden_dim={} temb_dim={} hooks={}",
-        conditioner.embedding_type,
-        conditioner.hidden_dim,
-        conditioner.temb_dim,
-        conditioner.num_hooks,
-    )
-
-
 def configure_unet_lora(pipe, lora_cfg: DictConfig) -> bool:
     if not bool(lora_cfg.enabled):
         return False
@@ -153,32 +111,6 @@ def configure_unet_lora(pipe, lora_cfg: DictConfig) -> bool:
 
     checkpoint_path = _checkpoint_path(lora_cfg)
     checkpoint_state = _load_checkpoint(checkpoint_path)
-    lora_state, cfg_temb_state, cfg_temb_config = split_cfg_temb_checkpoint_state(checkpoint_state)
-    checkpoint_uses_cfg_temb = cfg_temb_state is not None
-    mode_uses_cfg_temb = mode in CFG_TEMB_CONDITIONING_MODES
-    checkpoint_prediction_mode = None
-    if cfg_temb_config is not None and PREDICTION_MODE_KEY in cfg_temb_config:
-        checkpoint_prediction_mode = _normalize_lora_mode(
-            cfg_temb_config[PREDICTION_MODE_KEY]
-        )
-    if checkpoint_uses_cfg_temb != mode_uses_cfg_temb:
-        if checkpoint_uses_cfg_temb:
-            checkpoint_is_pair = (
-                isinstance(lora_state, dict) and lora_state.get("branch_pair") is True
-            )
-            expected_mode = checkpoint_prediction_mode or (
-                "cfg_temb_pair" if checkpoint_is_pair else "cfg_temb"
-            )
-            raise ValueError(
-                f"Checkpoint contains CFG-temb weights; use lora.mode={expected_mode}."
-            )
-        raise ValueError(f"lora.mode={mode} requires a CFG-temb checkpoint.")
-    if checkpoint_prediction_mode is not None:
-        if checkpoint_prediction_mode != mode:
-            raise ValueError(
-                "Checkpoint prediction mode does not match evaluation mode: "
-                f"checkpoint={checkpoint_prediction_mode!r}, lora.mode={mode!r}."
-            )
     lora_config = LoraConfig(**_lora_config_kwargs(lora_cfg))
 
     if mode in BRANCH_PAIR_MODES:
@@ -191,7 +123,7 @@ def configure_unet_lora(pipe, lora_cfg: DictConfig) -> bool:
         pipe.unet.add_adapter(lora_config, adapter_name=PAIR_UNCONDITIONAL_ADAPTER_NAME)
 
         conditional_state, unconditional_state = _branch_pair_state_dicts(
-            lora_state,
+            checkpoint_state,
             checkpoint_path,
         )
         set_peft_model_state_dict(
@@ -209,21 +141,11 @@ def configure_unet_lora(pipe, lora_cfg: DictConfig) -> bool:
         logger.info("Adding UNet LoRA adapter '{}'", SINGLE_ADAPTER_NAME)
         pipe.unet.add_adapter(lora_config, adapter_name=SINGLE_ADAPTER_NAME)
         state_dict = _require_lora_state_dict(
-            lora_state,
+            checkpoint_state,
             label="single-adapter",
             checkpoint_path=checkpoint_path,
         )
         set_peft_model_state_dict(pipe.unet, state_dict, adapter_name=SINGLE_ADAPTER_NAME)
-
-    if mode_uses_cfg_temb:
-        assert cfg_temb_state is not None
-        assert cfg_temb_config is not None
-        _configure_cfg_temb(
-            pipe,
-            lora_cfg=lora_cfg,
-            cfg_temb_state=cfg_temb_state,
-            cfg_temb_config=cfg_temb_config,
-        )
 
     if mode in BRANCH_PAIR_MODES:
         _set_active_adapter(pipe, PAIR_CONDITIONAL_ADAPTER_NAME)
@@ -278,5 +200,4 @@ def set_unet_lora_enabled(pipe, enabled: bool) -> bool:
 
     if not toggled:
         raise AttributeError("No LoRA adapter layers expose enable_adapters().")
-    set_cfg_temb_enabled(pipe.unet, enabled)
     return toggled

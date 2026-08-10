@@ -42,6 +42,7 @@ def reconstruct_from_noise_sdxl(
     prompt: str,
     negative_prompt: str,
     model_cfg,
+    num_inference_steps: int,
     lora_branch_adapter_names: tuple[str, str] | None = None,
     single_conditional_prediction: bool = False,
     guidance_scale: float | None = None,
@@ -71,7 +72,7 @@ def reconstruct_from_noise_sdxl(
         pipe=pipe,
         noise_latent=inverted_noise,
         cond=cond,
-        num_inference_steps=model_cfg.num_inference_steps,
+        num_inference_steps=num_inference_steps,
         guidance_scale=guidance_scale,
         lora_branch_adapter_names=lora_branch_adapter_names,
         progress_desc="Reconstructing",
@@ -84,6 +85,7 @@ def reconstruct_sample(
     pipe,
     sample_dir: Path,
     model_cfg,
+    num_inference_steps: int,
     negative_prompt: str,
     output_name: str,
     prompt_field: str,
@@ -116,6 +118,7 @@ def reconstruct_sample(
         prompt=prompt,
         negative_prompt=negative_prompt,
         model_cfg=model_cfg,
+        num_inference_steps=num_inference_steps,
         lora_branch_adapter_names=lora_branch_adapter_names,
         single_conditional_prediction=single_conditional_prediction,
         guidance_scale=guidance_scale,
@@ -133,6 +136,7 @@ def reconstruct_sample(
             {
                 "reconstructed_image": output_path.name,
                 "reconstruction_timesteps": timesteps_path.name,
+                "reconstruction_num_inference_steps": num_inference_steps,
             }
         )
         with meta_path.open("w", encoding="utf-8") as f:
@@ -163,11 +167,21 @@ def main(cfg: DictConfig) -> None:
     negative_prompt = str(run_cfg.negative_prompt)
     guidance_scale = OmegaConf.select(cfg, "guidance_scale", default=None)
     guidance_scale = None if guidance_scale is None else float(guidance_scale)
+    configured_steps = OmegaConf.select(cfg, "num_inference_steps", default=None)
+    num_inference_steps = (
+        int(run_cfg.model.num_inference_steps)
+        if configured_steps is None
+        else int(configured_steps)
+    )
+    if num_inference_steps <= 0:
+        raise ValueError(f"num_inference_steps must be positive, got {num_inference_steps}")
+    logger.info("Using {} DDIM generation steps", num_inference_steps)
     for sample_dir in tqdm(samples, desc="Running SDXL reconstruction"):
         reconstruct_sample(
             pipe=pipe,
             sample_dir=sample_dir,
             model_cfg=run_cfg.model,
+            num_inference_steps=num_inference_steps,
             negative_prompt=negative_prompt,
             output_name=str(cfg.output_name),
             prompt_field=str(cfg.prompt_field),

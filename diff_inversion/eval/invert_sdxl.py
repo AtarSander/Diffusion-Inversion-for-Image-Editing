@@ -103,6 +103,7 @@ def invert_sample(
     pipe,
     sample_dir: Path,
     model_cfg,
+    num_inference_steps: int,
     negative_prompt: str,
     lora_cfg,
     lora_loaded: bool,
@@ -141,7 +142,7 @@ def invert_sample(
             height=model_cfg.height,
             width=model_cfg.width,
         )
-        inverse_scheduler.set_timesteps(model_cfg.num_inference_steps, device=pipe.device)
+        inverse_scheduler.set_timesteps(num_inference_steps, device=pipe.device)
         active_lora_steps = (
             _lora_active_steps(lora_cfg, total_steps=len(inverse_scheduler.timesteps))
             if lora_loaded
@@ -157,7 +158,7 @@ def invert_sample(
         lora_branch_adapter_names = (
             get_lora_branch_adapter_names(lora_cfg) if lora_loaded else None
         )
-        cfg_distill_prediction = (
+        single_conditional_prediction = (
             uses_single_conditional_prediction(lora_cfg) if lora_loaded else False
         )
 
@@ -181,7 +182,7 @@ def invert_sample(
                     current_lora_enabled = should_enable_lora
 
             prediction_kwargs = {}
-            if cfg_distill_prediction and (
+            if single_conditional_prediction and (
                 active_lora_steps is None or step_idx < active_lora_steps
             ):
                 prediction_kwargs["single_conditional_prediction"] = True
@@ -236,6 +237,7 @@ def invert_sample(
                 "inversion_pred_noises_saved": bool(save_inversion_pred_noises),
                 "inversion_lora_enabled": bool(lora_loaded),
                 "inversion_lora_active_steps": active_lora_steps,
+                "inversion_num_inference_steps": num_inference_steps,
             }
         )
         with meta_path.open("w", encoding="utf-8") as f:
@@ -260,11 +262,21 @@ def main(cfg: DictConfig) -> None:
     pipe = make_pipe(run_cfg.model, device)
     lora_loaded = configure_unet_lora(pipe, cfg.lora)
     negative_prompt = str(run_cfg.negative_prompt)
+    configured_steps = OmegaConf.select(cfg, "num_inference_steps", default=None)
+    num_inference_steps = (
+        int(run_cfg.model.num_inference_steps)
+        if configured_steps is None
+        else int(configured_steps)
+    )
+    if num_inference_steps <= 0:
+        raise ValueError(f"num_inference_steps must be positive, got {num_inference_steps}")
+    logger.info("Using {} DDIM inversion steps", num_inference_steps)
     for sample_dir in tqdm(samples, desc="Running DDIM inversion"):
         invert_sample(
             pipe=pipe,
             sample_dir=sample_dir,
             model_cfg=run_cfg.model,
+            num_inference_steps=num_inference_steps,
             negative_prompt=negative_prompt,
             lora_cfg=cfg.lora,
             lora_loaded=lora_loaded,
