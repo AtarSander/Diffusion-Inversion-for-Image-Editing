@@ -61,5 +61,21 @@ if [ "$n" -ne 696 ]; then
   exit 1
 fi
 
+# FAD and mel PSNR/SSIM need the paired reference. Check it up front: it is the last thing
+# eval_medley touches, so a missing reference otherwise wastes the whole LPAPS/CLAP/MuLan pass.
+REF_DIR="${MEDLEY_LOWER_BOUND_DIR:-outputs/medleymd/lower_bound_full/audios}"
+ref_n=$(find "$REF_DIR" -name 'a*.wav' 2>/dev/null | wc -l)
+echo "reference files: $ref_n  ($REF_DIR)"
+if [ "$ref_n" -ne "$n" ]; then
+  echo "ERROR: reference has $ref_n files but the run has $n. Build it first:" >&2
+  echo "  python -m editing.build_lower_bound --splits full" >&2
+  exit 1
+fi
+
 python -m editing.eval_medley --path_audio "$RUN_DIR"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  echo "FAILED rc=$rc: $RUN_DIR" >&2
+  exit "$rc"
+fi
 echo "done: $RUN_DIR"
