@@ -13,7 +13,7 @@ from tqdm import tqdm
 from editing.AudioEditingCode.evals.lpaps import LPAPS
 from editing.AudioEditingCode.evals.meta_clap_consistency import CLAPTextConsistencyMetric
 from editing.AudioEditingCode.evals.utils import calc_clap_win, calc_lpaps_win
-from editing.edit_audios_flowedit_medley import prepare_dataset
+from editing.dataset_medley import prepare_dataset
 from editing.AudioEditingCode.code.env import PATH_AUDIOS_MEDLEY, PATH_PROMPTS_MEDLEY, PATH_LOWER_BOUND_MEDLEY
 from src.metrics.alignment import MusicAlignmentEval
 DISABLE_TQDM = False
@@ -181,12 +181,31 @@ def calculate_source_distance_metrics(device: torch.device, path_edited_audio: s
         path_lower_bound_resampled.mkdir(parents=True, exist_ok=True)
         resample_audios(path_lower_bound, path_lower_bound_resampled, 32000)
 
+    # get_filename_intersection_ratio() needs >99% overlap; below that it sets same_name=False
+    # and calculate_psnr_ssim() returns -1 instead of raising. Catch the mismatch here, where
+    # the cause (wrong lower-bound split, or an incomplete edit run) is still obvious.
+    edited_names = {p.name for p in path_edited_audio_resampled.glob("*.wav")}
+    reference_names = {p.name for p in path_lower_bound_resampled.glob("*.wav")}
+    if edited_names != reference_names:
+        raise ValueError(
+            f"Edit/reference filenames differ: {len(edited_names)} edits vs "
+            f"{len(reference_names)} references, {len(edited_names & reference_names)} shared. "
+            f"Only in edits: {sorted(edited_names - reference_names)[:3]}; only in reference: "
+            f"{sorted(reference_names - edited_names)[:3]}. PATH_LOWER_BOUND_MEDLEY must match "
+            "the split used for PATH_PROMPTS_MEDLEY."
+        )
+
     evaluator = MusicAlignmentEval(sampling_rate=32000, device=device)
     metrics = evaluator.main(
         generate_files_path=str(path_edited_audio_resampled),
         groundtruth_path=str(path_lower_bound_resampled),
         limit_num=None,
     )
+    for key in ("psnr", "ssim"):
+        if str(metrics.get(key)).startswith("-1"):
+            raise ValueError(
+                f"{key}={metrics[key]} is the sentinel for a paired-metric failure, not a score."
+            )
     return metrics
 
 
