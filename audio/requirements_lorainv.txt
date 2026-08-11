@@ -11,7 +11,6 @@
 #
 # Metrics (LPAPS/CLAP/MuLan) and FAD need their own envs; see requirements_h82.txt and
 # requirements_fad_*.txt. Full frozen pin set below.
-
 accelerate==1.5.2
 annotated-types==0.8.0
 antlr4-python3-runtime==4.9.3
@@ -30,6 +29,7 @@ filelock==3.32.2
 fire==0.7.1
 fonttools==4.63.0
 fsspec==2026.7.0
+ftfy==6.3.1
 gitdb==4.0.12
 gitpython==3.1.59
 huggingface-hub==0.29.3
@@ -72,6 +72,7 @@ pillow==12.3.0
 platformdirs==4.11.1
 pluggy==1.6.0
 pooch==1.9.0
+progressbar2==4.5.0
 protobuf==5.29.6
 psutil==7.2.2
 pycparser==3.0
@@ -82,6 +83,7 @@ pyparsing==3.3.2
 pytest==9.1.1
 python-dateutil==2.9.0.post0
 python-dotenv==1.1.0
+python-utils==4.0.0
 pytz==2026.3.post1
 pyyaml==6.0.3
 regex==2026.7.19
@@ -100,10 +102,13 @@ soxr==1.1.0
 sympy==1.14.0
 termcolor==3.3.0
 threadpoolctl==3.6.0
+timm==1.0.28
 tokenizers==0.21.1
 torch==2.4.1
 torchaudio==2.4.1
+torchlibrosa==0.1.0
 torchsde==0.2.6
+torchvision==0.19.1
 tqdm==4.67.1
 trampoline==0.1.2
 transformers==4.47.0
@@ -113,4 +118,5 @@ typing-inspection==0.4.3
 tzdata==2026.3
 urllib3==2.7.0
 wandb==0.19.9
+wcwidth==0.8.2
 zipp==4.1.0

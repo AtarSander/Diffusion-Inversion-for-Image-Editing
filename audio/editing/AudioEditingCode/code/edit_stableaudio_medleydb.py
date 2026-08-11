@@ -9,7 +9,7 @@ import numpy as np
 from utils import set_reproducability
 import pandas as pd
 
-from editing.AudioEditingCode.code.env import PATH_AUDIOS_MEDLEY, PATH_PROMPTS_MEDLEY, PATH_EDIT_OUTPUTS
+from env import PATH_AUDIOS_MEDLEY, PATH_PROMPTS_MEDLEY, PATH_EDIT_OUTPUTS
 
 PATH_DIR_OUTPUT = Path(PATH_EDIT_OUTPUTS+"/medleymd").resolve()
 
@@ -114,8 +114,8 @@ def main(
     # Generate run name if not provided
     if run_name is None:
         dt_str = datetime.now().strftime("%Y%m%d%H%M%S")
-        cfg_src_str = "-".join([str(x) for x in cfg_src])
-        cfg_tar_str = "-".join([str(x) for x in cfg_tar])
+        cfg_src_str = str(cfg_src)
+        cfg_tar_str = str(cfg_tar)
         mode_name = mode
         if with_hooks:
             mode_name += "_ours"
