@@ -1,100 +1,90 @@
-#!/bin/bash
-# ABOUTME: Submit the six MedleyMD editing baselines (DDPM-inv, DDIM-inv, SDEdit x AudioLDM2,
-# ABOUTME: Stable Audio) to SLURM on WCSS, one job per (config, shard).
+#!/bin/bash -l
+# ABOUTME: PWR/WCSS array job reproducing the six MedleyMD editing baselines (DDPM-inv,
+# ABOUTME: DDIM-inv, SDEdit) for AudioLDM2 and Stable Audio over the full 696-row benchmark.
+#SBATCH --job-name=medleymd-baselines
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=12
+#SBATCH --mem=100G
+#SBATCH --time=05:00:00
+#SBATCH --gres=gpu:hopper:1
+#SBATCH --array=0-71
+#SBATCH --output=outputs/logs/slurm/baselines-%A_%a.out
+#SBATCH --error=outputs/logs/slurm/baselines-%A_%a.err
 #
-# Prerequisites on the cluster, once:
-#   git pull
-#   cd audio && uv venv --python 3.11 .venv
-#   uv pip install --python .venv/bin/python -r requirements_lorainv.txt
-#   cat > .env <<'EOF'
-#   MEDLEYDB_AUDIO_DIR=/path/to/MedleyDB/V1_mix      # <Track>/<Track>_MIX.wav layout
-#   HF_TOKEN=hf_...                                  # Stable Audio Open is license-gated
-#   EOF
+# Submit from the audio/ directory:
+#   cd /lustre/pd03/hpc-tomtrz0116-1775130553/lstanisz/code/lorainv/audio
+#   mkdir -p outputs/logs/slurm
+#   sbatch --account=$HPC_PWR_ACCOUNT --partition=$HPC_PWR_PARTITION \
+#     editing/AudioEditingCode/code/slurm_scripts/wcss/run_baselines_medleymd.sh
 #
-# Then:  bash slurm_scripts/wcss/run_baselines_medleymd.sh
-# Dry run (print sbatch scripts without submitting): SUBMIT=0 bash .../run_baselines_medleymd.sh
+# Prerequisites, once, on the login node:
+#   module load Python/3.10.4-GCCcore-11.3.0
+#   python -m venv .venv && source .venv/bin/activate
+#   pip install -r requirements_lorainv.txt
+#   python editing/AudioEditingCode/code/slurm_scripts/wcss/prefetch_models.py
+#   # and a .env holding MEDLEYDB_AUDIO_DIR, HF_TOKEN, HF_HOME, EDIT_OUTPUTS_DIR
 
 set -uo pipefail
 
-# --- cluster settings: confirm these match your WCSS allocation -------------------------------
-ACCOUNT="${GRANT_ACCOUNT:?Set GRANT_ACCOUNT (SLURM account)}"
-PARTITION="${GRANT_PARTITION:?Set GRANT_PARTITION (e.g. a GPU partition)}"
-N_CPUS="${N_CPUS:-8}"
-MEM_GB="${MEM_GB:-48}"
-SUBMIT="${SUBMIT:-1}"
+cd "${SLURM_SUBMIT_DIR:-$PWD}"          # expected: <repo>/audio
+set -a; [ -f .env ] && source .env; set +a
 
-CODE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-AUDIO_ROOT="$(cd "$CODE_DIR/../../.." && pwd)"
-PYTHON="$AUDIO_ROOT/.venv/bin/python"
+module load Python/3.10.4-GCCcore-11.3.0
+source .venv/bin/activate
 
-# 12 shards keeps the slowest job (AudioLDM2, ~58 edits at ~280 s) near 4.5 h, comfortably
-# inside an 8 h limit. Measured locally: AudioLDM2 ~280 s/edit, Stable Audio ~94 s/edit.
-N_PARTS="${N_PARTS:-12}"
+# Compute nodes are assumed to have no internet: fail immediately on a cache miss instead of
+# hanging on a network timeout in all 72 tasks. Unset if the nodes are actually online.
+export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
 
-LOG_DIR="$AUDIO_ROOT/outputs/logs/slurm/baselines"
-mkdir -p "$LOG_DIR"
+CODE_DIR="editing/AudioEditingCode/code"
+N_PARTS=12
 
-# script|mode|steps|cfg_src|cfg_tar|tstart|walltime|run_name
+# script|mode|steps|cfg_src|cfg_tar|tstart|run_name
 # DDIM uses tstart == steps: partial inversion is not DDIM inversion, and this is the exact
 # baseline the LoRA inversion is meant to improve.
 CONFIGS=(
-  "edit_audioldm_medleydb.py|ddpm|200|3.0|12.0|100|08:00:00|audioldm2_ddpm_cfgsrc3.0_cfgtar12.0_t100_s200"
-  "edit_audioldm_medleydb.py|ddim|200|3.0|12.0|200|08:00:00|audioldm2_ddim_cfgsrc3.0_cfgtar12.0_t200_s200"
-  "edit_audioldm_medleydb.py|sdedit|200|3.0|12.0|100|08:00:00|audioldm2_sdedit_cfgtar12.0_t100_s200"
-  "edit_stableaudio_medleydb.py|ddpm|100|1.0|3.5|50|04:00:00|stableaudio_ddpm_cfgsrc1.0_cfgtar3.5_t50_s100"
-  "edit_stableaudio_medleydb.py|ddim|100|1.0|3.5|100|04:00:00|stableaudio_ddim_cfgsrc1.0_cfgtar3.5_t100_s100"
-  "edit_stableaudio_medleydb.py|sdedit|100|1.0|3.5|50|04:00:00|stableaudio_sdedit_cfgtar3.5_t50_s100"
+  "edit_audioldm_medleydb.py|ddpm|200|3.0|12.0|100|audioldm2_ddpm_cfgsrc3.0_cfgtar12.0_t100_s200"
+  "edit_audioldm_medleydb.py|ddim|200|3.0|12.0|200|audioldm2_ddim_cfgsrc3.0_cfgtar12.0_t200_s200"
+  "edit_audioldm_medleydb.py|sdedit|200|3.0|12.0|100|audioldm2_sdedit_cfgtar12.0_t100_s200"
+  "edit_stableaudio_medleydb.py|ddpm|100|1.0|3.5|50|stableaudio_ddpm_cfgsrc1.0_cfgtar3.5_t50_s100"
+  "edit_stableaudio_medleydb.py|ddim|100|1.0|3.5|100|stableaudio_ddim_cfgsrc1.0_cfgtar3.5_t100_s100"
+  "edit_stableaudio_medleydb.py|sdedit|100|1.0|3.5|50|stableaudio_sdedit_cfgtar3.5_t50_s100"
 )
 
-echo "code dir : $CODE_DIR"
-echo "python   : $PYTHON"
-echo "shards   : $N_PARTS  -> $(( ${#CONFIGS[@]} * N_PARTS )) jobs"
-echo "logs     : $LOG_DIR"
-[ "$SUBMIT" = "1" ] || echo "SUBMIT=0: printing only, nothing will be queued"
-echo
+TASK_ID="${SLURM_ARRAY_TASK_ID:?This script must run as a SLURM array job}"
+CFG_IDX=$(( TASK_ID / N_PARTS ))
+PART=$(( TASK_ID % N_PARTS ))
+if [ "$CFG_IDX" -ge "${#CONFIGS[@]}" ]; then
+  echo "array index $TASK_ID exceeds ${#CONFIGS[@]} configs x $N_PARTS shards" >&2
+  exit 2
+fi
 
-for cfg in "${CONFIGS[@]}"; do
-  IFS='|' read -r script mode steps cfg_src cfg_tar tstart walltime run_name <<< "$cfg"
-  for part in $(seq 0 $((N_PARTS - 1))); do
-    job_name="${run_name}_p${part}"
-    submission=$(cat <<EOT
-#!/bin/bash -l
-#SBATCH --account=${ACCOUNT}
-#SBATCH --partition=${PARTITION}
-#SBATCH --job-name=${job_name}
-#SBATCH --nodes=1
-#SBATCH --ntasks=1
-#SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=${N_CPUS}
-#SBATCH --mem=${MEM_GB}G
-#SBATCH --time=${walltime}
-#SBATCH --output=${LOG_DIR}/%x-%j.out
-#SBATCH --error=${LOG_DIR}/%x-%j.err
+IFS='|' read -r SCRIPT MODE STEPS CFG_SRC CFG_TAR TSTART RUN_NAME <<< "${CONFIGS[$CFG_IDX]}"
+echo "task=$TASK_ID config=$RUN_NAME shard=$PART/$N_PARTS node=$(hostname)"
+nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 
-set -euo pipefail
-cd "${CODE_DIR}"
+cd "$CODE_DIR"
 
-# env.py reads MEDLEYDB_AUDIO_DIR and HF_TOKEN from audio/.env via load_dotenv.
-"${PYTHON}" "${script}" \\
-  --mode "${mode}" \\
-  --num_diffusion_steps ${steps} \\
-  --cfg_src ${cfg_src} \\
-  --cfg_tar ${cfg_tar} \\
-  --tstart ${tstart} \\
-  --seed 42 \\
-  --n_parts ${N_PARTS} \\
-  --part_id ${part} \\
-  --run_name "${run_name}"
-EOT
-)
-    if [ "$SUBMIT" = "1" ]; then
-      echo "$submission" | sbatch
-    else
-      echo "--- would submit: ${job_name}"
-    fi
-  done
+# Transient filesystem/network failures are common here, so retry like the other WCSS jobs.
+ok=0
+for attempt in 1 2 3; do
+  python "$SCRIPT" \
+    --mode "$MODE" \
+    --num_diffusion_steps "$STEPS" \
+    --cfg_src "$CFG_SRC" \
+    --cfg_tar "$CFG_TAR" \
+    --tstart "$TSTART" \
+    --seed 42 \
+    --n_parts "$N_PARTS" \
+    --part_id "$PART" \
+    --run_name "$RUN_NAME" && { ok=1; break; }
+  echo "attempt $attempt failed for $RUN_NAME shard $PART; retrying in 120s..." >&2
+  sleep 120
 done
 
-echo
-echo "Watch:  squeue -u \$USER"
-echo "Verify: find ${AUDIO_ROOT}/outputs/edits -name 'a*.wav' | wc -l   # target 6 x 696 = 4176"
+if [ "$ok" != 1 ]; then
+  echo "FAILED 3x: $RUN_NAME shard $PART" >&2
+  exit 1
+fi
+echo "done: $RUN_NAME shard $PART"

@@ -13,10 +13,33 @@ Most recent first. Keep this file current — it is the handover doc between ses
 Started the six baselines locally, then **cancelled after 7.7 h** (493/4176 edits) to re-run on
 WCSS. Local partial outputs carry an `INCOMPLETE_PARTIAL_RUN.txt` marker and are **not** results.
 
-**Submit on WCSS:** `audio/editing/AudioEditingCode/code/slurm_scripts/wcss/run_baselines_medleymd.sh`
-— 6 configs × 12 shards = 72 jobs. Dry-run with `SUBMIT=0`. Needs `GRANT_ACCOUNT` and
-`GRANT_PARTITION`, plus a cluster-side `audio/.env` holding `MEDLEYDB_AUDIO_DIR` and `HF_TOKEN`
-(Stable Audio Open is license-gated), and a venv from `audio/requirements_lorainv.txt`.
+**Submit on WCSS (PWR `lem`)** — array job, 6 configs × 12 shards = 72 tasks:
+
+```bash
+cd /lustre/pd03/hpc-tomtrz0116-1775130553/lstanisz/code/lorainv/audio
+module load Python/3.10.4-GCCcore-11.3.0
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements_lorainv.txt
+# .env: MEDLEYDB_AUDIO_DIR, HF_TOKEN, HF_HOME, EDIT_OUTPUTS_DIR  (see .env.example)
+python editing/AudioEditingCode/code/slurm_scripts/wcss/prefetch_models.py   # login node
+mkdir -p outputs/logs/slurm
+sbatch --account=$HPC_PWR_ACCOUNT --partition=$HPC_PWR_PARTITION \
+  editing/AudioEditingCode/code/slurm_scripts/wcss/run_baselines_medleymd.sh
+```
+
+Cluster facts that shaped the script: `gpu:hopper:1` (H100, so the A5000-measured 280 s/edit is
+pessimistic by ~2-3×), `Python/3.10.4-GCCcore-11.3.0` (all our code verified 3.10-compatible;
+the pins are version-based so cp310 wheels resolve fine), venv not conda, `lem-gpu-short` with
+5 h walltime, and a retry loop because transient failures are common there.
+
+`HF_HUB_OFFLINE=1` is exported in the job on the assumption that compute nodes have no
+internet. `load_model` falls back from `local_files_only=True` to `False`, so without a warm
+cache all 72 tasks would each hang on a network timeout rather than fail fast. `prefetch_models.py`
+warms AudioLDM2-large (~7 GB) and Stable Audio Open (~5 GB) on the login node first. Unset
+`HF_HUB_OFFLINE` if the nodes are actually online.
+
+Keep `HF_HOME` and `EDIT_OUTPUTS_DIR` on lustre — `PATH_EDIT_OUTPUTS` defaults to `audio/outputs`
+inside the repo, and 4176 WAVs on a quota-limited `$HOME` would be a problem.
 
 **Configs** (both models × DDPM-inv / DDIM-inv / SDEdit, full 696 rows):
 
