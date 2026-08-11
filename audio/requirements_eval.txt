@@ -23,7 +23,6 @@
 # PYTHONPATH=.:editing/AudioEditingCode because evals/utils.py imports 'evals' as top-level.
 
 annotated-types==0.8.0
-audioldm-eval @ https://github.com/haoheliu/audioldm_eval/archive/8dc07ee7c42f9dc6e295460a1034175a0d49b436.tar.gz
 audioread==3.1.0
 beartype==0.22.9
 braceexpand==0.1.7
