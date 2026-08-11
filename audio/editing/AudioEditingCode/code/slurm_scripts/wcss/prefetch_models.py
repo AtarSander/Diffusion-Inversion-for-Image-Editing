@@ -8,8 +8,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 from huggingface_hub import snapshot_download
 
-# .../code/slurm_scripts/wcss/prefetch_models.py -> .../audio
-AUDIO_ROOT = Path(__file__).resolve().parents[4]
+# wcss -> slurm_scripts -> code -> AudioEditingCode -> editing -> audio
+AUDIO_ROOT = Path(__file__).resolve().parents[5]
+if not (AUDIO_ROOT / "requirements_lorainv.txt").exists():
+    raise RuntimeError(f"AUDIO_ROOT resolved to {AUDIO_ROOT}, which is not the audio/ directory")
 load_dotenv(AUDIO_ROOT / ".env", override=False)
 
 # Stable Audio Open is license-gated: accept the terms on the model page first, then the token
