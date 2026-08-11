@@ -8,6 +8,47 @@ Most recent first. Keep this file current — it is the handover doc between ses
 
 ---
 
+## 2026-08-11 — Baselines moved to WCSS
+
+Started the six baselines locally, then **cancelled after 7.7 h** (493/4176 edits) to re-run on
+WCSS. Local partial outputs carry an `INCOMPLETE_PARTIAL_RUN.txt` marker and are **not** results.
+
+**Submit on WCSS:** `audio/editing/AudioEditingCode/code/slurm_scripts/wcss/run_baselines_medleymd.sh`
+— 6 configs × 12 shards = 72 jobs. Dry-run with `SUBMIT=0`. Needs `GRANT_ACCOUNT` and
+`GRANT_PARTITION`, plus a cluster-side `audio/.env` holding `MEDLEYDB_AUDIO_DIR` and `HF_TOKEN`
+(Stable Audio Open is license-gated), and a venv from `audio/requirements_lorainv.txt`.
+
+**Configs** (both models × DDPM-inv / DDIM-inv / SDEdit, full 696 rows):
+
+| Model | steps | cfg src/tar | tstart |
+| --- | --- | --- | --- |
+| AudioLDM2-large | 200 | 3.0 / 12.0 | 100, DDIM 200 |
+| Stable Audio Open | 100 | 1.0 / 3.5 | 50, DDIM 100 |
+
+DDIM uses `tstart == steps`: partial inversion is not DDIM inversion, and this is the exact
+baseline the LoRA is meant to improve.
+
+**Measured throughput** (use these for walltime, not guesses): AudioLDM2 **~280 s/edit**,
+Stable Audio **~94 s/edit**. My earlier 162 s/edit estimate was wrong by 1.7× because it scaled
+the smoke edit by audio duration, but per-edit fixed costs do not shrink with duration. Full run
+≈ 149 GPU-hours.
+
+**Two bugs fixed — `edit_stableaudio_medleydb.py` had never been runnable:**
+1. Mixed import roots: `from stable_audio_run import` needs `code/` on `sys.path`,
+   `from editing.AudioEditingCode.code.env import` needs `audio/`. It failed from either cwd.
+2. `"-".join([str(x) for x in cfg_src])` on a `float` → `TypeError`, fired with default args
+   because `run_name` defaults to `None`.
+
+**Known waste, worth fixing before the LoRA runs:** `load_model` sits *inside*
+`run_audioldm_edit`, so the model is reloaded from disk for every edit — roughly 20 GPU-hours
+(~13%) across a full 4176-edit sweep. Also a hardcoded `time.sleep(5)` per edit.
+
+**Also note:** Stable Audio writes to `outputs/edits/medleymd/**medleymd**/stable_audio/...` —
+the driver appends `dataset_name` to a path already containing it, so the two models' output
+layouts differ. Left as-is rather than silently changing the layout; the eval step must handle it.
+
+---
+
 ## 2026-08-10 — Data + dataset landed, blocked on GPUs
 
 **Decision: go/no-go first.** Train a rank-8 LoRA on ~1.5k MusicCaps trajectories and measure
