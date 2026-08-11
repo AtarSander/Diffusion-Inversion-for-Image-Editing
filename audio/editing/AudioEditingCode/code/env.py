@@ -34,11 +34,14 @@ PATH_PROMPTS_MEDLEY = str(
     AUDIO_ROOT / "editing/AudioEditingCode/MedleyMDPrompts/captions_gpt5.csv"
 )
 
-# Paired per-example reference for FAD and mel PSNR/SSIM. Must contain a{idx}.wav named to
-# match prepare_dataset() row order, or get_filename_intersection_ratio() silently degrades
-# psnr/ssim to -1. Generated, not shipped.
+# Paired per-example reference for FAD and mel PSNR/SSIM, built by editing/build_lower_bound.py.
+#
+# MUST correspond to the same split as PATH_PROMPTS_MEDLEY above: the drivers name outputs
+# a{idx}.wav by row position, so a full-set reference (a0..a695) paired with a split's edits
+# (a0..a348) overlaps only partially. get_filename_intersection_ratio() then falls below its
+# 0.99 threshold and calculate_psnr_ssim() returns -1 *without raising*. Change both together.
 PATH_LOWER_BOUND_MEDLEY = _from_env(
-    "MEDLEY_LOWER_BOUND_DIR", AUDIO_ROOT / "outputs/medleymd/lower_bound/audios"
+    "MEDLEY_LOWER_BOUND_DIR", AUDIO_ROOT / "outputs/medleymd/lower_bound_full/audios"
 )
 
 # Edited audio lands in <PATH_EDIT_OUTPUTS>/<dataset>/<model>/<run_name>/audios/a{idx}.wav.
