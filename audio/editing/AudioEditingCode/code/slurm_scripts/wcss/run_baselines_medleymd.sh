@@ -33,9 +33,9 @@ set -a; [ -f .env ] && source .env; set +a
 module load Python/3.10.4-GCCcore-11.3.0
 source .venv/bin/activate
 
-# Compute nodes are assumed to have no internet: fail immediately on a cache miss instead of
-# hanging on a network timeout in all 72 tasks. Unset if the nodes are actually online.
-export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
+# lem compute nodes have internet, so a cache miss downloads rather than failing. Still run
+# prefetch_models.py first: 72 tasks each pulling the same ~12 GB is slow and rate-limit prone.
+# Set HF_HUB_OFFLINE=1 when submitting if you want a cold cache to fail fast instead.
 
 CODE_DIR="editing/AudioEditingCode/code"
 N_PARTS=12

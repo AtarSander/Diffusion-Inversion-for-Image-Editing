@@ -84,10 +84,15 @@ def main(check_lower_bound: bool = False) -> None:
         )
         print(f"  {'OK ' if cached else '-- '} {repo}")
         if not cached:
-            problems.append(
-                f"{repo} not cached at {cache}; run slurm_scripts/wcss/prefetch_models.py "
-                "on a login node (compute nodes may be offline)"
+            message = (
+                f"{repo} not cached at {cache}; run slurm_scripts/wcss/prefetch_models.py first"
             )
+            if offline:
+                problems.append(message + " (HF_HUB_OFFLINE is set, so jobs cannot download)")
+            else:
+                # Nodes with internet will fetch it, but 72 tasks pulling ~12 GB each is slow
+                # and rate-limit prone, so this stays a warning rather than a hard stop.
+                print(f"      WARNING: {message}")
     if not os.environ.get("HF_TOKEN"):
         problems.append("HF_TOKEN unset; " + ", ".join(GATED_REPOS) + " is license-gated")
 
