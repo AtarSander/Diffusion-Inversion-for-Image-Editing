@@ -220,7 +220,14 @@ class MusicAlignmentEval:
                 generate_files_path, groundtruth_path, limit_num=limit_num, store_embds=False
             )
             print(f"{fad_score=}")
-            out.update(fad_score)
+            if isinstance(fad_score, dict):
+                out.update(fad_score)
+            else:
+                # FrechetAudioDistance returns -1 instead of a dict when sqrtm of the
+                # covariance product comes back too complex to trust. Record that as a failed
+                # measurement rather than crashing, so the paired psnr/ssim still get computed.
+                print(f"FAD failed (returned {fad_score!r}); reporting frechet_audio_distance=nan")
+                out["frechet_audio_distance"] = float("nan")
 
         cache_path = groundtruth_path + "classifier_logits_feature_cache.pkl"
         if os.path.exists(cache_path) and not recalculate:
