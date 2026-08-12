@@ -157,10 +157,23 @@ class MusicAlignmentEval:
         return result
 
     def calculate_psnr_ssim(self, pairedloader, same_name=True):
+        """Mel-domain PSNR and SSIM between each paired file, averaged.
+
+        Also returns the per-file values, which the caller needs to report a standard error or
+        to break the aggregate down by edit class.
+
+        Args:
+            pairedloader: Loader over (generated mel, reference mel, filename, _), batch size 1.
+            same_name: Whether the two directories pair up by filename.
+
+        Returns:
+            Mean psnr and ssim, plus `psnr_ssim_per_file` mapping filename to both values.
+        """
         if same_name == False:
-            return {"psnr": -1, "ssim": -1}
+            return {"psnr": -1, "ssim": -1, "psnr_ssim_per_file": {}}
         psnr_avg = []
         ssim_avg = []
+        per_file = {}
         print(f"{len(pairedloader)=}")
         for mel_gen, mel_target, filename, _ in tqdm(pairedloader):
             mel_gen = mel_gen.cpu().numpy()[0]
@@ -171,8 +184,14 @@ class MusicAlignmentEval:
                 continue
             psnr_avg.append(psnrval)
             data_range = max(np.max(mel_gen), np.max(mel_target)) - min(np.min(mel_gen), np.min(mel_target))
-            ssim_avg.append(ssim(mel_gen, mel_target, data_range=data_range))
-        return {"psnr": np.mean(psnr_avg), "ssim": np.mean(ssim_avg)}
+            ssimval = ssim(mel_gen, mel_target, data_range=data_range)
+            ssim_avg.append(ssimval)
+            per_file[filename[0]] = {"psnr": float(psnrval), "ssim": float(ssimval)}
+        return {
+            "psnr": np.mean(psnr_avg),
+            "ssim": np.mean(ssim_avg),
+            "psnr_ssim_per_file": per_file,
+        }
 
     def calculate_metrics(
         self,
@@ -296,6 +315,7 @@ class MusicAlignmentEval:
             "ssim": f"{out.get('ssim', float('nan')):.3f}",
             "inception_score_mean": f"{out.get('inception_score_mean', float('nan')):.3f}",
             "inception_score_std": f"{out.get('inception_score_std', float('nan')):.3f}",
+            "psnr_ssim_per_file": out.get("psnr_ssim_per_file", {}),
         }
 
         json_path = os.path.join(

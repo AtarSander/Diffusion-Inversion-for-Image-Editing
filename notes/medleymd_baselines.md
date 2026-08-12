@@ -18,8 +18,9 @@ indices and partition it exactly, so any split can be recovered from the per-exa
 filtering on `audio_idx` — no re-run needed for LPAPS/CLAP/MuLan. Checked: test-split means
 differ from full by ≤0.02 on every cell, and the DDIM-vs-DDPM gap is unchanged.
 
-PSNR/SSIM cannot be recovered that way: `calculate_psnr_ssim` averages internally and returns
-only the mean, so a split value needs `MusicAlignmentEval` re-run over a filtered directory.
+PSNR/SSIM are recoverable the same way from `psnr_ssim_per_file.csv`, once a run has been scored
+by a version of `calculate_psnr_ssim` that returns per-file values (added 2026-08-12). The six
+runs currently on disk predate it, so for now a split PSNR/SSIM still needs a re-run.
 
 When the LoRA lands it *does* have hyperparameters (rank, scale, `active_fraction`). Tuning on
 `hparam` and reporting on full puts those 115 rows inside the reported 696 — 17% overlap and
@@ -30,8 +31,9 @@ mildly optimistic. Report on `loc`+`test` (581 rows, disjoint from tuning) if th
 200 steps, cfg_src 3.0 / cfg_tar 12.0, tstart 100 (DDIM 200). Output 16 kHz mono, source
 truncated to 60 s.
 
-Values are mean ± SEM over the 696 examples. PSNR/SSIM have no spread: `calculate_psnr_ssim`
-averages internally and returns only the mean.
+Values are mean ± SEM over the 696 examples. PSNR/SSIM show no error bar yet: the six runs on
+disk predate the change that makes `calculate_psnr_ssim` return per-file values, so their errors
+arrive with the next eval run (see "Re-running the eval").
 
 | Method | LPAPS ↓ | mel PSNR ↑ | mel SSIM ↑ | CLAP ↑ | MuLan ↑ | CLAP_dir ↑ | MuLan_dir ↑ | FAD ↓ |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -223,7 +225,12 @@ feature extraction over both directories entirely — currently it is computed a
 
 ## Re-running the eval
 
-Done on 2026-08-12 (SLURM 5689403, all six tasks `done:`, 696/696 intersection each). To repeat:
+**Outstanding: one more pass is needed for the PSNR/SSIM error bars.** `calculate_psnr_ssim` now
+returns per-file values and `eval_medley` writes `psnr_ssim_per_file.csv` plus `psnr_sem`/
+`ssim_sem`, but the runs on disk were scored before that. Nothing else changes; every other cell
+is already final.
+
+Last run 2026-08-12 (SLURM 5689403, all six tasks `done:`, 696/696 intersection each). To repeat:
 
     cd <repo>/audio
     bash editing/AudioEditingCode/code/slurm_scripts/wcss/submit_eval.sh

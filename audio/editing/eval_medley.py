@@ -379,6 +379,16 @@ def ensure_resampled(source_dir: Path, target_sr: int) -> Path:
     return resampled_dir
 
 def calculate_source_distance_metrics(device: torch.device, path_edited_audio: str, path_lower_bound: str):
+    """Score the edits against the per-example source reference in the mel domain.
+
+    Args:
+        device: Torch device.
+        path_edited_audio: Directory of `a{idx}.wav` edits.
+        path_lower_bound: Directory of the paired source references.
+
+    Returns:
+        The aggregate metrics (with `psnr_sem`/`ssim_sem` added) and the per-file psnr/ssim frame.
+    """
     path_edited_audio_resampled = ensure_resampled(Path(path_edited_audio).resolve(), 32000)
     path_lower_bound_resampled = ensure_resampled(Path(path_lower_bound).resolve(), 32000)
 
@@ -407,7 +417,16 @@ def calculate_source_distance_metrics(device: torch.device, path_edited_audio: s
             raise ValueError(
                 f"{key}={metrics[key]} is the sentinel for a paired-metric failure, not a score."
             )
-    return metrics
+
+    per_file = pd.DataFrame.from_dict(metrics.pop("psnr_ssim_per_file"), orient="index")
+    per_file.index.name = "filename"
+    assert len(per_file) == len(edited_names), (
+        f"{len(per_file)} per-file psnr/ssim rows for {len(edited_names)} edits: "
+        "some pairs were dropped, so the mean and its error cover different sets"
+    )
+    metrics["psnr_sem"] = f"{per_file['psnr'].sem():.3f}"
+    metrics["ssim_sem"] = f"{per_file['ssim'].sem():.3f}"
+    return metrics, per_file
 
 
 def main(path_audio: str, limit: int | None = None):
@@ -508,7 +527,8 @@ def main(path_audio: str, limit: int | None = None):
         print("smoke run: PSNR/SSIM need the whole directory, skipping. Re-run without --limit.")
         return
 
-    source_distance_metrics = calculate_source_distance_metrics(device=device, path_edited_audio=path_audio, path_lower_bound=PATH_LOWER_BOUND_MEDLEY)
+    source_distance_metrics, psnr_ssim_per_file = calculate_source_distance_metrics(device=device, path_edited_audio=path_audio, path_lower_bound=PATH_LOWER_BOUND_MEDLEY)
+    psnr_ssim_per_file.to_csv((path_save_metrics / "psnr_ssim_per_file.csv"))
 
     with open((path_save_metrics / "source_distance_metrics.json"), "w") as f:
         json.dump(source_distance_metrics, f)

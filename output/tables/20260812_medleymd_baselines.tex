@@ -10,6 +10,10 @@
 %
 % CLAP_dir / MuLan_dir and the corrected Stable Audio MuLan column come from the eval re-run of
 % 2026-08-12 (SLURM 5689403), after the stereo batching fix in 32582db.
+%
+% mel PSNR/SSIM still carry no error bar: calculate_psnr_ssim now returns per-file values, but
+% the six runs on disk predate that change. The next eval run fills them in; regenerate the rows
+% with output/tables/emit_table_rows.py.
 
 \begin{table}[t]
   \centering
@@ -18,8 +22,7 @@
     against the target caption. The directional scores are the cosine between the audio edit
     direction $E(\text{edit}) - E(\text{source})$ and the caption edit direction
     $E(T_{\text{tar}}) - E(T_{\text{src}})$, so returning the input unchanged scores $0$.
-    Subscripts are standard errors of the mean over the 696 examples; mel PSNR/SSIM carry none
-    because the paired evaluator returns only the average. Best per panel in bold.
+    Subscripts are standard errors of the mean over the 696 examples. Best per panel in bold.
     \textbf{The two panels must not be compared against each other}: AudioLDM2 synthesises at
     16\,kHz and retains only $\sim$19\% of the reference energy above 8\,kHz (Stable Audio
     $\sim$88\%), and the paired mel metrics read the first channel only, so Stable Audio is
