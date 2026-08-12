@@ -7,7 +7,11 @@ from pathlib import Path
 import fire
 import pandas as pd
 
-from editing.AudioEditingCode.code.env import PATH_AUDIOS_MEDLEY, PATH_PROMPTS_MEDLEY
+from editing.AudioEditingCode.code.env import (
+    PATH_AUDIOS_MEDLEY,
+    PATH_LOWER_BOUND_MEDLEY,
+    PATH_PROMPTS_MEDLEY,
+)
 
 # Splits produced by notebooks/08_create_medley_small.ipynb, stratified by `edit`.
 SPLIT_CSVS = {
@@ -74,19 +78,36 @@ def main(
     Args:
         splits: Comma-separated subset of full,hparam,test,loc. Fire turns a comma-separated
             argument into a tuple, so both forms are accepted.
-        out_root: Destination root; defaults to `audio/outputs/medleymd`.
+        out_root: Destination root. Defaults to the directory implied by
+            PATH_LOWER_BOUND_MEDLEY, so the builder and eval_medley cannot disagree.
         overwrite: Re-copy files that already exist.
     """
-    root = (
-        Path(out_root).resolve()
-        if out_root
-        else (Path(__file__).resolve().parents[1] / "outputs/medleymd")
-    )
+    # PATH_LOWER_BOUND_MEDLEY is <root>/lower_bound_<split>/audios, so its grandparent is the
+    # root this script writes under. Deriving it keeps the two in sync when .env moves the
+    # reference off the repo filesystem.
+    configured = Path(PATH_LOWER_BOUND_MEDLEY)
+    root = Path(out_root).resolve() if out_root else configured.parents[1]
+    if not out_root and not configured.name == "audios":
+        raise ValueError(
+            f"PATH_LOWER_BOUND_MEDLEY should end in <lower_bound_split>/audios, got {configured}. "
+            "Pass --out_root explicitly."
+        )
+
     names = splits.split(",") if isinstance(splits, str) else list(splits)
+    built = []
     for split in [str(s).strip() for s in names if str(s).strip()]:
         if split not in SPLIT_CSVS:
             raise ValueError(f"Unknown split {split!r}; expected one of {list(SPLIT_CSVS)}")
-        build_split(split, root, overwrite=overwrite)
+        built.append(build_split(split, root, overwrite=overwrite))
+
+    # The eval reads exactly this path; say plainly whether it is now populated.
+    n = len(list(configured.glob("a*.wav"))) if configured.exists() else 0
+    print(f"\nPATH_LOWER_BOUND_MEDLEY = {configured}")
+    print(f"  contains {n} reference wavs")
+    if n == 0:
+        print("  WARNING: eval_medley reads this path and will fail. Built instead:")
+        for path in built:
+            print(f"    {path}")
 
 
 if __name__ == "__main__":
