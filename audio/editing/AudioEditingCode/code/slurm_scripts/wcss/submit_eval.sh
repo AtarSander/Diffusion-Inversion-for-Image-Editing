@@ -27,6 +27,20 @@ set -a; source .env; set +a
 # SLURM will not create the log directory, and tasks die without output if it is missing.
 mkdir -p outputs/logs/slurm
 
+# All array tasks share the reference directory, so if they each try to build its 32 kHz cache
+# they race: one creates the directory and the rest read it half filled. Build it once here,
+# serially, so every task finds it complete. ensure_resampled is idempotent.
+echo "==> preparing the shared reference cache (once, before the array)"
+PYTHONPATH="$AUDIO_ROOT:$AUDIO_ROOT/editing/AudioEditingCode" .venv_eval/bin/python - <<'PYCODE'
+from pathlib import Path
+
+from editing.AudioEditingCode.code.env import PATH_LOWER_BOUND_MEDLEY
+from editing.eval_medley import ensure_resampled
+
+out = ensure_resampled(Path(PATH_LOWER_BOUND_MEDLEY), 32000)
+print(f"    reference cache ready: {out} ({len(list(out.glob('*.wav')))} wavs)")
+PYCODE
+
 echo "account   : $HPC_PWR_ACCOUNT"
 echo "partition : $HPC_PWR_PARTITION"
 echo "submitting from: $AUDIO_ROOT"

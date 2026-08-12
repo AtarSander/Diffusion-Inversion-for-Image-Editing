@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 from pathlib import Path
 
 import fire
@@ -168,18 +169,59 @@ def resample_audios(path_audio_orignal: Path, path_audio_resampled: Path, target
         audio = Resample(sr, target_sr)(audio)
         torchaudio.save(path_audio_resampled / file.name, audio, target_sr)
 
-def calculate_source_distance_metrics(device: torch.device, path_edited_audio: str, path_lower_bound: str):
-    path_edited_audio = Path(path_edited_audio).resolve()
-    path_edited_audio_resampled = (path_edited_audio.parent / f"{path_edited_audio.name}_32k").resolve()
-    if not path_edited_audio_resampled.exists():
-        path_edited_audio_resampled.mkdir(parents=True, exist_ok=True)
-        resample_audios(path_edited_audio, path_edited_audio_resampled, 32000)
 
-    path_lower_bound = Path(path_lower_bound).resolve()
-    path_lower_bound_resampled = (path_lower_bound.parent / f"{path_lower_bound.name}_32k").resolve()
-    if not path_lower_bound_resampled.exists():
-        path_lower_bound_resampled.mkdir(parents=True, exist_ok=True)
-        resample_audios(path_lower_bound, path_lower_bound_resampled, 32000)
+def ensure_resampled(source_dir: Path, target_sr: int) -> Path:
+    """Return a `<name>_32k` sibling of `source_dir`, building it once and atomically.
+
+    Array tasks share the reference directory, so a plain `if not exists: resample` lets one
+    task create the directory while the others observe it half filled and score against a
+    partial set. Building into a private temporary directory and renaming means the cache only
+    ever becomes visible complete.
+
+    Args:
+        source_dir: Directory of wavs to resample.
+        target_sr: Sample rate the metrics run at.
+
+    Returns:
+        Directory holding the resampled copies.
+    """
+    expected = len(list(source_dir.glob("*.wav")))
+    if expected == 0:
+        raise FileNotFoundError(f"No wavs to resample in {source_dir}")
+
+    resampled_dir = source_dir.parent / f"{source_dir.name}_{target_sr // 1000}k"
+    if resampled_dir.exists():
+        found = len(list(resampled_dir.glob("*.wav")))
+        if found == expected:
+            return resampled_dir
+        # A leftover partial cache, e.g. from an interrupted run. Drop it rather than scoring
+        # against it or demanding manual cleanup.
+        print(f"Rebuilding incomplete cache {resampled_dir} ({found}/{expected} wavs)")
+        shutil.rmtree(resampled_dir, ignore_errors=True)
+
+    staging = source_dir.parent / f".{source_dir.name}_{target_sr // 1000}k.tmp.{os.getpid()}"
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir(parents=True)
+    resample_audios(source_dir, staging, target_sr)
+
+    try:
+        staging.rename(resampled_dir)
+    except OSError:
+        # Another task finished first; its directory is complete, so use it and drop ours.
+        shutil.rmtree(staging, ignore_errors=True)
+
+    found = len(list(resampled_dir.glob("*.wav")))
+    if found != expected:
+        raise RuntimeError(
+            f"Resampled cache {resampled_dir} has {found} wavs but {source_dir} has {expected}. "
+            "Delete it and re-run."
+        )
+    return resampled_dir
+
+def calculate_source_distance_metrics(device: torch.device, path_edited_audio: str, path_lower_bound: str):
+    path_edited_audio_resampled = ensure_resampled(Path(path_edited_audio).resolve(), 32000)
+    path_lower_bound_resampled = ensure_resampled(Path(path_lower_bound).resolve(), 32000)
 
     # get_filename_intersection_ratio() needs >99% overlap; below that it sets same_name=False
     # and calculate_psnr_ssim() returns -1 instead of raising. Catch the mismatch here, where
