@@ -1,0 +1,73 @@
+% ABOUTME: LaTeX tables for the MedleyMD editing baselines (DDPM-inv / DDIM-inv / SDEdit on
+% ABOUTME: AudioLDM2-large and Stable Audio Open 1.0) plus the exact editing hyperparameters.
+%
+% Source numbers: notes/medleymd_baselines.md, repo commit 81d03d9.
+% Runs: audio/outputs/edits/medleymd/, 696 edits per method (full captions_gpt5.csv).
+% Requires: \usepackage{booktabs}, \usepackage{multirow}
+%
+% FAD is omitted: sqrtm(sigma1 @ sigma2) returns complex (imag 0.157) because MedleyMD has only
+% 35 unique excerpts, so the 128x128 VGGish covariance is near-singular and the metric returns -1.
+
+\begin{table}[t]
+  \centering
+  \caption{Text-guided audio editing on MedleyMD (696 edits per row, 35 MusicDelta excerpts).
+    Preservation (LPAPS, mel PSNR/SSIM) is measured against the \emph{input} audio; adherence
+    (CLAP, MuLan) against the target caption. Best per panel in bold.
+    \textbf{The two panels must not be compared against each other}: AudioLDM2 synthesises at
+    16\,kHz and retains only $\sim$19\% of the reference energy above 8\,kHz (Stable Audio
+    $\sim$88\%), and the paired mel metrics read the first channel only, so Stable Audio is
+    scored left-against-left while AudioLDM2 is scored as a downmix. Within a model every method
+    carries the identical handicap.}
+  \label{tab:medleymd-baselines}
+  \begin{tabular}{llccccc}
+    \toprule
+    Model & Method & LPAPS $\downarrow$ & CLAP $\uparrow$ & MuLan $\uparrow$ & mel PSNR $\uparrow$ & mel SSIM $\uparrow$ \\
+    \midrule
+    \multirow{3}{*}{AudioLDM2-large}
+      & DDPM-inv & $\mathbf{4.841}_{\pm 0.652}$ & $0.354_{\pm 0.095}$ & $0.296_{\pm 0.149}$ & $\mathbf{18.57}$ & $\mathbf{0.576}$ \\
+      & DDIM-inv & $6.070_{\pm 0.567}$ & $0.352_{\pm 0.110}$ & $\mathbf{0.343}_{\pm 0.142}$ & $14.70$ & $0.341$ \\
+      & SDEdit   & $5.597_{\pm 0.547}$ & $\mathbf{0.357}_{\pm 0.094}$ & $0.294_{\pm 0.142}$ & $18.03$ & $0.425$ \\
+    \midrule
+    \multirow{3}{*}{Stable Audio Open}
+      & DDPM-inv & $\mathbf{3.502}_{\pm 0.661}$ & $0.281_{\pm 0.109}$ & $0.188_{\pm 0.194}$ & $\mathbf{21.48}$ & $\mathbf{0.644}$ \\
+      & DDIM-inv & $4.326_{\pm 0.673}$ & $0.285_{\pm 0.104}$ & $0.199_{\pm 0.170}$ & $17.05$ & $0.530$ \\
+      & SDEdit   & $6.193_{\pm 0.410}$ & $\mathbf{0.329}_{\pm 0.091}$ & $\mathbf{0.231}_{\pm 0.141}$ & $16.07$ & $0.228$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{table}[t]
+  \centering
+  \caption{Editing hyperparameters for every run in Table~\ref{tab:medleymd-baselines}.
+    $T_{\text{start}}$ is the reverse-process start step and $\text{skip} = S - T_{\text{start}}$.
+    DDIM uses $T_{\text{start}} = S$: partial inversion is not DDIM inversion. SDEdit performs no
+    inversion, so $w_{\text{src}}$ is unused. $\eta = 1$ applies only to the DDPM-inversion
+    forward process. All runs: seed 42, empty negative prompt, no cross-attention hooks,
+    source caption as the inversion prompt and target caption as the denoising prompt.}
+  \label{tab:medleymd-hparams}
+  \begin{tabular}{llcccccc}
+    \toprule
+    Model & Method & Steps $S$ & $T_{\text{start}}$ & skip & $w_{\text{src}}$ & $w_{\text{tar}}$ & $\eta$ \\
+    \midrule
+    \multirow{3}{*}{AudioLDM2-large}
+      & DDPM-inv & 200 & 100 & 100 & 3.0 & 12.0 & 1.0 \\
+      & DDIM-inv & 200 & 200 & 0   & 3.0 & 12.0 & --- \\
+      & SDEdit   & 200 & 100 & 100 & --- & 12.0 & --- \\
+    \midrule
+    \multirow{3}{*}{Stable Audio Open 1.0}
+      & DDPM-inv & 100 & 50  & 50  & 1.0 & 3.5  & 1.0 \\
+      & DDIM-inv & 100 & 100 & 0   & 1.0 & 3.5  & --- \\
+      & SDEdit   & 100 & 50  & 50  & --- & 3.5  & --- \\
+    \bottomrule
+  \end{tabular}
+
+  \vspace{0.5em}
+  \parbox{\linewidth}{\footnotesize
+    \textbf{Fixed per model.} AudioLDM2: \texttt{cvssp/audioldm2-large}, $\epsilon$-prediction
+    with \texttt{DDIMScheduler}, source truncated to 60\,s, output 16\,kHz mono.
+    Stable Audio: \texttt{stabilityai/stable-audio-open-1.0}, output 44.1\,kHz stereo, length
+    capped near 47.5\,s by the transformer's \texttt{sample\_size}.
+    DDPM-inversion additionally uses \texttt{numerical\_fix=True}, \texttt{fix\_alpha}$=0.1$ and
+    no cutoff points (single prompt segment).
+    Evaluation resamples both directories to 32\,kHz.}
+\end{table}
