@@ -18,7 +18,8 @@
     against the target caption. The directional scores are the cosine between the audio edit
     direction $E(\text{edit}) - E(\text{source})$ and the caption edit direction
     $E(T_{\text{tar}}) - E(T_{\text{src}})$, so returning the input unchanged scores $0$.
-    Best per panel in bold.
+    Subscripts are standard errors of the mean over the 696 examples; mel PSNR/SSIM carry none
+    because the paired evaluator returns only the average. Best per panel in bold.
     \textbf{The two panels must not be compared against each other}: AudioLDM2 synthesises at
     16\,kHz and retains only $\sim$19\% of the reference energy above 8\,kHz (Stable Audio
     $\sim$88\%), and the paired mel metrics read the first channel only, so Stable Audio is
@@ -34,14 +35,14 @@
       & CLAP $\uparrow$ & MuLan $\uparrow$ & CLAP$_{\text{dir}}$ $\uparrow$ & MuLan$_{\text{dir}}$ $\uparrow$ \\
     \midrule
     \multirow{3}{*}{AudioLDM2-large}
-      & DDPM-inv & $\mathbf{4.841}_{\pm 0.652}$ & $\mathbf{18.57}$ & $\mathbf{0.576}$ & $0.354_{\pm 0.095}$ & $0.296_{\pm 0.149}$ & $0.196_{\pm 0.144}$ & $0.318_{\pm 0.213}$ \\
-      & DDIM-inv & $6.070_{\pm 0.567}$ & $14.70$ & $0.341$ & $0.352_{\pm 0.110}$ & $\mathbf{0.343}_{\pm 0.142}$ & $\mathbf{0.263}_{\pm 0.151}$ & $\mathbf{0.378}_{\pm 0.203}$ \\
-      & SDEdit   & $5.597_{\pm 0.547}$ & $18.03$ & $0.425$ & $\mathbf{0.357}_{\pm 0.094}$ & $0.294_{\pm 0.142}$ & $0.197_{\pm 0.149}$ & $0.306_{\pm 0.213}$ \\
+      & DDPM-inv & $\mathbf{4.841}_{\pm 0.025}$ & $\mathbf{18.57}$ & $\mathbf{0.576}$ & $0.354_{\pm 0.004}$ & $0.296_{\pm 0.006}$ & $0.196_{\pm 0.005}$ & $0.318_{\pm 0.008}$ \\
+      & DDIM-inv & $6.070_{\pm 0.021}$ & $14.70$ & $0.341$ & $0.352_{\pm 0.004}$ & $\mathbf{0.343}_{\pm 0.005}$ & $\mathbf{0.263}_{\pm 0.006}$ & $\mathbf{0.378}_{\pm 0.008}$ \\
+      & SDEdit   & $5.597_{\pm 0.021}$ & $18.03$ & $0.425$ & $\mathbf{0.357}_{\pm 0.004}$ & $0.294_{\pm 0.005}$ & $0.197_{\pm 0.006}$ & $0.306_{\pm 0.008}$ \\
     \midrule
     \multirow{3}{*}{Stable Audio Open}
-      & DDPM-inv & $\mathbf{3.502}_{\pm 0.661}$ & $\mathbf{21.48}$ & $\mathbf{0.644}$ & $0.281_{\pm 0.109}$ & $0.197_{\pm 0.179}$ & $0.155_{\pm 0.130}$ & $0.184_{\pm 0.166}$ \\
-      & DDIM-inv & $4.326_{\pm 0.673}$ & $17.05$ & $0.530$ & $0.285_{\pm 0.104}$ & $0.196_{\pm 0.160}$ & $0.185_{\pm 0.140}$ & $0.254_{\pm 0.167}$ \\
-      & SDEdit   & $6.193_{\pm 0.410}$ & $16.07$ & $0.228$ & $\mathbf{0.329}_{\pm 0.091}$ & $\mathbf{0.247}_{\pm 0.146}$ & $\mathbf{0.259}_{\pm 0.160}$ & $\mathbf{0.331}_{\pm 0.191}$ \\
+      & DDPM-inv & $\mathbf{3.502}_{\pm 0.025}$ & $\mathbf{21.48}$ & $\mathbf{0.644}$ & $0.281_{\pm 0.004}$ & $0.197_{\pm 0.007}$ & $0.155_{\pm 0.005}$ & $0.184_{\pm 0.006}$ \\
+      & DDIM-inv & $4.326_{\pm 0.026}$ & $17.05$ & $0.530$ & $0.285_{\pm 0.004}$ & $0.196_{\pm 0.006}$ & $0.185_{\pm 0.005}$ & $0.254_{\pm 0.006}$ \\
+      & SDEdit   & $6.193_{\pm 0.016}$ & $16.07$ & $0.228$ & $\mathbf{0.329}_{\pm 0.003}$ & $\mathbf{0.247}_{\pm 0.006}$ & $\mathbf{0.259}_{\pm 0.006}$ & $\mathbf{0.331}_{\pm 0.007}$ \\
     \bottomrule
   \end{tabular}
 \end{table}

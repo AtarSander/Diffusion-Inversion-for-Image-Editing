@@ -30,11 +30,14 @@ mildly optimistic. Report on `loc`+`test` (581 rows, disjoint from tuning) if th
 200 steps, cfg_src 3.0 / cfg_tar 12.0, tstart 100 (DDIM 200). Output 16 kHz mono, source
 truncated to 60 s.
 
+Values are mean ± SEM over the 696 examples. PSNR/SSIM have no spread: `calculate_psnr_ssim`
+averages internally and returns only the mean.
+
 | Method | LPAPS ↓ | mel PSNR ↑ | mel SSIM ↑ | CLAP ↑ | MuLan ↑ | CLAP_dir ↑ | MuLan_dir ↑ | FAD ↓ |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| DDPM-inv | **4.841** ± 0.652 | **18.572** | **0.576** | 0.354 ± 0.095 | 0.296 ± 0.149 | 0.196 ± 0.144 | 0.318 ± 0.213 | n/a |
-| DDIM-inv | 6.070 ± 0.567 | 14.703 | 0.341 | 0.352 ± 0.110 | **0.343** ± 0.142 | **0.263** ± 0.151 | **0.378** ± 0.203 | n/a |
-| SDEdit | 5.597 ± 0.547 | 18.032 | 0.425 | **0.357** ± 0.094 | 0.294 ± 0.142 | 0.197 ± 0.149 | 0.306 ± 0.213 | n/a |
+| DDPM-inv | **4.841** ± 0.025 | **18.572** | **0.576** | 0.354 ± 0.004 | 0.296 ± 0.006 | 0.196 ± 0.005 | 0.318 ± 0.008 | n/a |
+| DDIM-inv | 6.070 ± 0.021 | 14.703 | 0.341 | 0.352 ± 0.004 | **0.343** ± 0.005 | **0.263** ± 0.006 | **0.378** ± 0.008 | n/a |
+| SDEdit | 5.597 ± 0.021 | 18.032 | 0.425 | **0.357** ± 0.004 | 0.294 ± 0.005 | 0.197 ± 0.006 | 0.306 ± 0.008 | n/a |
 
 **DDIM-inv vs DDPM-inv: −3.87 dB PSNR, +25% LPAPS, SSIM 0.341 vs 0.576.** That is the headroom
 the inversion LoRA has to recover.
@@ -46,9 +49,9 @@ the inversion LoRA has to recover.
 
 | Method | LPAPS ↓ | mel PSNR ↑ | mel SSIM ↑ | CLAP ↑ | MuLan ↑ | CLAP_dir ↑ | MuLan_dir ↑ | FAD ↓ |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| DDPM-inv | **3.502** ± 0.661 | **21.482** | **0.644** | 0.281 ± 0.109 | 0.197 ± 0.179 | 0.155 ± 0.130 | 0.184 ± 0.166 | n/a |
-| DDIM-inv | 4.326 ± 0.673 | 17.048 | 0.530 | 0.285 ± 0.104 | 0.196 ± 0.160 | 0.185 ± 0.140 | 0.254 ± 0.167 | n/a |
-| SDEdit | 6.193 ± 0.410 | 16.070 | 0.228 | **0.329** ± 0.091 | **0.247** ± 0.146 | **0.259** ± 0.160 | **0.331** ± 0.191 | n/a |
+| DDPM-inv | **3.502** ± 0.025 | **21.482** | **0.644** | 0.281 ± 0.004 | 0.197 ± 0.007 | 0.155 ± 0.005 | 0.184 ± 0.006 | n/a |
+| DDIM-inv | 4.326 ± 0.026 | 17.048 | 0.530 | 0.285 ± 0.004 | 0.196 ± 0.006 | 0.185 ± 0.005 | 0.254 ± 0.006 | n/a |
+| SDEdit | 6.193 ± 0.016 | 16.070 | 0.228 | **0.329** ± 0.003 | **0.247** ± 0.006 | **0.259** ± 0.006 | **0.331** ± 0.007 | n/a |
 
 **DDIM-inv vs DDPM-inv: −4.43 dB PSNR, +24% LPAPS, SSIM 0.530 vs 0.644.**
 
