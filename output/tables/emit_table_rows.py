@@ -28,6 +28,8 @@ COLUMNS = [
     ("MuLan", "mulan_to_target_prompt.csv", "muqt_sim_p0"),
     ("CLAP_dir", "directional_to_prompts.csv", "clap_dir"),
     ("MuLan_dir", "directional_to_prompts.csv", "mulan_dir"),
+    ("psnr", "psnr_ssim_per_file.csv", "psnr"),
+    ("ssim", "psnr_ssim_per_file.csv", "ssim"),
 ]
 
 
@@ -38,9 +40,17 @@ def stats(run: Path) -> dict[str, tuple[float, float]]:
         series = pd.read_csv(run / filename, index_col=0)[column]
         assert len(series) == 696, f"{run.name}/{filename}: {len(series)} rows, expected 696"
         out[label] = (series.mean(), series.sem())
+
+    # The aggregates the eval reported must match what the per-file CSVs say, or the table and
+    # source_distance_metrics.json would disagree about the same run.
     distances = json.loads((run / "source_distance_metrics.json").read_text())
-    out["psnr"] = (float(distances["psnr"]), None)
-    out["ssim"] = (float(distances["ssim"]), None)
+    for key in ("psnr", "ssim"):
+        assert abs(out[key][0] - float(distances[key])) < 5e-4, (
+            f"{run.name}: {key} per-file mean {out[key][0]:.4f} != reported {distances[key]}"
+        )
+        assert abs(out[key][1] - float(distances[f"{key}_sem"])) < 5e-4, (
+            f"{run.name}: {key} per-file sem {out[key][1]:.4f} != reported {distances[f'{key}_sem']}"
+        )
     return out
 
 
@@ -63,14 +73,7 @@ for model, methods in results.items():
         cells = []
         for metric in ORDER:
             mean, sem = methods[method][metric]
-            digits = 2 if metric == "psnr" else 3
-            body = f"{mean:.{digits}f}" if sem is None else f"{mean:.3f}_{{\\pm {sem:.3f}}}"
-            if methods[method][metric][0] == methods[best[metric]][metric][0]:
-                body = (
-                    f"\\mathbf{{{mean:.{digits}f}}}"
-                    if sem is None
-                    else f"\\mathbf{{{mean:.3f}}}_{{\\pm {sem:.3f}}}"
-                )
-            cells.append(f"${body}$")
+            value = f"\\mathbf{{{mean:.3f}}}" if method == best[metric] else f"{mean:.3f}"
+            cells.append(f"${value}_{{\\pm {sem:.3f}}}$")
         print(f"      & {method:8s} & " + " & ".join(cells) + r" \\")
     print(r"    \midrule")
