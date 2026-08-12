@@ -30,6 +30,14 @@ from src.inversion_lora.dataset import (  # noqa: E402
     collate_trajectory_batch,
     split_sample_ids,
 )
+from src.inversion_lora.noise_metrics import noise_report  # noqa: E402
+from src.inversion_lora.reconstruct import (  # noqa: E402
+    generate_eval_latents,
+    held_out_prompts,
+    load_real_latents,
+    real_audio_fixtures,
+    reconstruction_metrics,
+)
 
 FROZEN_COMPONENTS = (
     "vae",
@@ -39,6 +47,27 @@ FROZEN_COMPONENTS = (
     "projection_model",
     "vocoder",
 )
+
+NUM_QUARTILES = 4
+
+
+def timestep_quartile(timesteps: torch.Tensor, num_train_timesteps: int) -> torch.Tensor:
+    """Bucket timesteps into quarters of the noise schedule.
+
+    Quartile 0 is the noisiest quarter, i.e. the first quarter of the denoising trajectory, and
+    quartile 3 is the cleanest. With a uniformly spaced DDIM grid this is the same as bucketing
+    by step index, so "the first 25% of steps" reads the same either way.
+
+    Args:
+        timesteps: Integer timesteps `[B]`.
+        num_train_timesteps: The scheduler's training horizon, e.g. 1000.
+
+    Returns:
+        Quartile index per element, in `[0, 3]`.
+    """
+    assert timesteps.ndim == 1, timesteps.shape
+    fraction = 1.0 - timesteps.float() / float(num_train_timesteps)
+    return (fraction * NUM_QUARTILES).long().clamp(0, NUM_QUARTILES - 1)
 
 
 def git_sha() -> str:
@@ -64,6 +93,10 @@ class AudioLDM2InversionTrainer:
         self.checkpoint_dir = Path(cfg.checkpoint_dir)
         self.global_step = 0
         self.baseline_reference = float("nan")
+        self.num_train_timesteps = int(ldm.model.scheduler.config.num_train_timesteps)
+        self._quartile_sums = torch.zeros(NUM_QUARTILES, dtype=torch.float64)
+        self._quartile_counts = torch.zeros(NUM_QUARTILES, dtype=torch.float64)
+        self.eval_fixtures: dict[str, Any] | None = None
 
         self._freeze_components()
         inject_adapter_in_model(
@@ -124,10 +157,15 @@ class AudioLDM2InversionTrainer:
 
     def forward_loss(self, batch: dict[str, Any]) -> torch.Tensor:
         """No-CFG loss: MSE between the student's epsilon and the cached teacher epsilon."""
+        return self.per_example_loss(batch).mean()
+
+    def per_example_loss(self, batch: dict[str, Any]) -> torch.Tensor:
+        """Same loss as `forward_loss` but kept per batch element, for the quartile breakdown."""
         student_eps = self.predict_noise(batch)
         target_eps = batch["target_eps"].to(device=self.device, dtype=self.unet.dtype)
         assert student_eps.shape == target_eps.shape, (student_eps.shape, target_eps.shape)
-        return F.mse_loss(student_eps.float(), target_eps.float())
+        squared = (student_eps.float() - target_eps.float()) ** 2
+        return squared.flatten(1).mean(dim=1)
 
     @torch.no_grad()
     def baseline_loss(self, batch: dict[str, Any]) -> torch.Tensor:
@@ -141,6 +179,28 @@ class AudioLDM2InversionTrainer:
             return self.forward_loss(batch)
         finally:
             self.set_lora_enabled(True)
+
+    def record_quartiles(self, losses: torch.Tensor, timesteps: torch.Tensor) -> None:
+        """Accumulate per-example losses into their noise-schedule quartiles."""
+        assert losses.shape == timesteps.shape, (losses.shape, timesteps.shape)
+        quartiles = timestep_quartile(timesteps.cpu(), self.num_train_timesteps)
+        values = losses.detach().double().cpu()
+        self._quartile_sums.scatter_add_(0, quartiles, values)
+        self._quartile_counts.scatter_add_(0, quartiles, torch.ones_like(values))
+
+    def pop_quartile_losses(self) -> dict[str, float]:
+        """Mean loss per quartile since the last call, then reset the accumulator.
+
+        Quartiles with no examples in the window are omitted rather than reported as zero.
+        """
+        out = {}
+        for index in range(NUM_QUARTILES):
+            count = float(self._quartile_counts[index])
+            if count > 0:
+                out[f"train/loss_q{index + 1}"] = float(self._quartile_sums[index]) / count
+        self._quartile_sums.zero_()
+        self._quartile_counts.zero_()
+        return out
 
     def set_lora_enabled(self, enabled: bool) -> None:
         """Toggle every injected adapter; disabling restores the frozen teacher exactly."""
@@ -166,6 +226,104 @@ class AudioLDM2InversionTrainer:
             losses.append(float(loss))
         self.unet.train()
         return {"val/loss": sum(losses) / len(losses)} if losses else {}
+
+    def prepare_reconstruction_fixtures(
+        self, prompts: list[str], audio_paths: list[Path], audio_prompts: list[str]
+    ) -> None:
+        """Build the fixed eval set once, and measure plain DDIM inversion on it as the baseline.
+
+        The fixtures are frozen for the whole run so the reconstruction curves are comparable
+        across steps. The no-LoRA baseline is measured once here rather than at every eval: the
+        teacher never changes, so re-measuring it would burn the same compute for the same number.
+        """
+        self.set_lora_enabled(False)
+        try:
+            generated, initial_noise = generate_eval_latents(
+                self.ldm,
+                prompts,
+                seed=int(self.cfg.seed),
+                batch_size=int(self.cfg.recon_batch_size),
+                duration_s=float(self.cfg.recon_duration_s),
+            )
+            real, real_names = load_real_latents(
+                self.ldm,
+                audio_paths,
+                seed=int(self.cfg.seed),
+                duration_s=float(self.cfg.recon_duration_s),
+            )
+        finally:
+            self.set_lora_enabled(True)
+
+        assert generated.shape[1:] == real.shape[1:], (generated.shape, real.shape)
+        logger.info(
+            "Reconstruction fixtures: {} generated {} real, latent {}; first real crop {}",
+            generated.shape[0],
+            real.shape[0],
+            tuple(generated.shape[1:]),
+            real_names[0],
+        )
+
+        self.eval_fixtures = {
+            "generated": generated,
+            "generated_noise": initial_noise,
+            "generated_prompts": prompts,
+            "real": real,
+            "real_prompts": audio_prompts,
+            "real_names": real_names,
+        }
+
+        baseline = self._reconstruction_pass(set_lora_enabled=None, prefix="eval_no_lora")
+        logger.info("Plain DDIM inversion baseline: {}", baseline)
+        self.tracker.log(baseline, step=self.global_step)
+        self.baseline_reconstruction = baseline
+
+    def _reconstruction_pass(
+        self, set_lora_enabled: Any, prefix: str
+    ) -> dict[str, float]:
+        """Score reconstruction and noise statistics on both fixture sets."""
+        assert self.eval_fixtures is not None, "call prepare_reconstruction_fixtures first"
+        fixtures = self.eval_fixtures
+        metrics: dict[str, float] = {}
+
+        for kind in ("generated", "real"):
+            scores, inverted = reconstruction_metrics(
+                self.ldm,
+                fixtures[kind],
+                fixtures[f"{kind}_prompts"],
+                batch_size=int(self.cfg.recon_batch_size),
+                set_lora_enabled=set_lora_enabled,
+                progress=lambda message: logger.debug(message),
+            )
+            metrics.update({f"{prefix}/{kind}/{key}": value for key, value in scores.items()})
+            # Generated samples have a true initial noise to compare against; real audio has
+            # none, so a fresh standard normal draw is the only available reference.
+            reference = (
+                fixtures["generated_noise"]
+                if kind == "generated"
+                else torch.randn(
+                    inverted.shape, generator=torch.Generator().manual_seed(int(self.cfg.seed))
+                )
+            )
+            metrics.update(
+                noise_report(
+                    inverted,
+                    reference,
+                    prefix=f"{prefix}/{kind}",
+                    reference_is_ground_truth=kind == "generated",
+                    seed=int(self.cfg.seed),
+                )
+            )
+        return metrics
+
+    def reconstruction_eval(self) -> dict[str, float]:
+        """Reconstruction and noise metrics for the current adapter."""
+        self.unet.eval()
+        try:
+            return self._reconstruction_pass(
+                set_lora_enabled=self.set_lora_enabled, prefix="eval"
+            )
+        finally:
+            self.unet.train()
 
     def save_checkpoint(self, filename: str, save_training_state: bool = False) -> Path:
         """Save the LoRA adapter, plus optimizer state when resuming matters."""
@@ -242,12 +400,14 @@ class AudioLDM2InversionTrainer:
                     )
                     logged_first = True
 
-                loss = self.forward_loss(batch)
+                per_example = self.per_example_loss(batch)
+                loss = per_example.mean()
                 if not torch.isfinite(loss):
                     raise FloatingPointError(
                         f"Non-finite training loss at step {self.global_step}: {float(loss)}"
                     )
                 (loss / accum).backward()
+                self.record_quartiles(per_example, batch["timestep"])
                 recent.append(float(loss))
                 micro_step += 1
                 if micro_step % accum:
@@ -266,21 +426,27 @@ class AudioLDM2InversionTrainer:
 
                 if self._due(self.cfg.log_every_steps):
                     train_loss = sum(recent) / len(recent)
+                    quartiles = self.pop_quartile_losses()
                     # Also to the logger: with the tracker disabled the curve would otherwise be
                     # invisible, which makes a smoke run unreadable.
                     logger.info(
-                        "step {} train/loss={:.6f} (LoRA-disabled baseline {:.6f})",
+                        "step {} train/loss={:.6f} (LoRA-disabled baseline {:.6f}) {}",
                         self.global_step,
                         train_loss,
                         self.baseline_reference,
+                        " ".join(f"{k.split('/')[-1]}={v:.6f}" for k, v in quartiles.items()),
                     )
-                    self.tracker.log({"train/loss": train_loss}, step=self.global_step)
+                    self.tracker.log({"train/loss": train_loss, **quartiles}, step=self.global_step)
                     recent = []
                 if val_loader is not None and self._due(self.cfg.eval_every_steps):
                     metrics = self.validate(val_loader, self.cfg.max_val_batches)
                     if metrics:
                         logger.info("step {} {}", self.global_step, metrics)
                         self.tracker.log(metrics, step=self.global_step)
+                if self.eval_fixtures is not None and self._due(self.cfg.recon_every_steps):
+                    metrics = self.reconstruction_eval()
+                    logger.info("step {} reconstruction {}", self.global_step, metrics)
+                    self.tracker.log(metrics, step=self.global_step)
                 if self._due(self.cfg.save_every_steps):
                     self.save_checkpoint(
                         f"checkpoint_step_{self.global_step}.pt",
@@ -310,7 +476,9 @@ class NullTracker:
 @hydra.main(config_path="../../config", config_name="train_inversion_lora", version_base=None)
 def main(cfg: DictConfig) -> None:
     """Train the AudioLDM2 inversion LoRA on cached trajectories."""
-    load_dotenv(AUDIO_ROOT / ".env", override=False)
+    # override=True matches env.py: .env is the only place configuration is edited, so a stale
+    # exported variable in the submitting shell must not win.
+    load_dotenv(AUDIO_ROOT / ".env", override=True)
     logger.info("Config:\n{}", OmegaConf.to_yaml(cfg))
 
     device = torch.device(str(cfg.device))
@@ -362,6 +530,19 @@ def main(cfg: DictConfig) -> None:
     if cfg.resume_from:
         initial_step = trainer.load_training_state(cfg.resume_from)
         logger.info("Resumed at step {}", initial_step)
+
+    if int(cfg.recon_every_steps) > 0:
+        audio_paths, audio_prompts = real_audio_fixtures(
+            cfg.recon_prompts_csv,
+            cfg.recon_audio_root,
+            count=int(cfg.recon_num_real),
+            seed=int(cfg.seed),
+        )
+        trainer.prepare_reconstruction_fixtures(
+            prompts=held_out_prompts(cfg.data_root, val_ids, int(cfg.recon_num_generated)),
+            audio_paths=audio_paths,
+            audio_prompts=audio_prompts,
+        )
 
     trainer.train(
         train_loader,
