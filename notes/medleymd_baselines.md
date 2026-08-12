@@ -12,6 +12,19 @@ filename.
 > against each other.** See "Why the models cannot share a table" below — the reason is
 > measured, not stylistic.
 
+**Split: everything here is the full 696 rows**, not the `test` split. Fine for baselines, which
+have no tunable hyperparameters. The `hparam`/`test`/`loc` CSVs carry the original full-set row
+indices and partition it exactly, so any split can be recovered from the per-example CSVs by
+filtering on `audio_idx` — no re-run needed for LPAPS/CLAP/MuLan. Checked: test-split means
+differ from full by ≤0.02 on every cell, and the DDIM-vs-DDPM gap is unchanged.
+
+PSNR/SSIM cannot be recovered that way: `calculate_psnr_ssim` averages internally and returns
+only the mean, so a split value needs `MusicAlignmentEval` re-run over a filtered directory.
+
+When the LoRA lands it *does* have hyperparameters (rank, scale, `active_fraction`). Tuning on
+`hparam` and reporting on full puts those 115 rows inside the reported 696 — 17% overlap and
+mildly optimistic. Report on `loc`+`test` (581 rows, disjoint from tuning) if that matters.
+
 ## AudioLDM2-large
 
 200 steps, cfg_src 3.0 / cfg_tar 12.0, tstart 100 (DDIM 200). Output 16 kHz mono, source
