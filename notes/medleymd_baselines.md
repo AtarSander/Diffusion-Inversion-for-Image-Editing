@@ -46,11 +46,75 @@ the inversion LoRA has to recover.
 
 | Method | LPAPS ↓ | CLAP ↑ | MuLan ↑ | mel PSNR ↑ | mel SSIM ↑ | FAD ↓ |
 | --- | --- | --- | --- | --- | --- | --- |
-| DDPM-inv | **3.502** ± 0.661 | 0.281 ± 0.109 | 0.188 ± 0.194 | **21.482** | **0.644** | n/a |
-| DDIM-inv | 4.326 ± 0.673 | 0.285 ± 0.104 | 0.199 ± 0.170 | 17.048 | 0.530 | n/a |
-| SDEdit | 6.193 ± 0.410 | **0.329** ± 0.091 | **0.231** ± 0.141 | 16.070 | 0.228 | n/a |
+| DDPM-inv | **3.502** ± 0.661 | 0.281 ± 0.109 | ~~0.188~~ | **21.482** | **0.644** | n/a |
+| DDIM-inv | 4.326 ± 0.673 | 0.285 ± 0.104 | ~~0.199~~ | 17.048 | 0.530 | n/a |
+| SDEdit | 6.193 ± 0.410 | **0.329** ± 0.091 | ~~0.231~~ | 16.070 | 0.228 | n/a |
 
 **DDIM-inv vs DDPM-inv: −4.43 dB PSNR, +24% LPAPS, SSIM 0.530 vs 0.644.**
+
+> **The MuLan column is struck through: those three numbers are invalid.** See "The Stable Audio
+> MuLan numbers were misaligned" below. Every other cell is unaffected. They are recomputed by
+> the next eval run and must not be quoted until then.
+
+## The Stable Audio MuLan numbers were misaligned (found 2026-08-12, fixed)
+
+`get_mulan` fed `torchaudio.load()`'s `[C, T]` tensor straight to MuQ-MuLan. `MuQMuLan`
+iterates dimension 0 as the batch (`extract_audio_latents`: `for wav in wavs`), so a **stereo**
+edit produced **two** latents, and `calc_similarity` returned `[2, 1]` rather than `[1, 1]`. The
+guard that should have caught it, `batch_audio.squeeze(1)`, is a no-op on `[2, T]` because
+dimension 1 is time.
+
+Stacking those over 696 files gave a `[1392, 1]` tensor that the code then indexed as
+`similarities[audio_idx, 0]` for `audio_idx` in `0..695`. Measured on the first 6 Stable Audio
+DDPM edits:
+
+| row | saved (old) | correct | what the saved value actually was |
+| --- | --- | --- | --- |
+| 0 | 0.0938 | 0.0889 | file 0 ch 0 vs prompt 0 |
+| 1 | 0.0820 | −0.0709 | file 0 ch 1 vs prompt 1 |
+| 2 | −0.0741 | 0.1470 | file 1 ch 0 vs prompt 2 |
+| 3 | −0.0685 | −0.0780 | file 1 ch 1 vs prompt 3 |
+
+So row *k* held file *k/2*, channel *k mod 2*, scored against prompt *k*: **only row 0 was
+right**, the last 348 files were never scored, and the other 695 rows paired audio with a prompt
+belonging to a different track. Row 0 differs too (0.0938 vs 0.0889) because it was the left
+channel rather than the mono downmix.
+
+**AudioLDM2 is unaffected** — its output is 1-channel, so the batch dimension was already 1, and
+its MuLan column stands. LPAPS, CLAP and PSNR/SSIM are unaffected for both models: the CLAP path
+downmixes via `convert_audio(..., to_channels=1)` and the mel metrics take `audio[0:1]`.
+
+Fix: downmix to mono before the MuLan call, matching the CLAP path, plus an assertion that the
+similarity tensor has exactly one row per edit so this cannot regress silently.
+
+## Directional CLAP / MuLan (added 2026-08-12, not yet run)
+
+Plain CLAP and MuLan score the edit against the target caption alone, so **returning the input
+untouched scores well whenever the source already resembles the target caption** — they cannot
+separate "edited correctly" from "did nothing". That is exactly the confound in the DDPM-vs-DDIM
+comparison, where the methods differ mostly in how much they preserve.
+
+`directional_similarity` in `editing/eval_medley.py` is the audio analogue of directional CLIP:
+
+    cos( E_audio(edit) − E_audio(source),  E_text(target caption) − E_text(source caption) )
+
+computed once with CLAP embeddings and once with MuLan embeddings. Verified on real data: an
+unedited copy of the source scores **exactly 0.000** on both, while plain CLAP still gives it
+0.046 and plain MuLan −0.097 on the same two files.
+
+Details worth knowing when reading the numbers:
+
+- The source is truncated to the **edit's** duration before embedding. The edit drivers truncate
+  their input (60 s for AudioLDM2, `sample_size` for Stable Audio), so embedding the whole
+  multi-minute mix would compare different stretches of music.
+- CLAP embeddings are the mean of L2-normalised 10 s window embeddings (0.1 overlap), mirroring
+  the segmentation `calc_clap_win` already uses, since the non-fusion checkpoint only consumes
+  10 s at a time. MuLan gets the whole clip, as it already did, because it averages internally.
+- `w = 1.0`, so the value is a plain cosine in [−1, 1]. The image-side code uses `w = 2.5` from
+  CLIPScore; with no clipping in the directional form that is a pure rescale, and 1.0 keeps it
+  comparable to the CLAP/MuLan columns, which are also raw cosines.
+- Unit tests in `audio/tests/test_directional.py` pin the known-input behaviour (aligned → 1,
+  opposed → −1, orthogonal → 0, identity edit → 0, invariance to edit magnitude).
 
 ## Why the models cannot share a table
 
@@ -111,3 +175,20 @@ feature extraction over both directories entirely — currently it is computed a
   each run's `per_task_results.json`; treat the four small classes as directional.
 - `alignment.py:344` still swallows per-file exceptions when building FAD/KL features without
   reporting a count. It does not affect LPAPS/CLAP/MuLan/PSNR/SSIM.
+
+## Pending re-run
+
+One eval pass over the six existing runs fills both gaps at once — it recomputes the Stable
+Audio MuLan column and adds `clap_dir`/`mulan_dir` everywhere. No re-editing is needed; the
+audio on disk is unchanged.
+
+    cd <repo>/audio
+    bash editing/AudioEditingCode/code/slurm_scripts/wcss/submit_eval.sh
+
+Check the wiring first in about a minute, on any run directory:
+
+    PYTHONPATH=.:editing/AudioEditingCode .venv_eval/bin/python -m editing.eval_medley \
+      --path_audio <run>/audios --limit 2
+
+New per-example CSV: `directional_to_prompts.csv`. `final_results.json` and
+`per_task_results.json` gain `CLAP_DIR` and `MUQT_DIR`.
