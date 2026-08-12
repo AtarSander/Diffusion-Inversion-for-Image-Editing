@@ -10,6 +10,8 @@
 #SBATCH --time=00:30:00
 #SBATCH --output=logs/slurm/slurm-%x-%j.out
 #SBATCH --error=logs/slurm/slurm-%x-%j.err
+#SBATCH --mail-type=END,FAIL,TIME_LIMIT
+#SBATCH --mail-user=szymczyk.alek1@gmail.com
 set -euo pipefail
 REPO_DIR=${SLURM_SUBMIT_DIR:?SLURM_SUBMIT_DIR is required}
 RESULT_DIR=$REPO_DIR/logs/batch_size_stress

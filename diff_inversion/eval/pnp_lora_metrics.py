@@ -58,7 +58,9 @@ def main(cfg: DictConfig) -> None:
     repo_dir = _resolve_path(cfg.repo_dir)
     pnp_dir = repo_dir / "pnp_inversion"
     python_config = cfg.get("python")
-    python = _resolve_path(python_config) if python_config else Path(sys.executable).resolve()
+    # Keep the virtual-environment executable itself. Resolving its symlink points
+    # at the base interpreter and drops the environment's site-packages.
+    python = Path(to_absolute_path(str(python_config))) if python_config else Path(sys.executable)
     data_path = _resolve_path(cfg.data_path)
     generated_root = _resolve_path(cfg.generated_root)
     result_path = _resolve_path(cfg.result_path)

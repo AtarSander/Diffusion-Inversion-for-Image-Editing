@@ -11,6 +11,8 @@
 #SBATCH --array=0-7%7
 #SBATCH --output=logs/slurm/slurm-%x-%A_%a.out
 #SBATCH --error=logs/slurm/slurm-%x-%A_%a.err
+#SBATCH --mail-type=END,FAIL,TIME_LIMIT
+#SBATCH --mail-user=szymczyk.alek1@gmail.com
 
 set -euo pipefail
 

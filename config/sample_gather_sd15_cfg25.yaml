@@ -1,0 +1,9 @@
+defaults:
+  - sample_gather_sd15
+  - _self_
+
+# CFG 2.5 trajectories are intentionally isolated from CFG 1 trajectories.
+output_dir: data/processed/sd15_trajectories_stacked_fp32_cfg2_5/all
+
+model:
+  guidance_scale: 2.5

@@ -4,11 +4,13 @@ defaults:
   - base
   - _self_
 
-run_name: sd15-inversion-lora-r16-bs128-e3
-checkpoint_dir: checkpoints/sd15_inversion_lora_r16_bs128_e3
+run_name: sd15-inversion-lora-r16-bs128-e1
+checkpoint_dir: checkpoints/sd15_inversion_lora_r16_bs128_e1
 
-# 30,441 trajectories * 50 transitions at batch 128: 11,892 steps/epoch.
-max_train_steps: 35676
+# 30,441 trajectories * 50 transitions at batch 128: one epoch is 11,892 updates.
+max_train_steps: 11892
+# At the observed h86 rate, this lands around 23.4 hours including validation.
+save_every_steps: 8800
 gradient_accumulation_steps: 1
 
 # Precision is a model property, not a separate experiment config.
