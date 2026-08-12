@@ -7,6 +7,10 @@
 %
 % FAD is omitted: sqrtm(sigma1 @ sigma2) returns complex (imag 0.157) because MedleyMD has only
 % 35 unique excerpts, so the 128x128 VGGish covariance is near-singular and the metric returns -1.
+%
+% Cells marked --- need the pending eval re-run (see notes/medleymd_baselines.md, "Pending
+% re-run"): CLAP_dir/MuLan_dir are new, and the Stable Audio MuLan column was invalidated by the
+% stereo batching bug fixed in 32582db. Every other cell is final.
 
 \begin{table}[t]
   \centering
@@ -19,19 +23,23 @@
     scored left-against-left while AudioLDM2 is scored as a downmix. Within a model every method
     carries the identical handicap.}
   \label{tab:medleymd-baselines}
-  \begin{tabular}{llccccc}
+  \small
+  \begin{tabular}{ll ccc cccc}
     \toprule
-    Model & Method & LPAPS $\downarrow$ & CLAP $\uparrow$ & MuLan $\uparrow$ & mel PSNR $\uparrow$ & mel SSIM $\uparrow$ \\
+    & & \multicolumn{3}{c}{Preservation} & \multicolumn{4}{c}{Prompt adherence} \\
+    \cmidrule(lr){3-5} \cmidrule(lr){6-9}
+    Model & Method & LPAPS $\downarrow$ & mel PSNR $\uparrow$ & mel SSIM $\uparrow$
+      & CLAP $\uparrow$ & MuLan $\uparrow$ & CLAP$_{\text{dir}}$ $\uparrow$ & MuLan$_{\text{dir}}$ $\uparrow$ \\
     \midrule
     \multirow{3}{*}{AudioLDM2-large}
-      & DDPM-inv & $\mathbf{4.841}_{\pm 0.652}$ & $0.354_{\pm 0.095}$ & $0.296_{\pm 0.149}$ & $\mathbf{18.57}$ & $\mathbf{0.576}$ \\
-      & DDIM-inv & $6.070_{\pm 0.567}$ & $0.352_{\pm 0.110}$ & $\mathbf{0.343}_{\pm 0.142}$ & $14.70$ & $0.341$ \\
-      & SDEdit   & $5.597_{\pm 0.547}$ & $\mathbf{0.357}_{\pm 0.094}$ & $0.294_{\pm 0.142}$ & $18.03$ & $0.425$ \\
+      & DDPM-inv & $\mathbf{4.841}_{\pm 0.652}$ & $\mathbf{18.57}$ & $\mathbf{0.576}$ & $0.354_{\pm 0.095}$ & $0.296_{\pm 0.149}$ & --- & --- \\
+      & DDIM-inv & $6.070_{\pm 0.567}$ & $14.70$ & $0.341$ & $0.352_{\pm 0.110}$ & $\mathbf{0.343}_{\pm 0.142}$ & --- & --- \\
+      & SDEdit   & $5.597_{\pm 0.547}$ & $18.03$ & $0.425$ & $\mathbf{0.357}_{\pm 0.094}$ & $0.294_{\pm 0.142}$ & --- & --- \\
     \midrule
     \multirow{3}{*}{Stable Audio Open}
-      & DDPM-inv & $\mathbf{3.502}_{\pm 0.661}$ & $0.281_{\pm 0.109}$ & $0.188_{\pm 0.194}$ & $\mathbf{21.48}$ & $\mathbf{0.644}$ \\
-      & DDIM-inv & $4.326_{\pm 0.673}$ & $0.285_{\pm 0.104}$ & $0.199_{\pm 0.170}$ & $17.05$ & $0.530$ \\
-      & SDEdit   & $6.193_{\pm 0.410}$ & $\mathbf{0.329}_{\pm 0.091}$ & $\mathbf{0.231}_{\pm 0.141}$ & $16.07$ & $0.228$ \\
+      & DDPM-inv & $\mathbf{3.502}_{\pm 0.661}$ & $\mathbf{21.48}$ & $\mathbf{0.644}$ & $0.281_{\pm 0.109}$ & --- & --- & --- \\
+      & DDIM-inv & $4.326_{\pm 0.673}$ & $17.05$ & $0.530$ & $0.285_{\pm 0.104}$ & --- & --- & --- \\
+      & SDEdit   & $6.193_{\pm 0.410}$ & $16.07$ & $0.228$ & $\mathbf{0.329}_{\pm 0.091}$ & --- & --- & --- \\
     \bottomrule
   \end{tabular}
 \end{table}
