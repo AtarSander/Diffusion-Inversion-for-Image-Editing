@@ -96,9 +96,13 @@ a low-dimensional manifold and the 128×128 covariance is close to singular. Ded
 reference would not help — replicating samples leaves the covariance unchanged, so the 696-file
 and 35-file references have identical covariance.
 
-Options, undecided: report FAD as unavailable (current); force the eps offset whenever `covmean`
-is complex, which yields a finite but poorly conditioned number; or drop FAD for this benchmark
-and rely on the paired metrics, which are well-posed at n=696.
+**Decided: skip FAD on this benchmark.** It stays as `nan` in the results. Forcing the eps
+offset would produce a finite number, but with an imaginary component of 0.157 the conditioning
+is bad enough that the value would not mean much, and the paired metrics are well-posed at
+n=696. Nothing downstream depends on it.
+
+If eval wall-clock ever matters, `calculate_metrics(calculate_fad=False)` skips the VGGish
+feature extraction over both directories entirely — currently it is computed and then discarded.
 
 ## Caveats when reading either table
 

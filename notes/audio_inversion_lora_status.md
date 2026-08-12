@@ -8,6 +8,40 @@ Most recent first. Keep this file current — it is the handover doc between ses
 
 ---
 
+## 2026-08-12 — Benchmark reproduction DONE; LoRA path is next
+
+The goal of this phase was reproducing the existing benchmark, and that is finished. Six
+baselines (DDPM-inv / DDIM-inv / SDEdit × AudioLDM2 + Stable Audio), 696 edits each, scored and
+written up in [medleymd_baselines.md](medleymd_baselines.md).
+
+**The measured target:** on AudioLDM2, DDIM-inversion trails DDPM-inversion by **3.87 dB mel
+PSNR** (14.70 vs 18.57) and 25% on LPAPS. On Stable Audio, **4.43 dB** (17.05 vs 21.48). That is
+the headroom the inversion LoRA has to recover — and it must do so without losing adherence,
+since AudioLDM2 DDIM currently has the *best* MuLan of its three methods.
+
+Decisions taken to close this phase:
+- **FAD skipped** on this benchmark; reported as `nan`. Ill-conditioned because MedleyMD has only
+  35 unique excerpts. Not chased further.
+- **tstart sweep deferred.** The partial-`tstart` DDIM variants from `stable_audio_edits.sh` are
+  not run; revisit on a validation split or another benchmark later.
+- **Full 696 rows**, not the `test` split. See medleymd_baselines.md for why that is safe here
+  and where it stops being safe once the LoRA introduces hyperparameters.
+
+### Next, in order
+
+1. `reconstruct.py` — LoRA-DDIM vs plain DDIM invert→denoise on real MedleyDB audio, reporting
+   mel PSNR/SSIM and latent L2. **This is the go/no-go.** GPU-free to write. Measure on both
+   held-out synthetic trajectories and real audio: the gap between them is the synthetic/real
+   distribution shift, and tells us whether real-audio-seeded trajectories are needed.
+2. Generate ~1.5k MusicCaps trajectories (`generate_trajectories_gonogo.yaml`). ~300k teacher
+   forwards; hours on an H100 at the rates measured for the baselines, not the days estimated
+   from the A5000.
+3. Train (`train_inversion_lora.yaml`), then run the go/no-go and record the numbers here
+   **before** touching editing metrics.
+4. Only if it passes: edit with the LoRA and score it as a seventh row in the AudioLDM2 table.
+
+---
+
 ## 2026-08-11 — Baselines moved to WCSS
 
 Started the six baselines locally, then **cancelled after 7.7 h** (493/4176 edits) to re-run on
