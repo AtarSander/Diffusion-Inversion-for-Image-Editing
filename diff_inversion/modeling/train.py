@@ -17,7 +17,6 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from diff_inversion.data.latent_trajectory_dataset import LatentTrajectoryDataset
-from diff_inversion.modeling.training_audit import mse_per_sample
 from diff_inversion.utils import make_pipe
 
 SINGLE_ADAPTER_NAME = "inversion"
@@ -38,7 +37,12 @@ CFG_REQUIRED_MODES = (
 )
 TRAINING_TARGET_MODES = CFG_REQUIRED_MODES | {"conditional", "unconditional"}
 CFG_BRANCH_TARGET_MODES = CFG_REQUIRED_MODES | {"unconditional"}
-PER_SAMPLE_LOSS_MODES = frozenset({"conditional"}) | CFG_SINGLE_PASS_MODES
+NEGATIVE_CONDITIONING_MODES = (
+    CFG_LOSS_MODES
+    | SHARED_BRANCH_LOSS_MODES
+    | PAIR_BRANCH_LOSS_MODES
+    | {"unconditional"}
+)
 
 
 class SDXLInversionTrainer:
@@ -218,14 +222,7 @@ class SDXLInversionTrainer:
     def forward_loss_with_metrics(
         self,
         batch: dict[str, Any],
-        *,
-        include_per_sample: bool = False,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        if include_per_sample and self.training_target_mode not in PER_SAMPLE_LOSS_MODES:
-            raise ValueError(
-                "Per-sample loss diagnostics currently support "
-                f"training_target.mode in {sorted(PER_SAMPLE_LOSS_MODES)}."
-            )
         x_clean = batch["x_clean"].to(device=self.model.device, dtype=self.model.dtype)
         timestep = batch["timestep"].to(device=self.model.device)
         target_eps = batch["target_eps"].to(device=self.model.device, dtype=self.model.dtype)
@@ -245,54 +242,114 @@ class SDXLInversionTrainer:
 
         scheduler_timesteps = self._scheduler_timesteps(timestep, batch_size=x_clean.shape[0])
 
+        target_eps_uncond = None
+        if self.training_target_mode in CFG_BRANCH_TARGET_MODES:
+            target_eps_uncond = self._required_tensor(batch, "target_eps_uncond").to(
+                device=self.model.device,
+                dtype=self.model.dtype,
+            )
+
+        negative_prompt_embeds = None
+        negative_pooled_prompt_embeds = None
+        if self.training_target_mode in NEGATIVE_CONDITIONING_MODES:
+            negative_prompt_embeds = self._required_tensor(batch, "negative_prompt_embeds").to(
+                device=self.model.device,
+                dtype=self.model.dtype,
+            )
+            negative_pooled_prompt_embeds = batch.get("negative_pooled_prompt_embeds")
+            if negative_pooled_prompt_embeds is not None:
+                negative_pooled_prompt_embeds = negative_pooled_prompt_embeds.to(
+                    device=self.model.device,
+                    dtype=self.model.dtype,
+                )
+            elif pooled_prompt_embeds is not None:
+                raise KeyError(
+                    "negative_pooled_prompt_embeds are required for SDXL "
+                    f"training_target.mode={self.training_target_mode}."
+                )
+
+        guidance_scale = None
+        if self.training_target_mode in CFG_REQUIRED_MODES:
+            sample_guidance_scale = None
+            if self.training_guidance_scale is None:
+                sample_guidance_scale = self._required_tensor(batch, "sample_guidance_scale")
+            guidance_scale = self._guidance_scale(
+                sample_guidance_scale,
+                batch_size=x_clean.shape[0],
+                device=self.model.device,
+            )
+
         if self.training_target_mode in CFG_LOSS_MODES:
+            assert target_eps_uncond is not None
+            assert negative_prompt_embeds is not None
+            assert guidance_scale is not None
             return self._forward_cfg_loss(
-                batch=batch,
                 x_clean=x_clean,
                 scheduler_timesteps=scheduler_timesteps,
                 prompt_embeds=prompt_embeds,
+                negative_prompt_embeds=negative_prompt_embeds,
                 pooled_prompt_embeds=pooled_prompt_embeds,
+                negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
                 add_time_ids=add_time_ids,
                 target_eps=target_eps,
+                target_eps_uncond=target_eps_uncond,
+                guidance_scale=guidance_scale,
             )
         if self.training_target_mode in CFG_SINGLE_PASS_MODES:
+            assert target_eps_uncond is not None
+            assert guidance_scale is not None
             return self._forward_cfg_single_pass_loss(
-                batch=batch,
                 x_clean=x_clean,
                 scheduler_timesteps=scheduler_timesteps,
                 prompt_embeds=prompt_embeds,
                 pooled_prompt_embeds=pooled_prompt_embeds,
                 add_time_ids=add_time_ids,
                 target_eps=target_eps,
-                include_per_sample=include_per_sample,
+                target_eps_uncond=target_eps_uncond,
+                guidance_scale=guidance_scale,
             )
         if self.training_target_mode == "unconditional":
+            assert target_eps_uncond is not None
+            assert negative_prompt_embeds is not None
             return self._forward_unconditional_loss(
-                batch=batch,
                 x_clean=x_clean,
                 scheduler_timesteps=scheduler_timesteps,
-                pooled_prompt_embeds=pooled_prompt_embeds,
+                negative_prompt_embeds=negative_prompt_embeds,
+                negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
                 add_time_ids=add_time_ids,
+                target_eps_uncond=target_eps_uncond,
             )
         if self.training_target_mode in SHARED_BRANCH_LOSS_MODES:
+            assert target_eps_uncond is not None
+            assert negative_prompt_embeds is not None
+            assert guidance_scale is not None
             return self._forward_shared_branch_pair_loss(
-                batch=batch,
                 x_clean=x_clean,
                 scheduler_timesteps=scheduler_timesteps,
                 prompt_embeds=prompt_embeds,
+                negative_prompt_embeds=negative_prompt_embeds,
                 pooled_prompt_embeds=pooled_prompt_embeds,
+                negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
                 add_time_ids=add_time_ids,
                 target_eps=target_eps,
+                target_eps_uncond=target_eps_uncond,
+                guidance_scale=guidance_scale,
             )
         if self._uses_pair_adapters():
+            assert target_eps_uncond is not None
+            assert negative_prompt_embeds is not None
+            assert guidance_scale is not None
             return self._forward_branch_pair_loss(
-                batch=batch,
                 x_clean=x_clean,
                 scheduler_timesteps=scheduler_timesteps,
                 prompt_embeds=prompt_embeds,
+                negative_prompt_embeds=negative_prompt_embeds,
                 pooled_prompt_embeds=pooled_prompt_embeds,
+                negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
                 add_time_ids=add_time_ids,
                 target_eps=target_eps,
+                target_eps_uncond=target_eps_uncond,
+                guidance_scale=guidance_scale,
             )
 
         student_eps = self.predict_noise(
@@ -303,44 +360,22 @@ class SDXLInversionTrainer:
             add_time_ids,
         )
 
-        per_sample_loss = mse_per_sample(student_eps, target_eps)
-        loss = per_sample_loss.mean()
-        metrics = {
+        loss = F.mse_loss(student_eps.float(), target_eps.float())
+        return loss, {
             "loss": loss,
             "loss_cond": loss,
         }
-        if include_per_sample:
-            metrics["loss_per_sample"] = per_sample_loss
-        return loss, metrics
 
     def _forward_unconditional_loss(
         self,
         *,
-        batch: dict[str, Any],
         x_clean: torch.Tensor,
         scheduler_timesteps: torch.Tensor,
-        pooled_prompt_embeds: torch.Tensor | None,
+        negative_prompt_embeds: torch.Tensor,
+        negative_pooled_prompt_embeds: torch.Tensor | None,
         add_time_ids: torch.Tensor | None,
+        target_eps_uncond: torch.Tensor,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        target_eps_uncond = self._required_tensor(batch, "target_eps_uncond").to(
-            device=self.model.device,
-            dtype=self.model.dtype,
-        )
-        negative_prompt_embeds = self._required_tensor(batch, "negative_prompt_embeds").to(
-            device=self.model.device,
-            dtype=self.model.dtype,
-        )
-        negative_pooled_prompt_embeds = batch.get("negative_pooled_prompt_embeds")
-        if negative_pooled_prompt_embeds is not None:
-            negative_pooled_prompt_embeds = negative_pooled_prompt_embeds.to(
-                device=self.model.device,
-                dtype=self.model.dtype,
-            )
-        elif pooled_prompt_embeds is not None:
-            raise KeyError(
-                "negative_pooled_prompt_embeds are required for SDXL unconditional training."
-            )
-
         student_eps = self.predict_noise(
             x_clean,
             scheduler_timesteps,
@@ -357,38 +392,17 @@ class SDXLInversionTrainer:
     def _forward_shared_branch_pair_loss(
         self,
         *,
-        batch: dict[str, Any],
         x_clean: torch.Tensor,
         scheduler_timesteps: torch.Tensor,
         prompt_embeds: torch.Tensor,
+        negative_prompt_embeds: torch.Tensor,
         pooled_prompt_embeds: torch.Tensor | None,
+        negative_pooled_prompt_embeds: torch.Tensor | None,
         add_time_ids: torch.Tensor | None,
         target_eps: torch.Tensor,
+        target_eps_uncond: torch.Tensor,
+        guidance_scale: torch.Tensor,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        target_eps_uncond = self._required_tensor(batch, "target_eps_uncond").to(
-            device=self.model.device,
-            dtype=self.model.dtype,
-        )
-        negative_prompt_embeds = self._required_tensor(batch, "negative_prompt_embeds").to(
-            device=self.model.device,
-            dtype=self.model.dtype,
-        )
-        negative_pooled_prompt_embeds = batch.get("negative_pooled_prompt_embeds")
-        if negative_pooled_prompt_embeds is not None:
-            negative_pooled_prompt_embeds = negative_pooled_prompt_embeds.to(
-                device=self.model.device,
-                dtype=self.model.dtype,
-            )
-        elif pooled_prompt_embeds is not None:
-            raise KeyError(
-                "negative_pooled_prompt_embeds are required for SDXL branch-pair training."
-            )
-
-        guidance_scale = self._guidance_scale(
-            batch,
-            batch_size=x_clean.shape[0],
-            device=self.model.device,
-        )
         pred_cond = self.predict_noise_with_adapter(
             SINGLE_ADAPTER_NAME,
             x_clean,
@@ -424,39 +438,17 @@ class SDXLInversionTrainer:
     def _forward_branch_pair_loss(
         self,
         *,
-        batch: dict[str, Any],
         x_clean: torch.Tensor,
         scheduler_timesteps: torch.Tensor,
         prompt_embeds: torch.Tensor,
+        negative_prompt_embeds: torch.Tensor,
         pooled_prompt_embeds: torch.Tensor | None,
+        negative_pooled_prompt_embeds: torch.Tensor | None,
         add_time_ids: torch.Tensor | None,
         target_eps: torch.Tensor,
+        target_eps_uncond: torch.Tensor,
+        guidance_scale: torch.Tensor,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        target_eps_uncond = self._required_tensor(batch, "target_eps_uncond").to(
-            device=self.model.device,
-            dtype=self.model.dtype,
-        )
-        negative_prompt_embeds = self._required_tensor(batch, "negative_prompt_embeds").to(
-            device=self.model.device,
-            dtype=self.model.dtype,
-        )
-
-        negative_pooled_prompt_embeds = batch.get("negative_pooled_prompt_embeds")
-        if negative_pooled_prompt_embeds is not None:
-            negative_pooled_prompt_embeds = negative_pooled_prompt_embeds.to(
-                device=self.model.device,
-                dtype=self.model.dtype,
-            )
-        elif pooled_prompt_embeds is not None:
-            raise KeyError(
-                "negative_pooled_prompt_embeds are required for SDXL branch-pair training."
-            )
-
-        guidance_scale = self._guidance_scale(
-            batch,
-            batch_size=x_clean.shape[0],
-            device=self.model.device,
-        )
         pred_cond = self.predict_noise_with_adapter(
             PAIR_CONDITIONAL_ADAPTER_NAME,
             x_clean,
@@ -496,35 +488,17 @@ class SDXLInversionTrainer:
     def _forward_cfg_loss(
         self,
         *,
-        batch: dict[str, Any],
         x_clean: torch.Tensor,
         scheduler_timesteps: torch.Tensor,
         prompt_embeds: torch.Tensor,
+        negative_prompt_embeds: torch.Tensor,
         pooled_prompt_embeds: torch.Tensor | None,
+        negative_pooled_prompt_embeds: torch.Tensor | None,
         add_time_ids: torch.Tensor | None,
         target_eps: torch.Tensor,
+        target_eps_uncond: torch.Tensor,
+        guidance_scale: torch.Tensor,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        target_eps_uncond = self._required_tensor(batch, "target_eps_uncond").to(
-            device=self.model.device,
-            dtype=self.model.dtype,
-        )
-        negative_prompt_embeds = self._required_tensor(batch, "negative_prompt_embeds").to(
-            device=self.model.device,
-            dtype=self.model.dtype,
-        )
-
-        negative_pooled_prompt_embeds = batch.get("negative_pooled_prompt_embeds")
-        if negative_pooled_prompt_embeds is not None:
-            negative_pooled_prompt_embeds = negative_pooled_prompt_embeds.to(
-                device=self.model.device,
-                dtype=self.model.dtype,
-            )
-
-        guidance_scale = self._guidance_scale(
-            batch,
-            batch_size=x_clean.shape[0],
-            device=self.model.device,
-        )
         pred_uncond, pred_cond = self.predict_noise_cfg_branches(
             x_clean,
             scheduler_timesteps,
@@ -555,25 +529,16 @@ class SDXLInversionTrainer:
     def _forward_cfg_single_pass_loss(
         self,
         *,
-        batch: dict[str, Any],
         x_clean: torch.Tensor,
         scheduler_timesteps: torch.Tensor,
         prompt_embeds: torch.Tensor,
         pooled_prompt_embeds: torch.Tensor | None,
         add_time_ids: torch.Tensor | None,
         target_eps: torch.Tensor,
-        include_per_sample: bool = False,
+        target_eps_uncond: torch.Tensor,
+        guidance_scale: torch.Tensor,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         """Learn the combined CFG target with one conditional UNet prediction."""
-        target_eps_uncond = self._required_tensor(batch, "target_eps_uncond").to(
-            device=self.model.device,
-            dtype=self.model.dtype,
-        )
-        guidance_scale = self._guidance_scale(
-            batch,
-            batch_size=x_clean.shape[0],
-            device=self.model.device,
-        )
         guidance_scale_broadcast = guidance_scale.reshape(
             x_clean.shape[0],
             *([1] * (target_eps.ndim - 1)),
@@ -589,15 +554,11 @@ class SDXLInversionTrainer:
             pooled_prompt_embeds,
             add_time_ids,
         )
-        per_sample_loss = mse_per_sample(pred_cfg, target_cfg)
-        loss = per_sample_loss.mean()
-        metrics = {
+        loss = F.mse_loss(pred_cfg.float(), target_cfg.float())
+        return loss, {
             "loss": loss,
             "loss_cfg_single_pass": loss,
         }
-        if include_per_sample:
-            metrics["loss_per_sample"] = per_sample_loss
-        return loss, metrics
 
     def predict_noise(
         self,
@@ -1021,7 +982,7 @@ class SDXLInversionTrainer:
 
     def _guidance_scale(
         self,
-        batch: dict[str, Any],
+        sample_guidance_scale: torch.Tensor | None,
         *,
         batch_size: int,
         device: torch.device | str,
@@ -1034,7 +995,8 @@ class SDXLInversionTrainer:
                 dtype=torch.float32,
             )
         else:
-            sample_guidance_scale = self._required_tensor(batch, "sample_guidance_scale")
+            if sample_guidance_scale is None:
+                raise KeyError("Batch is missing required tensor 'sample_guidance_scale'.")
             guidance_scale = sample_guidance_scale.to(
                 device=device,
                 dtype=torch.float32,
