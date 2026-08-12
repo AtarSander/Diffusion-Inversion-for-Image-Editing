@@ -1,52 +1,83 @@
-# ABOUTME: Resolves every filesystem path the editing/eval scripts need.
-# ABOUTME: Repo-relative paths derive from __file__; machine-specific data dirs come from .env.
+# ABOUTME: Resolves every filesystem path the editing/eval scripts need, from audio/.env.
+# ABOUTME: .env is authoritative: it overrides the ambient environment, so nothing can drift.
 
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 
 # .../audio/editing/AudioEditingCode/code/env.py -> .../audio
 AUDIO_ROOT = Path(__file__).resolve().parents[3]
+ENV_FILE = AUDIO_ROOT / ".env"
 
-load_dotenv(AUDIO_ROOT / ".env", override=False)
+# override=True is the point of this module: .env is the one place configuration is edited, so
+# a variable left exported in a shell (or inherited by a SLURM job, which exports the submitting
+# environment by default) must never win over the file. HF_TOKEN is deliberately NOT declared in
+# .env -- it is a secret and comes from ~/.bashrc; keys absent from .env are left untouched here.
+load_dotenv(ENV_FILE, override=True)
+
+_DOTENV_KEYS = set(dotenv_values(ENV_FILE)) if ENV_FILE.exists() else set()
 
 
-def _from_env(name: str, default: Path) -> str:
-    """Return an overridable path as a string (callers concatenate these, so never Path)."""
-    return str(Path(os.environ.get(name, str(default))).expanduser())
+def _resolve(name: str, default: Path) -> str:
+    """Return a configured path as a string (callers concatenate these, so never Path)."""
+    raw = os.environ.get(name)
+    return str(Path(raw).expanduser()) if raw else str(default)
 
 
-# --- Datasets (machine-specific: override in audio/.env when the repo moves servers) ---------
+def source_of(name: str) -> str:
+    """Report where a setting came from, so a surprising value can be traced quickly."""
+    if name in _DOTENV_KEYS:
+        return ".env"
+    return "shell" if name in os.environ else "default"
+
+
+# --- Datasets --------------------------------------------------------------------------------
 
 # MedleyDB V1 mixes, laid out as <root>/<Track>/<Track>_MIX.wav, which is what
 # prepare_dataset() reconstructs via filename.split("_MIX")[0].
-PATH_AUDIOS_MEDLEY = _from_env("MEDLEYDB_AUDIO_DIR", Path("/nas/lstanisz/data/medleydb/V1_mix"))
+PATH_AUDIOS_MEDLEY = _resolve("MEDLEYDB_AUDIO_DIR", AUDIO_ROOT / "data/medleydb/V1_mix")
 
-# MusicCaps clips. Not populated yet; only needed for real-audio-seeded trajectories.
-PATH_MUSICCAPS = _from_env("MUSICCAPS_AUDIO_DIR", AUDIO_ROOT / "data/musiccaps/audio")
-
-# --- Repo-relative (portable across servers, no override needed) -----------------------------
+# MusicCaps clips; only needed for real-audio-seeded inversion trajectories.
+PATH_MUSICCAPS = _resolve("MUSICCAPS_AUDIO_DIR", AUDIO_ROOT / "data/musiccaps/audio")
 
 # The only prompt CSV carrying all four columns the edit drivers read:
 # filename, source_captions, target_captions, edit.
-PATH_PROMPTS_MEDLEY = str(
-    AUDIO_ROOT / "editing/AudioEditingCode/MedleyMDPrompts/captions_gpt5.csv"
+PATH_PROMPTS_MEDLEY = _resolve(
+    "MEDLEY_PROMPTS_CSV",
+    AUDIO_ROOT / "editing/AudioEditingCode/MedleyMDPrompts/captions_gpt5.csv",
 )
 
-# Paired per-example reference for FAD and mel PSNR/SSIM, built by editing/build_lower_bound.py.
-#
-# MUST correspond to the same split as PATH_PROMPTS_MEDLEY above: the drivers name outputs
-# a{idx}.wav by row position, so a full-set reference (a0..a695) paired with a split's edits
-# (a0..a348) overlaps only partially. get_filename_intersection_ratio() then falls below its
-# 0.99 threshold and calculate_psnr_ssim() returns -1 *without raising*. Change both together.
-PATH_LOWER_BOUND_MEDLEY = _from_env(
-    "MEDLEY_LOWER_BOUND_DIR", AUDIO_ROOT / "outputs/medleymd/lower_bound_full/audios"
-)
+# --- Outputs ---------------------------------------------------------------------------------
 
 # Edited audio lands in <PATH_EDIT_OUTPUTS>/<dataset>/<model>/<run_name>/audios/a{idx}.wav.
 # Some callers do PATH_EDIT_OUTPUTS + "/medleymd", so this must stay a plain string.
-PATH_EDIT_OUTPUTS = _from_env("EDIT_OUTPUTS_DIR", AUDIO_ROOT / "outputs/edits")
+PATH_EDIT_OUTPUTS = _resolve("EDIT_OUTPUTS_DIR", AUDIO_ROOT / "outputs/edits")
+
+# Paired per-example reference for FAD and mel PSNR/SSIM, built by editing/build_lower_bound.py.
+# It is a copy of each row's input mix, renamed a{idx}.wav so the paired metrics can align by
+# filename. MUST correspond to the same split as PATH_PROMPTS_MEDLEY: outputs are named by row
+# position, so pairing a full reference with a split's edits drops the filename intersection
+# below get_filename_intersection_ratio's 0.99 threshold and calculate_psnr_ssim returns -1
+# without raising.
+PATH_LOWER_BOUND_MEDLEY = _resolve(
+    "MEDLEY_LOWER_BOUND_DIR", AUDIO_ROOT / "outputs/medleymd/lower_bound_full/audios"
+)
 
 # Scratch for AudioLDM2's 60 s truncated copies; audioldm_run.py creates it on demand.
-ALDM2_TEMP_DIR = _from_env("ALDM2_TEMP_DIR", AUDIO_ROOT / ".temp/audioldm2")
+ALDM2_TEMP_DIR = _resolve("ALDM2_TEMP_DIR", AUDIO_ROOT / ".temp/audioldm2")
+
+SETTINGS = {
+    "PATH_AUDIOS_MEDLEY": ("MEDLEYDB_AUDIO_DIR", PATH_AUDIOS_MEDLEY),
+    "PATH_PROMPTS_MEDLEY": ("MEDLEY_PROMPTS_CSV", PATH_PROMPTS_MEDLEY),
+    "PATH_MUSICCAPS": ("MUSICCAPS_AUDIO_DIR", PATH_MUSICCAPS),
+    "PATH_EDIT_OUTPUTS": ("EDIT_OUTPUTS_DIR", PATH_EDIT_OUTPUTS),
+    "PATH_LOWER_BOUND_MEDLEY": ("MEDLEY_LOWER_BOUND_DIR", PATH_LOWER_BOUND_MEDLEY),
+    "ALDM2_TEMP_DIR": ("ALDM2_TEMP_DIR", ALDM2_TEMP_DIR),
+}
+
+
+if __name__ == "__main__":
+    print(f".env: {ENV_FILE}{'' if ENV_FILE.exists() else '  (MISSING)'}")
+    for name, (var, value) in SETTINGS.items():
+        print(f"  {name:26s} [{source_of(var):7s}] {value}")

@@ -31,7 +31,6 @@ cd "${SLURM_SUBMIT_DIR:-$PWD}"          # expected: <repo>/audio
 # sbatch exports the submitting shell by default, and env.py's load_dotenv uses override=False,
 # so a value left over from an earlier `source .env` would beat the current .env in both the
 # shell and Python. Clear them first so .env (or env.py's defaults) actually decides.
-unset EDIT_OUTPUTS_DIR MEDLEY_LOWER_BOUND_DIR ALDM2_TEMP_DIR MEDLEYDB_AUDIO_DIR
 set -a; [ -f .env ] && source .env; set +a
 
 module load Python/3.10.4-GCCcore-11.3.0

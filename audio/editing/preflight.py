@@ -10,7 +10,10 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "editing/AudioEditingCode/code"))
 
-from env import (  # noqa: E402
+from env import (
+    ENV_FILE,
+    SETTINGS,
+    source_of,  # noqa: E402
     ALDM2_TEMP_DIR,
     PATH_AUDIOS_MEDLEY,
     PATH_EDIT_OUTPUTS,
@@ -35,7 +38,7 @@ def main(check_lower_bound: bool = False) -> None:
         check_lower_bound: Also require the paired reference set (needed for eval, not edits).
     """
     problems: list[str] = []
-    print("=== configured paths ===")
+    print(f"=== configured paths (.env: {ENV_FILE}{'' if Path(ENV_FILE).exists() else ' MISSING'}) ===")
     for name, value, must_exist in [
         ("PATH_AUDIOS_MEDLEY", PATH_AUDIOS_MEDLEY, True),
         ("PATH_PROMPTS_MEDLEY", PATH_PROMPTS_MEDLEY, True),
@@ -44,9 +47,18 @@ def main(check_lower_bound: bool = False) -> None:
         ("PATH_LOWER_BOUND_MEDLEY", PATH_LOWER_BOUND_MEDLEY, check_lower_bound),
     ]:
         exists = Path(value).exists()
-        print(f"  {'OK ' if exists else '-- '} {name:24s} {value}")
+        var = SETTINGS[name][0]
+        origin = source_of(var)
+        print(f"  {'OK ' if exists else '-- '} {name:24s} [{origin:7s}] {value}")
         if must_exist and not exists:
             problems.append(f"{name} does not exist: {value}")
+        # A value coming from the shell means .env does not declare it, so it can silently
+        # change between sessions. .env is meant to be the only place this is configured.
+        if origin == "shell":
+            problems.append(
+                f"{name} is set from the shell ({var}), not .env. Add it to .env so the "
+                "configuration cannot drift with an exported variable."
+            )
 
     # Output dirs are created on demand, but a read-only or missing parent fails 72 jobs at once.
     for name, value in [("PATH_EDIT_OUTPUTS", PATH_EDIT_OUTPUTS), ("ALDM2_TEMP_DIR", ALDM2_TEMP_DIR)]:
