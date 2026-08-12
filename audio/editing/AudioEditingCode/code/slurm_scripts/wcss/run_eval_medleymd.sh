@@ -27,6 +27,11 @@
 set -uo pipefail
 
 cd "${SLURM_SUBMIT_DIR:-$PWD}"          # expected: <repo>/audio
+
+# sbatch exports the submitting shell by default, and env.py's load_dotenv uses override=False,
+# so a value left over from an earlier `source .env` would beat the current .env in both the
+# shell and Python. Clear them first so .env (or env.py's defaults) actually decides.
+unset EDIT_OUTPUTS_DIR MEDLEY_LOWER_BOUND_DIR ALDM2_TEMP_DIR MEDLEYDB_AUDIO_DIR
 set -a; [ -f .env ] && source .env; set +a
 
 module load Python/3.10.4-GCCcore-11.3.0
@@ -36,7 +41,10 @@ source .venv_eval/bin/activate
 export PYTHONPATH="$PWD:$PWD/editing/AudioEditingCode:${PYTHONPATH:-}"
 export TOKENIZERS_PARALLELISM=false
 
-EDITS_ROOT="${EDIT_OUTPUTS_DIR:-outputs/edits}/medleymd"
+# Ask env.py rather than re-deriving the path here: it is the single source of truth that
+# eval_medley itself uses, so the two cannot disagree.
+EDITS_ROOT="$(python -c 'import sys; sys.path.insert(0, "editing/AudioEditingCode/code"); import env; print(env.PATH_EDIT_OUTPUTS)')/medleymd"
+echo "resolved PATH_EDIT_OUTPUTS -> ${EDITS_ROOT%/medleymd}"
 
 # The Stable Audio driver appends dataset_name to a path that already contains it, so its runs
 # live one level deeper than the AudioLDM2 ones. Kept as-is to avoid changing the output layout.
@@ -63,7 +71,7 @@ fi
 
 # FAD and mel PSNR/SSIM need the paired reference. Check it up front: it is the last thing
 # eval_medley touches, so a missing reference otherwise wastes the whole LPAPS/CLAP/MuLan pass.
-REF_DIR="${MEDLEY_LOWER_BOUND_DIR:-outputs/medleymd/lower_bound_full/audios}"
+REF_DIR="$(python -c 'import sys; sys.path.insert(0, "editing/AudioEditingCode/code"); import env; print(env.PATH_LOWER_BOUND_MEDLEY)')"
 ref_n=$(find "$REF_DIR" -name 'a*.wav' 2>/dev/null | wc -l)
 echo "reference files: $ref_n  ($REF_DIR)"
 if [ "$ref_n" -ne "$n" ]; then

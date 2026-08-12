@@ -15,6 +15,7 @@ if [ ! -f .env ]; then
   echo "ERROR: $AUDIO_ROOT/.env not found. Copy the WCSS block from .env.example." >&2
   exit 1
 fi
+unset EDIT_OUTPUTS_DIR MEDLEY_LOWER_BOUND_DIR ALDM2_TEMP_DIR MEDLEYDB_AUDIO_DIR
 set -a; source .env; set +a
 
 # An unset or empty variable expands to "" and sbatch then lets WCSS's automatic partition

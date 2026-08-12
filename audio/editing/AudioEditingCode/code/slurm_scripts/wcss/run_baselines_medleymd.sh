@@ -28,6 +28,7 @@
 set -uo pipefail
 
 cd "${SLURM_SUBMIT_DIR:-$PWD}"          # expected: <repo>/audio
+unset EDIT_OUTPUTS_DIR MEDLEY_LOWER_BOUND_DIR ALDM2_TEMP_DIR MEDLEYDB_AUDIO_DIR
 set -a; [ -f .env ] && source .env; set +a
 
 module load Python/3.10.4-GCCcore-11.3.0
