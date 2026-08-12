@@ -16,7 +16,20 @@ ENV_FILE = AUDIO_ROOT / ".env"
 # .env -- it is a secret and comes from ~/.bashrc; keys absent from .env are left untouched here.
 load_dotenv(ENV_FILE, override=True)
 
-_DOTENV_KEYS = set(dotenv_values(ENV_FILE)) if ENV_FILE.exists() else set()
+_DOTENV = dotenv_values(ENV_FILE) if ENV_FILE.exists() else {}
+_DOTENV_KEYS = set(_DOTENV)
+
+# PROJECT_ROOT is only used to interpolate the other values inside .env, so a file copied from
+# another machine still parses -- it just points every path at a layout that is not here. Compare
+# it against the checkout this file actually lives in and fail at import rather than letting a
+# job write to nowhere.
+_declared_root = _DOTENV.get("PROJECT_ROOT")
+if _declared_root and Path(_declared_root).resolve() != AUDIO_ROOT.parent.resolve():
+    raise RuntimeError(
+        f"{ENV_FILE} sets PROJECT_ROOT={_declared_root}, but this checkout is "
+        f"{AUDIO_ROOT.parent}. Every ${{PROJECT_ROOT}} path in .env would point elsewhere. "
+        "Update PROJECT_ROOT to match this machine."
+    )
 
 
 def _resolve(name: str, default: Path) -> str:
