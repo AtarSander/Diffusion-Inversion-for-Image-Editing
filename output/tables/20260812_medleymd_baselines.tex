@@ -8,15 +8,17 @@
 % FAD is omitted: sqrtm(sigma1 @ sigma2) returns complex (imag 0.157) because MedleyMD has only
 % 35 unique excerpts, so the 128x128 VGGish covariance is near-singular and the metric returns -1.
 %
-% Cells marked --- need the pending eval re-run (see notes/medleymd_baselines.md, "Pending
-% re-run"): CLAP_dir/MuLan_dir are new, and the Stable Audio MuLan column was invalidated by the
-% stereo batching bug fixed in 32582db. Every other cell is final.
+% CLAP_dir / MuLan_dir and the corrected Stable Audio MuLan column come from the eval re-run of
+% 2026-08-12 (SLURM 5689403), after the stereo batching fix in 32582db.
 
 \begin{table}[t]
   \centering
   \caption{Text-guided audio editing on MedleyMD (696 edits per row, 35 MusicDelta excerpts).
     Preservation (LPAPS, mel PSNR/SSIM) is measured against the \emph{input} audio; adherence
-    (CLAP, MuLan) against the target caption. Best per panel in bold.
+    against the target caption. The directional scores are the cosine between the audio edit
+    direction $E(\text{edit}) - E(\text{source})$ and the caption edit direction
+    $E(T_{\text{tar}}) - E(T_{\text{src}})$, so returning the input unchanged scores $0$.
+    Best per panel in bold.
     \textbf{The two panels must not be compared against each other}: AudioLDM2 synthesises at
     16\,kHz and retains only $\sim$19\% of the reference energy above 8\,kHz (Stable Audio
     $\sim$88\%), and the paired mel metrics read the first channel only, so Stable Audio is
@@ -32,14 +34,14 @@
       & CLAP $\uparrow$ & MuLan $\uparrow$ & CLAP$_{\text{dir}}$ $\uparrow$ & MuLan$_{\text{dir}}$ $\uparrow$ \\
     \midrule
     \multirow{3}{*}{AudioLDM2-large}
-      & DDPM-inv & $\mathbf{4.841}_{\pm 0.652}$ & $\mathbf{18.57}$ & $\mathbf{0.576}$ & $0.354_{\pm 0.095}$ & $0.296_{\pm 0.149}$ & --- & --- \\
-      & DDIM-inv & $6.070_{\pm 0.567}$ & $14.70$ & $0.341$ & $0.352_{\pm 0.110}$ & $\mathbf{0.343}_{\pm 0.142}$ & --- & --- \\
-      & SDEdit   & $5.597_{\pm 0.547}$ & $18.03$ & $0.425$ & $\mathbf{0.357}_{\pm 0.094}$ & $0.294_{\pm 0.142}$ & --- & --- \\
+      & DDPM-inv & $\mathbf{4.841}_{\pm 0.652}$ & $\mathbf{18.57}$ & $\mathbf{0.576}$ & $0.354_{\pm 0.095}$ & $0.296_{\pm 0.149}$ & $0.196_{\pm 0.144}$ & $0.318_{\pm 0.213}$ \\
+      & DDIM-inv & $6.070_{\pm 0.567}$ & $14.70$ & $0.341$ & $0.352_{\pm 0.110}$ & $\mathbf{0.343}_{\pm 0.142}$ & $\mathbf{0.263}_{\pm 0.151}$ & $\mathbf{0.378}_{\pm 0.203}$ \\
+      & SDEdit   & $5.597_{\pm 0.547}$ & $18.03$ & $0.425$ & $\mathbf{0.357}_{\pm 0.094}$ & $0.294_{\pm 0.142}$ & $0.197_{\pm 0.149}$ & $0.306_{\pm 0.213}$ \\
     \midrule
     \multirow{3}{*}{Stable Audio Open}
-      & DDPM-inv & $\mathbf{3.502}_{\pm 0.661}$ & $\mathbf{21.48}$ & $\mathbf{0.644}$ & $0.281_{\pm 0.109}$ & --- & --- & --- \\
-      & DDIM-inv & $4.326_{\pm 0.673}$ & $17.05$ & $0.530$ & $0.285_{\pm 0.104}$ & --- & --- & --- \\
-      & SDEdit   & $6.193_{\pm 0.410}$ & $16.07$ & $0.228$ & $\mathbf{0.329}_{\pm 0.091}$ & --- & --- & --- \\
+      & DDPM-inv & $\mathbf{3.502}_{\pm 0.661}$ & $\mathbf{21.48}$ & $\mathbf{0.644}$ & $0.281_{\pm 0.109}$ & $0.197_{\pm 0.179}$ & $0.155_{\pm 0.130}$ & $0.184_{\pm 0.166}$ \\
+      & DDIM-inv & $4.326_{\pm 0.673}$ & $17.05$ & $0.530$ & $0.285_{\pm 0.104}$ & $0.196_{\pm 0.160}$ & $0.185_{\pm 0.140}$ & $0.254_{\pm 0.167}$ \\
+      & SDEdit   & $6.193_{\pm 0.410}$ & $16.07$ & $0.228$ & $\mathbf{0.329}_{\pm 0.091}$ & $\mathbf{0.247}_{\pm 0.146}$ & $\mathbf{0.259}_{\pm 0.160}$ & $\mathbf{0.331}_{\pm 0.191}$ \\
     \bottomrule
   \end{tabular}
 \end{table}

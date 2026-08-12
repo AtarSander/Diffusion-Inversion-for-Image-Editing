@@ -30,11 +30,11 @@ mildly optimistic. Report on `loc`+`test` (581 rows, disjoint from tuning) if th
 200 steps, cfg_src 3.0 / cfg_tar 12.0, tstart 100 (DDIM 200). Output 16 kHz mono, source
 truncated to 60 s.
 
-| Method | LPAPS ↓ | CLAP ↑ | MuLan ↑ | mel PSNR ↑ | mel SSIM ↑ | FAD ↓ |
-| --- | --- | --- | --- | --- | --- | --- |
-| DDPM-inv | **4.841** ± 0.652 | 0.354 ± 0.095 | 0.296 ± 0.149 | **18.572** | **0.576** | n/a |
-| DDIM-inv | 6.070 ± 0.567 | 0.352 ± 0.110 | **0.343** ± 0.142 | 14.703 | 0.341 | n/a |
-| SDEdit | 5.597 ± 0.547 | **0.357** ± 0.094 | 0.294 ± 0.142 | 18.032 | 0.425 | n/a |
+| Method | LPAPS ↓ | mel PSNR ↑ | mel SSIM ↑ | CLAP ↑ | MuLan ↑ | CLAP_dir ↑ | MuLan_dir ↑ | FAD ↓ |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| DDPM-inv | **4.841** ± 0.652 | **18.572** | **0.576** | 0.354 ± 0.095 | 0.296 ± 0.149 | 0.196 ± 0.144 | 0.318 ± 0.213 | n/a |
+| DDIM-inv | 6.070 ± 0.567 | 14.703 | 0.341 | 0.352 ± 0.110 | **0.343** ± 0.142 | **0.263** ± 0.151 | **0.378** ± 0.203 | n/a |
+| SDEdit | 5.597 ± 0.547 | 18.032 | 0.425 | **0.357** ± 0.094 | 0.294 ± 0.142 | 0.197 ± 0.149 | 0.306 ± 0.213 | n/a |
 
 **DDIM-inv vs DDPM-inv: −3.87 dB PSNR, +25% LPAPS, SSIM 0.341 vs 0.576.** That is the headroom
 the inversion LoRA has to recover.
@@ -44,17 +44,16 @@ the inversion LoRA has to recover.
 100 steps, cfg_src 1.0 / cfg_tar 3.5, tstart 50 (DDIM 100). Output 44.1 kHz stereo, capped near
 47.5 s by the model's `sample_size`.
 
-| Method | LPAPS ↓ | CLAP ↑ | MuLan ↑ | mel PSNR ↑ | mel SSIM ↑ | FAD ↓ |
-| --- | --- | --- | --- | --- | --- | --- |
-| DDPM-inv | **3.502** ± 0.661 | 0.281 ± 0.109 | ~~0.188~~ | **21.482** | **0.644** | n/a |
-| DDIM-inv | 4.326 ± 0.673 | 0.285 ± 0.104 | ~~0.199~~ | 17.048 | 0.530 | n/a |
-| SDEdit | 6.193 ± 0.410 | **0.329** ± 0.091 | ~~0.231~~ | 16.070 | 0.228 | n/a |
+| Method | LPAPS ↓ | mel PSNR ↑ | mel SSIM ↑ | CLAP ↑ | MuLan ↑ | CLAP_dir ↑ | MuLan_dir ↑ | FAD ↓ |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| DDPM-inv | **3.502** ± 0.661 | **21.482** | **0.644** | 0.281 ± 0.109 | 0.197 ± 0.179 | 0.155 ± 0.130 | 0.184 ± 0.166 | n/a |
+| DDIM-inv | 4.326 ± 0.673 | 17.048 | 0.530 | 0.285 ± 0.104 | 0.196 ± 0.160 | 0.185 ± 0.140 | 0.254 ± 0.167 | n/a |
+| SDEdit | 6.193 ± 0.410 | 16.070 | 0.228 | **0.329** ± 0.091 | **0.247** ± 0.146 | **0.259** ± 0.160 | **0.331** ± 0.191 | n/a |
 
 **DDIM-inv vs DDPM-inv: −4.43 dB PSNR, +24% LPAPS, SSIM 0.530 vs 0.644.**
 
-> **The MuLan column is struck through: those three numbers are invalid.** See "The Stable Audio
-> MuLan numbers were misaligned" below. Every other cell is unaffected. They are recomputed by
-> the next eval run and must not be quoted until then.
+Stable Audio shows a clean monotone trade-off: ordering the methods by preservation
+(DDPM > DDIM > SDEdit) reverses it exactly on all four adherence metrics.
 
 ## The Stable Audio MuLan numbers were misaligned (found 2026-08-12, fixed)
 
@@ -87,7 +86,47 @@ downmixes via `convert_audio(..., to_channels=1)` and the mel metrics take `audi
 Fix: downmix to mono before the MuLan call, matching the CLAP path, plus an assertion that the
 similarity tensor has exactly one row per edit so this cannot regress silently.
 
-## Directional CLAP / MuLan (added 2026-08-12, not yet run)
+**Impact on the reported aggregate turned out to be small**, which is luck, not robustness:
+
+| Stable Audio | before (invalid) | after |
+| --- | --- | --- |
+| DDPM-inv | 0.188 | 0.197 |
+| DDIM-inv | 0.199 | 0.196 |
+| SDEdit | 0.231 | 0.247 |
+
+The prompt CSV is ordered as **35 contiguous per-track blocks**, and 95.1% of adjacent row pairs
+share a track. Reading row *k* as file *k/2* therefore almost always landed on a *different edit
+of the same track*, so the misalignment mostly compared audio with a caption for the same piece
+of music and stayed in a plausible range. Per-example values were still wrong, and the conclusion
+would have been arbitrary on any benchmark whose rows were shuffled.
+
+## Directional CLAP / MuLan (added and run 2026-08-12)
+
+**Result: on AudioLDM2, plain CLAP cannot tell the three methods apart and the directional
+version separates them decisively.** Paired t-tests over all 696 examples:
+
+| AudioLDM2 pair | plain CLAP | CLAP_dir |
+| --- | --- | --- |
+| DDPM − DDIM | +0.002 (p = 0.67) | −0.067 (p = 7e-51) |
+| DDPM − SDEdit | −0.003 (p = 0.11) | −0.001 (p = 0.76) |
+| DDIM − SDEdit | −0.005 (p = 0.28) | +0.066 (p = 1e-45) |
+
+Plain CLAP spans 0.0045 across the three methods with **every pairwise difference
+insignificant**; CLAP_dir spans 0.0668 and puts DDIM ahead of both others at p < 1e-45. The
+reason is the confound the metric was added for: all three methods start from the same source
+audio, so any residual similarity to the source inflates plain CLAP equally and drowns the part
+that comes from the edit. Subtracting the source embedding removes exactly that shared term.
+
+On Stable Audio plain CLAP already separated SDEdit (p = 3e-28); directional agrees and
+additionally separates DDPM from DDIM (p = 2e-11) where plain CLAP could not (p = 0.13).
+
+**What this means for the LoRA.** In AudioLDM2, DDIM-inv leads on *both* directional metrics
+(CLAP_dir 0.263 vs 0.196/0.197, MuLan_dir 0.378 vs 0.318/0.306) while losing on every
+preservation metric. So the target is sharper than before: keep DDIM's directional adherence and
+recover DDPM's preservation. Reporting only plain CLAP would have hidden the adherence half of
+that trade-off entirely, since it reads as a three-way tie.
+
+
 
 Plain CLAP and MuLan score the edit against the target caption alone, so **returning the input
 untouched scores well whenever the source already resembles the target caption** — they cannot
@@ -101,6 +140,9 @@ comparison, where the methods differ mostly in how much they preserve.
 computed once with CLAP embeddings and once with MuLan embeddings. Verified on real data: an
 unedited copy of the source scores **exactly 0.000** on both, while plain CLAP still gives it
 0.046 and plain MuLan −0.097 on the same two files.
+
+Both directional metrics are positive for every method in both tables, so every method does move
+the audio toward the target caption; they differ in how far.
 
 Details worth knowing when reading the numbers:
 
@@ -176,11 +218,9 @@ feature extraction over both directories entirely — currently it is computed a
 - `alignment.py:344` still swallows per-file exceptions when building FAD/KL features without
   reporting a count. It does not affect LPAPS/CLAP/MuLan/PSNR/SSIM.
 
-## Pending re-run
+## Re-running the eval
 
-One eval pass over the six existing runs fills both gaps at once — it recomputes the Stable
-Audio MuLan column and adds `clap_dir`/`mulan_dir` everywhere. No re-editing is needed; the
-audio on disk is unchanged.
+Done on 2026-08-12 (SLURM 5689403, all six tasks `done:`, 696/696 intersection each). To repeat:
 
     cd <repo>/audio
     bash editing/AudioEditingCode/code/slurm_scripts/wcss/submit_eval.sh
