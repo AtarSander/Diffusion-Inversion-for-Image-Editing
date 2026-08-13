@@ -9,7 +9,7 @@ num_inference_steps: 200 # must match the trajectory dataset's DDIM grid
 adapter_name: inversion
 
 data_root: ${oc.env:LORAINV_DATA_ROOT}/audioldm2_trajectories_gonogo_fp32
-val_fraction: 0.10 # split by trajectory, never by transition; must exceed recon_num_generated
+val_fraction: 0.20 # split by trajectory, never by transition; must exceed recon_num_generated
 # 285k train transitions / 32 = ~8.9k steps per epoch, so max_train_steps=20000 is ~2.2 epochs.
 # At batch 4 the sweep would have seen 0.28 of one epoch.
 batch_size: 32
@@ -43,17 +43,20 @@ save_every_steps: 2000
 max_val_batches: 50
 
 # Invert-then-denoise reconstruction eval. Costs ~2 * N * 2 * num_inference_steps UNet forwards.
-# Measured on an H100: 53 s per batch of 8, so 128 + 128 samples is ~28 min per eval and ~3.8 h
-# across a 20k-step run. 128 also drops the corr_topk floor from 0.65 to ~0.33, which is what
-# makes that metric able to resolve anything. Set recon_every_steps to 0 to switch it off.
+# Measured on an H100: 13 s per batch of 8 at 50 steps, so 256 + 256 samples is ~14 min per
+# eval and ~1.9 h across a 20k-step run. Sample count buys resolution on the distributional
+# metrics: the corr_topk floor on pure iid noise falls as ~1/sqrt(n) -- 0.65 at n=32, 0.35 at
+# 128, 0.25 at 256, 0.18 at 512 -- and normality resolves to 1/n. Going past 256 costs training
+# data, since recon_num_generated draws one held-out prompt per validation trajectory.
+# Set recon_every_steps to 0 to switch it off.
 # The eval runs its own DDIM grid, independent of the 200-step grid the LoRA is trained on.
 # 50/50 costs a quarter as much and leaves far more headroom to measure (plain DDIM sits near
 # 36 dB at 50 steps vs 48 dB at 200), but the adapter is then extrapolating: it learned to
 # correct a 5-timestep shift and sees a 20-timestep one, and the editing benchmark uses 200.
 recon_num_inference_steps: 50
 recon_every_steps: 2500
-recon_num_generated: 128
-recon_num_real: 128
+recon_num_generated: 256
+recon_num_real: 256
 recon_batch_size: 8
 recon_duration_s: 10.24 # AudioLDM2's native length; the latent grid follows from it
 recon_prompts_csv: ${oc.env:MEDLEY_PROMPTS_CSV}
