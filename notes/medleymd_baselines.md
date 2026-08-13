@@ -219,6 +219,16 @@ feature extraction over both directories entirely — currently it is computed a
 - **Class balance is extreme**: GENRE 397, INSTR 195, MOOD 34, VOICE 31, OTHER 27, TEMPO 12.
   GENRE+INSTR is 85%, so each aggregate is effectively a GENRE score. Per-class numbers live in
   each run's `per_task_results.json`; treat the four small classes as directional.
+- **The `edit` class labels are GPT-5-assigned, the captions are not.** Verified:
+  `captions_gpt5.csv` is `captions_targets_with_sources.csv` (the original benchmark: filename,
+  source_captions, target_captions, can_be_used_without_source) with `cls_gpt5.csv`'s single
+  `edit` column joined on. The source and target caption text is identical to the original file
+  row for row. So the aggregate metrics are untouched by the classification, but every
+  *per-class* number inherits whatever error the classifier made — relevant mainly for TEMPO
+  (n=12) and OTHER (n=27), where a handful of misassignments would move the mean.
+- **Source captions are reused**: `captions_sources.csv` holds 107 unique source captions across
+  the 696 rows (35 tracks). Rows are therefore not independent for any metric conditioned on the
+  source prompt.
 - `alignment.py:344` still swallows per-file exceptions when building FAD/KL features without
   reporting a count. It does not affect LPAPS/CLAP/MuLan/PSNR/SSIM.
 
