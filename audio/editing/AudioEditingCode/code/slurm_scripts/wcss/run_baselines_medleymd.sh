@@ -57,15 +57,29 @@ CONFIGS=(
   "edit_audioldm_medleydb.py|ddim|200|1.0|12.0|200|audioldm2_ddim_cfgsrc1.0_cfgtar12.0_t200_s200"
 )
 
+# Index 7 (array 84-95): DDIM inversion with a trained inversion LoRA on the forward pass only.
+# Kept out of CONFIGS because it needs an extra argument; set LORA_PATH to a checkpoint written
+# by src/inversion_lora/train.py. cfg_src=1.0 matches the No-CFG objective the adapter was
+# trained under, and the cfg_src=1.0 row above is its like-for-like comparison.
+LORA_CONFIG="edit_audioldm_medleydb.py|ddim|200|1.0|12.0|200"
+
 TASK_ID="${SLURM_ARRAY_TASK_ID:?This script must run as a SLURM array job}"
 CFG_IDX=$(( TASK_ID / N_PARTS ))
 PART=$(( TASK_ID % N_PARTS ))
-if [ "$CFG_IDX" -ge "${#CONFIGS[@]}" ]; then
-  echo "array index $TASK_ID exceeds ${#CONFIGS[@]} configs x $N_PARTS shards" >&2
+if [ "$CFG_IDX" -gt "${#CONFIGS[@]}" ]; then
+  echo "array index $TASK_ID exceeds ${#CONFIGS[@]} configs (+1 LoRA) x $N_PARTS shards" >&2
   exit 2
 fi
 
-IFS='|' read -r SCRIPT MODE STEPS CFG_SRC CFG_TAR TSTART RUN_NAME <<< "${CONFIGS[$CFG_IDX]}"
+EXTRA_ARGS=()
+if [ "$CFG_IDX" -eq "${#CONFIGS[@]}" ]; then
+  : "${LORA_PATH:?set LORA_PATH=<checkpoint.pt> to run the LoRA config (array 84-95)}"
+  IFS='|' read -r SCRIPT MODE STEPS CFG_SRC CFG_TAR TSTART <<< "$LORA_CONFIG"
+  RUN_NAME="audioldm2_ddimlora_$(basename "$(dirname "$LORA_PATH")")_$(basename "$LORA_PATH" .pt)"
+  EXTRA_ARGS=(--lora_path "$LORA_PATH")
+else
+  IFS='|' read -r SCRIPT MODE STEPS CFG_SRC CFG_TAR TSTART RUN_NAME <<< "${CONFIGS[$CFG_IDX]}"
+fi
 echo "task=$TASK_ID config=$RUN_NAME shard=$PART/$N_PARTS node=$(hostname)"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 
@@ -83,7 +97,7 @@ for attempt in 1 2 3; do
     --seed 42 \
     --n_parts "$N_PARTS" \
     --part_id "$PART" \
-    --run_name "$RUN_NAME" && { ok=1; break; }
+    --run_name "$RUN_NAME" "${EXTRA_ARGS[@]}" && { ok=1; break; }
   echo "attempt $attempt failed for $RUN_NAME shard $PART; retrying in 120s..." >&2
   sleep 120
 done

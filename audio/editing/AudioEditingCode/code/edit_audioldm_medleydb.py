@@ -89,6 +89,7 @@ def main(
     range_start: int | None = None,
     range_end: int | None = None,
     model_id: str = "cvssp/audioldm2-large",
+    lora_path: str | None = None,
 ):
     """
     Main function to edit audio files using AudioLDM2 methods.
@@ -107,6 +108,8 @@ def main(
         n_parts: Number of parts to split dataset into for parallel processing (default: None)
         part_id: ID of the current part when using parallel processing (default: 0)
         model_id: AudioLDM model to use (default: "cvssp/audioldm2-large")
+        lora_path: Trained inversion-LoRA checkpoint, applied to the DDIM inversion pass only
+            (default: None)
 
     Returns:
         None
@@ -196,6 +199,7 @@ def main(
                 save_edit_wav_path=output_wav_path,
                 layers_to_hook=layers_to_hook,
                 model_id=model_id,
+                lora_path=lora_path,
             )
             pbar.update(1)
 

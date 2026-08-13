@@ -11,6 +11,12 @@ import matplotlib.pyplot as plt
 import torch
 import torchaudio
 from ddm_inversion.ddim_inversion import ddim_inversion, text2image_ldm_stable
+
+import sys as _sys
+_AUDIO_ROOT = Path(__file__).resolve().parents[3]
+if str(_AUDIO_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_AUDIO_ROOT))
+from src.inversion_lora.apply_lora import attach_inversion_lora  # noqa: E402
 from ddm_inversion.inversion_utils import inversion_forward_process, inversion_reverse_process
 from sdedit_utils import sdedit_denoise, sdedit_forward_noise
 from torch import inference_mode
@@ -173,6 +179,7 @@ def run_audioldm_edit(
     eta: float = 1.0,
     layers_to_hook: list[str] | None = None,
     model_id: str = "cvssp/audioldm2-large",
+    lora_path: str | None = None,
 ):
     """
     Run text-based audio editing with AudioLDM2 models with optional cross-attention hooks.
@@ -197,6 +204,9 @@ def run_audioldm_edit(
         eta: Eta parameter for DDPM
         layers_to_hook: List of layer names to hook for cross-attention replacement
         model_id: AudioLDM model ID to use
+        lora_path: Trained inversion-LoRA checkpoint. Applied to the inversion pass only; the
+            reverse pass always runs the frozen teacher, since the adapter is trained to fix the
+            approximation DDIM inversion makes, not to change how the model denoises.
     """
     assert mode in ["ddpm", "ddim", "sdedit"], "Invalid mode, must be one of ['ddpm', 'ddim', 'sdedit']"
     assert (
@@ -253,6 +263,12 @@ def run_audioldm_edit(
     # Load AudioLDM model
     ldm_stable = load_model(model_id, device, num_diffusion_steps, edit_method=mode)
     ldm_stable_inverse = ldm_stable
+
+    set_lora_enabled = None
+    if lora_path is not None:
+        if mode != "ddim":
+            raise ValueError(f"lora_path is only meaningful for DDIM inversion, got mode={mode!r}")
+        set_lora_enabled = attach_inversion_lora(ldm_stable.model.unet, lora_path)
 
     audio_path_truncated: str = create_truncated_audio(init_aud, max_duration=60.0)
     x0, sr, duration = load_audio(
@@ -334,15 +350,21 @@ def run_audioldm_edit(
             # DDIM inversion
             if len(cfg_scale_src) > 1:
                 raise ValueError("DDIM only supports one cfg_scale_src value")
-            wT = ddim_inversion(
-                ldm_stable_inverse,
-                w0,
-                source_prompt,
-                cfg_scale_src[0],
-                num_inference_steps=num_diffusion_steps,
-                skip=skip[0],
-                duration=duration,
-            )
+            if set_lora_enabled is not None:
+                set_lora_enabled(True)
+            try:
+                wT = ddim_inversion(
+                    ldm_stable_inverse,
+                    w0,
+                    source_prompt,
+                    cfg_scale_src[0],
+                    num_inference_steps=num_diffusion_steps,
+                    skip=skip[0],
+                    duration=duration,
+                )
+            finally:
+                if set_lora_enabled is not None:
+                    set_lora_enabled(False)
 
             # if skip != 0:
             #     warnings.warn(
