@@ -10,8 +10,10 @@ adapter_name: inversion
 
 data_root: ${oc.env:LORAINV_DATA_ROOT}/audioldm2_trajectories_gonogo_fp32
 val_fraction: 0.05 # split by trajectory, never by transition
-batch_size: 4
-num_workers: 4
+# 285k train transitions / 32 = ~8.9k steps per epoch, so max_train_steps=20000 is ~2.2 epochs.
+# At batch 4 the sweep would have seen 0.28 of one epoch.
+batch_size: 32
+num_workers: 8
 
 lora:
   r: 8
