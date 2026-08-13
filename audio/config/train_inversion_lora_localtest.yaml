@@ -1,0 +1,30 @@
+# Wiring test for the inversion-LoRA trainer on a local GPU: a handful of steps over the tiny
+# local trajectory set, with the reconstruction eval shrunk to 2+2 samples so it finishes in
+# minutes. Proves the pipeline runs end to end; it trains nothing useful.
+#
+# Run:
+#   .venv/bin/python src/inversion_lora/train.py \
+#     --config-name train_inversion_lora_localtest device=cuda:0
+
+defaults:
+  - train_inversion_lora
+  - _self_
+
+data_root: /nas/lstanisz/data/lorainv/audioldm2_trajectories_localtest_fp32
+val_fraction: 0.25 # 24 trajectories -> 6 held out, enough to draw the eval prompts from
+batch_size: 4
+
+max_train_steps: 20
+log_every_steps: 5
+eval_every_steps: 10
+save_every_steps: 20
+max_val_batches: 5
+
+recon_every_steps: 10
+recon_num_generated: 2
+recon_num_real: 2
+recon_batch_size: 2
+
+checkpoint_dir: /nas/lstanisz/data/lorainv/checkpoints/localtest
+wandb_mode: offline # exercises the wandb code path without needing a login
+run_name: localtest

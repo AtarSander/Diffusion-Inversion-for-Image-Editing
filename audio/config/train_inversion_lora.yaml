@@ -8,7 +8,7 @@ model_id: cvssp/audioldm2-large
 num_inference_steps: 200 # must match the trajectory dataset's DDIM grid
 adapter_name: inversion
 
-data_root: /nas/lstanisz/data/lorainv/audioldm2_trajectories_gonogo_fp32
+data_root: ${oc.env:LORAINV_DATA_ROOT}/audioldm2_trajectories_gonogo_fp32
 val_fraction: 0.05 # split by trajectory, never by transition
 batch_size: 4
 num_workers: 4
@@ -46,7 +46,7 @@ recon_duration_s: 10.24 # AudioLDM2's native length; the latent grid follows fro
 recon_prompts_csv: ${oc.env:MEDLEY_PROMPTS_CSV}
 recon_audio_root: ${oc.env:MEDLEYDB_AUDIO_DIR}
 save_training_state: true
-checkpoint_dir: /nas/lstanisz/data/lorainv/checkpoints/audioldm2_inversion_r8
+checkpoint_dir: ${oc.env:LORAINV_CHECKPOINT_ROOT}/audioldm2_inversion_r8
 resume_from: null
 
 wandb_project: audio-inversion-lora

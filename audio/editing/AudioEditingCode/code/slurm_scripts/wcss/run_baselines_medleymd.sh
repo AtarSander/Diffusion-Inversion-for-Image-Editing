@@ -8,7 +8,7 @@
 #SBATCH --mem=100G
 #SBATCH --time=05:00:00
 #SBATCH --gres=gpu:hopper:1
-#SBATCH --array=0-71
+#SBATCH --array=0-83
 #SBATCH --output=outputs/logs/slurm/baselines-%A_%a.out
 #SBATCH --error=outputs/logs/slurm/baselines-%A_%a.err
 #
@@ -50,6 +50,11 @@ CONFIGS=(
   "edit_stableaudio_medleydb.py|ddpm|100|1.0|3.5|50|stableaudio_ddpm_cfgsrc1.0_cfgtar3.5_t50_s100"
   "edit_stableaudio_medleydb.py|ddim|100|1.0|3.5|100|stableaudio_ddim_cfgsrc1.0_cfgtar3.5_t100_s100"
   "edit_stableaudio_medleydb.py|sdedit|100|1.0|3.5|50|stableaudio_sdedit_cfgtar3.5_t50_s100"
+  # Index 6 (array 72-83): DDIM inversion with no CFG on the forward pass. DDIM inversion is
+  # known to degrade as the inversion-side guidance grows, so this separates "DDIM inversion is
+  # weak" from "DDIM inversion is weak at cfg_src=3.0" -- which decides whether the inversion
+  # LoRA should target discretisation error or the CFG mismatch.
+  "edit_audioldm_medleydb.py|ddim|200|1.0|12.0|200|audioldm2_ddim_cfgsrc1.0_cfgtar12.0_t200_s200"
 )
 
 TASK_ID="${SLURM_ARRAY_TASK_ID:?This script must run as a SLURM array job}"

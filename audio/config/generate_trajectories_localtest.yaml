@@ -1,0 +1,16 @@
+# Tiny trajectory set for wiring tests on a local GPU, not for training a usable LoRA.
+# Keeps the real 200-step DDIM grid and fp32 storage so anything that breaks on WCSS breaks
+# here too; only the trajectory count is reduced.
+#
+# Run:
+#   .venv/bin/python src/inversion_lora/generate_trajectories.py \
+#     --config-name generate_trajectories_localtest device=cuda:0
+
+defaults:
+  - generate_trajectories
+  - _self_
+
+output_dir: /nas/lstanisz/data/lorainv/audioldm2_trajectories_localtest_fp32
+num_samples: 24
+num_inference_steps: 200
+save_uncond_target: false

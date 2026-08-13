@@ -11,7 +11,7 @@ audio_length_in_s: 10.24 # MusicCaps clips are 10 s; this is AudioLDM2's native 
 captions_csv: editing/music_caps_dl/metadata/musiccaps-public.csv
 caption_column: caption
 
-output_dir: /nas/lstanisz/data/lorainv/audioldm2_trajectories_fp32
+output_dir: ${oc.env:LORAINV_DATA_ROOT}/audioldm2_trajectories_fp32
 start_index: 0
 num_samples: null # null => all captions from start_index
 seed: 42

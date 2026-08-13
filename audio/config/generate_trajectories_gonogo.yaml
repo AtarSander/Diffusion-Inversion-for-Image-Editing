@@ -13,7 +13,7 @@ defaults:
   - generate_trajectories
   - _self_
 
-output_dir: /nas/lstanisz/data/lorainv/audioldm2_trajectories_gonogo_fp32
+output_dir: ${oc.env:LORAINV_DATA_ROOT}/audioldm2_trajectories_gonogo_fp32
 num_samples: 1500
 
 # 200 steps matches edit_audioldm_medleydb.py, so the LoRA is trained on the same DDIM grid

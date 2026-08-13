@@ -8,7 +8,7 @@
 #SBATCH --mem=100G
 #SBATCH --time=05:00:00
 #SBATCH --gres=gpu:hopper:1
-#SBATCH --array=0-5
+#SBATCH --array=0-6
 #SBATCH --output=outputs/logs/slurm/eval-%A_%a.out
 #SBATCH --error=outputs/logs/slurm/eval-%A_%a.err
 #
@@ -54,6 +54,7 @@ RUNS=(
   "$EDITS_ROOT/medleymd/stable_audio/stableaudio_ddpm_cfgsrc1.0_cfgtar3.5_t50_s100/audios"
   "$EDITS_ROOT/medleymd/stable_audio/stableaudio_ddim_cfgsrc1.0_cfgtar3.5_t100_s100/audios"
   "$EDITS_ROOT/medleymd/stable_audio/stableaudio_sdedit_cfgtar3.5_t50_s100/audios"
+  "$EDITS_ROOT/audioldm2_ddim/audioldm2_ddim_cfgsrc1.0_cfgtar12.0_t200_s200/audios"
 )
 
 TASK_ID="${SLURM_ARRAY_TASK_ID:?This script must run as a SLURM array job}"
