@@ -57,7 +57,19 @@ RUNS=(
   "$EDITS_ROOT/audioldm2_ddim/audioldm2_ddim_cfgsrc1.0_cfgtar12.0_t200_s200/audios"
 )
 
+# Index 7: a LoRA-inversion run. Its directory name comes from the checkpoint, so it is only
+# resolvable with LORA_PATH set -- hence not in the default --array range.
+if [ -n "${LORA_PATH:-}" ]; then
+  source "$(dirname "${BASH_SOURCE[0]}")/lora_run_name.sh"
+  RUNS+=("$EDITS_ROOT/audioldm2_ddim/$(lora_run_name "$LORA_PATH")/audios")
+fi
+
 TASK_ID="${SLURM_ARRAY_TASK_ID:?This script must run as a SLURM array job}"
+if [ "$TASK_ID" -ge "${#RUNS[@]}" ]; then
+  echo "ERROR: task $TASK_ID but only ${#RUNS[@]} runs are defined." >&2
+  echo "  Scoring a LoRA run (index 7) needs LORA_PATH=<checkpoint.pt> in the environment." >&2
+  exit 2
+fi
 RUN_DIR="${RUNS[$TASK_ID]}"
 echo "task=$TASK_ID node=$(hostname)"
 echo "run_dir=$RUN_DIR"

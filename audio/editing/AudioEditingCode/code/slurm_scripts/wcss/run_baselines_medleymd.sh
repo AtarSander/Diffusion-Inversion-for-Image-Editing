@@ -75,7 +75,8 @@ EXTRA_ARGS=()
 if [ "$CFG_IDX" -eq "${#CONFIGS[@]}" ]; then
   : "${LORA_PATH:?set LORA_PATH=<checkpoint.pt> to run the LoRA config (array 84-95)}"
   IFS='|' read -r SCRIPT MODE STEPS CFG_SRC CFG_TAR TSTART <<< "$LORA_CONFIG"
-  RUN_NAME="audioldm2_ddimlora_$(basename "$(dirname "$LORA_PATH")")_$(basename "$LORA_PATH" .pt)"
+  source "$(dirname "${BASH_SOURCE[0]}")/lora_run_name.sh"
+  RUN_NAME="$(lora_run_name "$LORA_PATH")"
   EXTRA_ARGS=(--lora_path "$LORA_PATH")
 else
   IFS='|' read -r SCRIPT MODE STEPS CFG_SRC CFG_TAR TSTART RUN_NAME <<< "${CONFIGS[$CFG_IDX]}"
