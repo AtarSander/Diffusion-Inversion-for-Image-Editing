@@ -13,6 +13,8 @@
 #SBATCH --error=outputs/logs/slurm/train-%A_%a.err
 #
 # Submit from audio/ once the trajectory array has finished and been verified:
+#   bash editing/AudioEditingCode/code/slurm_scripts/wcss/submit_train.sh --array=0-5   # rank+lr cross
+#   bash editing/AudioEditingCode/code/slurm_scripts/wcss/submit_train.sh --array=6-11  # lr sweep
 #   bash editing/AudioEditingCode/code/slurm_scripts/wcss/submit_train.sh
 #
 # Prerequisites:
@@ -40,6 +42,16 @@ CONFIGS=(
   "4|2|2e-4|r4_a2_lr2e-4"
   "16|8|2e-4|r16_a8_lr2e-4"
   "32|16|2e-4|r32_a16_lr2e-4"
+  # Indices 6-11 (--array=6-11): learning rate sweep above 2e-4, at fixed rank 8.
+  # The first sweep showed rank is not binding (r4 matched r32) while lr1e-5 was clearly
+  # under-trained, and moving from batch 4 to 32 shifts the optimum upward, so the open question
+  # is how far up it goes. This brackets it from just above the old best to certainly too high.
+  "8|4|3e-4|r8_a4_lr3e-4"
+  "8|4|5e-4|r8_a4_lr5e-4"
+  "8|4|1e-3|r8_a4_lr1e-3"
+  "8|4|2e-3|r8_a4_lr2e-3"
+  "8|4|5e-3|r8_a4_lr5e-3"
+  "8|4|1e-2|r8_a4_lr1e-2"
 )
 
 # Fail before the 12 GB model load rather than after it: wandb only reports a bad credential
