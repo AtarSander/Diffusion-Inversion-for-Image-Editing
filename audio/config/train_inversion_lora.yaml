@@ -46,6 +46,11 @@ max_val_batches: 50
 # Measured on an H100: 53 s per batch of 8, so 128 + 128 samples is ~28 min per eval and ~3.8 h
 # across a 20k-step run. 128 also drops the corr_topk floor from 0.65 to ~0.33, which is what
 # makes that metric able to resolve anything. Set recon_every_steps to 0 to switch it off.
+# The eval runs its own DDIM grid, independent of the 200-step grid the LoRA is trained on.
+# 50/50 costs a quarter as much and leaves far more headroom to measure (plain DDIM sits near
+# 36 dB at 50 steps vs 48 dB at 200), but the adapter is then extrapolating: it learned to
+# correct a 5-timestep shift and sees a 20-timestep one, and the editing benchmark uses 200.
+recon_num_inference_steps: 50
 recon_every_steps: 2500
 recon_num_generated: 128
 recon_num_real: 128

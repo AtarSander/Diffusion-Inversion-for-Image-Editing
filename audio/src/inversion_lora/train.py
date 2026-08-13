@@ -261,6 +261,24 @@ class AudioLDM2InversionTrainer:
         return out
 
     @contextmanager
+    def scheduler_steps(self, num_inference_steps: int):
+        """Temporarily re-grid the DDIM scheduler, then restore the training grid.
+
+        Training never reads `scheduler.timesteps` -- it uses the timestep cached with each
+        transition, and `scale_model_input` is a no-op for DDIM -- so this only affects the
+        reconstruction eval. It is restored regardless, so the two cannot drift apart.
+        """
+        original = int(self.cfg.num_inference_steps)
+        if num_inference_steps == original:
+            yield
+            return
+        self.ldm.model.scheduler.set_timesteps(num_inference_steps, device=self.device)
+        try:
+            yield
+        finally:
+            self.ldm.model.scheduler.set_timesteps(original, device=self.device)
+
+    @contextmanager
     def ema_weights(self):
         """Temporarily install the EMA weights into the adapter, then restore the live ones.
 
@@ -320,19 +338,20 @@ class AudioLDM2InversionTrainer:
         """
         self.set_lora_enabled(False)
         try:
-            generated, initial_noise = generate_eval_latents(
-                self.ldm,
-                prompts,
-                seed=int(self.cfg.seed),
-                batch_size=int(self.cfg.recon_batch_size),
-                duration_s=float(self.cfg.recon_duration_s),
-            )
-            real, real_names = load_real_latents(
-                self.ldm,
-                audio_paths,
-                seed=int(self.cfg.seed),
-                duration_s=float(self.cfg.recon_duration_s),
-            )
+            with self.scheduler_steps(int(self.cfg.recon_num_inference_steps)):
+                generated, initial_noise = generate_eval_latents(
+                    self.ldm,
+                    prompts,
+                    seed=int(self.cfg.seed),
+                    batch_size=int(self.cfg.recon_batch_size),
+                    duration_s=float(self.cfg.recon_duration_s),
+                )
+                real, real_names = load_real_latents(
+                    self.ldm,
+                    audio_paths,
+                    seed=int(self.cfg.seed),
+                    duration_s=float(self.cfg.recon_duration_s),
+                )
         finally:
             self.set_lora_enabled(True)
 
@@ -367,43 +386,46 @@ class AudioLDM2InversionTrainer:
         fixtures = self.eval_fixtures
         metrics: dict[str, float] = {}
 
-        for kind in ("generated", "real"):
-            scores, inverted = reconstruction_metrics(
-                self.ldm,
-                fixtures[kind],
-                fixtures[f"{kind}_prompts"],
-                batch_size=int(self.cfg.recon_batch_size),
-                set_lora_enabled=set_lora_enabled,
-                progress=lambda message: logger.debug(message),
-            )
-            metrics.update({f"{prefix}/{kind}/{key}": value for key, value in scores.items()})
-            # Generated samples have a true initial noise to compare against; real audio has
-            # none, so a fresh standard normal draw is the only available reference.
-            gaussian = torch.randn(
-                inverted.shape, generator=torch.Generator().manual_seed(int(self.cfg.seed))
-            )
-            reference = fixtures["generated_noise"] if kind == "generated" else gaussian
-            metrics.update(
-                noise_report(
-                    inverted,
-                    reference,
-                    prefix=f"{prefix}/{kind}/noise",
-                    reference_is_ground_truth=kind == "generated",
-                    seed=int(self.cfg.seed),
-                )
-            )
-            # The same statistics on the clean latent being inverted. It is structured audio, so
-            # it should look markedly non-Gaussian: this is the control that shows the metrics
-            # can tell the two apart, rather than reading at the floor for everything.
-            metrics.update(
-                noise_report(
+        with self.scheduler_steps(int(self.cfg.recon_num_inference_steps)):
+            for kind in ("generated", "real"):
+                scores, inverted = reconstruction_metrics(
+                    self.ldm,
                     fixtures[kind],
-                    gaussian,
-                    prefix=f"{prefix}/{kind}/latent",
-                    reference_is_ground_truth=False,
-                    seed=int(self.cfg.seed),
+                    fixtures[f"{kind}_prompts"],
+                    batch_size=int(self.cfg.recon_batch_size),
+                    set_lora_enabled=set_lora_enabled,
+                    progress=lambda message: logger.debug(message),
                 )
-            )
+                metrics.update(
+                    {f"{prefix}/{kind}/{key}": value for key, value in scores.items()}
+                )
+                # Generated samples have a true initial noise to compare against; real audio has
+                # none, so a fresh standard normal draw is the only available reference.
+                gaussian = torch.randn(
+                    inverted.shape, generator=torch.Generator().manual_seed(int(self.cfg.seed))
+                )
+                reference = fixtures["generated_noise"] if kind == "generated" else gaussian
+                metrics.update(
+                    noise_report(
+                        inverted,
+                        reference,
+                        prefix=f"{prefix}/{kind}/noise",
+                        reference_is_ground_truth=kind == "generated",
+                        seed=int(self.cfg.seed),
+                    )
+                )
+                # The same statistics on the clean latent being inverted. It is structured
+                # audio, so it should look markedly non-Gaussian: the control that shows these
+                # metrics discriminate, rather than reading at the floor for everything.
+                metrics.update(
+                    noise_report(
+                        fixtures[kind],
+                        gaussian,
+                        prefix=f"{prefix}/{kind}/latent",
+                        reference_is_ground_truth=False,
+                        seed=int(self.cfg.seed),
+                    )
+                )
         return metrics
 
     def reconstruction_eval(self) -> dict[str, float]:
