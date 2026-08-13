@@ -16,7 +16,7 @@ from loguru import logger
 from omegaconf import DictConfig, OmegaConf
 from peft import LoraConfig, inject_adapter_in_model, set_peft_model_state_dict
 from peft.utils import get_peft_model_state_dict
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
 AUDIO_ROOT = Path(__file__).resolve().parents[2]
@@ -215,15 +215,26 @@ class AudioLDM2InversionTrainer:
         return squared.flatten(1).mean(dim=1)
 
     @torch.no_grad()
-    def baseline_loss(self, batch: dict[str, Any]) -> torch.Tensor:
-        """Loss with the LoRA disabled, i.e. the shift gap the LoRA has to close.
+    def baseline_loss(self, val_loader: DataLoader, max_batches: int | None) -> float:
+        """Loss with the LoRA disabled: the shift gap the adapter has to close.
 
-        Logged once at startup so the training curve has a meaningful reference: anything at or
-        above this number means the adapter is not helping.
+        Measured over the deterministic validation loader rather than one training batch. The
+        per-transition loss is heavy-tailed -- a handful of steps near t=0 carry most of the mass
+        -- so a single batch of 32 has a standard deviation about half its own mean, and the
+        number is not even comparable between runs: injecting a rank-r adapter consumes RNG in
+        proportion to r, which shifts the shuffled loader and hands each rank a different first
+        batch. The teacher is identical in every run, so this must be one number.
+
+        Args:
+            val_loader: Validation loader, unshuffled.
+            max_batches: Cap on batches, or None for all of them.
+
+        Returns:
+            Mean LoRA-disabled loss.
         """
         self.set_lora_enabled(False)
         try:
-            return self.forward_loss(batch)
+            return self.validate(val_loader, max_batches)["val/loss"]
         finally:
             self.set_lora_enabled(True)
 
@@ -477,21 +488,24 @@ class AudioLDM2InversionTrainer:
         self.optimizer.zero_grad(set_to_none=True)
         progress = tqdm(total=max_train_steps, initial=self.global_step, desc="train steps")
 
+        if val_loader is not None:
+            self.baseline_reference = self.baseline_loss(val_loader, self.cfg.max_val_batches)
+            logger.info(
+                "LoRA-disabled loss over the validation split: {:.3e}", self.baseline_reference
+            )
+            self.tracker.log(
+                {"train/loss_lora_disabled": self.baseline_reference}, step=self.global_step
+            )
+
         logged_first = False
         while self.global_step < max_train_steps:
             for batch in train_loader:
                 if not logged_first:
-                    self.baseline_reference = float(self.baseline_loss(batch))
                     logger.info(
-                        "First batch: x_clean={} t={} t5={} | LoRA-disabled loss={:.6f}",
+                        "First batch: x_clean={} t={} t5={}",
                         tuple(batch["x_clean"].shape),
                         batch["timestep"].tolist(),
                         tuple(batch["t5_prompt_embeds"].shape),
-                        self.baseline_reference,
-                    )
-                    self.tracker.log(
-                        {"train/loss_lora_disabled": self.baseline_reference},
-                        step=self.global_step,
                     )
                     logged_first = True
 
@@ -596,6 +610,21 @@ def main(cfg: DictConfig) -> None:
     if val_ids:
         val_dataset = AudioLDM2TrajectoryDataset(cfg.data_root, sample_ids=val_ids)
         logger.info("val:   {:,} transitions from {} trajectories", len(val_dataset), len(val_ids))
+
+        # Flat indices run trajectory-major, so truncating an unshuffled loader to
+        # max_val_batches would only ever score the earliest timesteps of the first few
+        # trajectories -- the noisy end, where the shift gap is ~300x smaller. Draw a fixed
+        # random subset instead: unbiased across the schedule, and identical in every run.
+        val_size = len(val_dataset)
+        if cfg.max_val_batches:
+            capped = int(cfg.max_val_batches) * int(cfg.batch_size)
+            if capped < val_size:
+                order = torch.randperm(
+                    val_size, generator=torch.Generator().manual_seed(int(cfg.seed))
+                )
+                val_dataset = Subset(val_dataset, order[:capped].tolist())
+                logger.info("val:   scoring a fixed random subset of {:,} transitions", capped)
+
         val_loader = DataLoader(
             val_dataset,
             batch_size=int(cfg.batch_size),
