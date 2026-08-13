@@ -8,6 +8,62 @@ Most recent first. Keep this file current — it is the handover doc between ses
 
 ---
 
+## 2026-08-13 — Pipeline runs end to end, and the No-CFG loss looks near-degenerate at 200 steps
+
+**Everything is wired and verified. The problem is what it measures.**
+
+Built and tested locally: 24-trajectory dataset (200-step grid, fp32, 1.2 GB), quartile loss
+logging, the invert-then-denoise reconstruction eval, W&B online, and WCSS array jobs for both
+trajectory generation and a 6-point hyperparameter sweep. First W&B run:
+`audio-inversion-lora/runs/d9ogutvi`.
+
+**Eval correctness is verified, not assumed** (`src/inversion_lora/verify_eval.py`): an untrained
+LoRA is mathematically the identity (`lora_B = 0`), and it reproduced the no-LoRA baseline on
+**29/29 metrics exactly**; perturbing 1024 `lora_B` tensors then moved **17/29**, including
+`generated/latent_mse`. So the adapter really does reach the inversion pass, and the eval is
+sensitive to it and to nothing else.
+
+### The finding
+
+At the 200-step grid the benchmark uses, **there is almost nothing for the No-CFG shifted-denoiser
+loss to learn**:
+
+| quantity | value |
+| --- | --- |
+| LoRA-disabled loss (the shift gap the LoRA must close) | **4e-6** |
+| Plain DDIM reconstruction, generated | **latent MSE 4.2e-4, mel PSNR 48.20 dB** |
+| Plain DDIM reconstruction, real audio | latent MSE 6.6e-4, mel PSNR 46.64 dB |
+
+Reconstruction error falls off fast with grid density — 20 steps: 29.1 dB; 50 steps: 36.5 dB;
+200 steps: 48.2 dB — because ε(x_{t-1}, t) ≈ ε(x_t, t) becomes an excellent approximation as the
+spacing shrinks. At spacing 5/1000 the identity is already nearly optimal, and 20 steps of
+training pushed the loss *above* the frozen-teacher baseline (2.7e-5 vs 4e-6).
+
+**So the benchmark's 3.87 dB DDIM-vs-DDPM gap cannot be discretisation error.** Reconstruction at
+the same grid is 48 dB while the benchmark's DDIM-inv row scores 14.70 dB mel PSNR. The
+difference between the two settings is guidance: the benchmark inverts at `cfg_src=3.0` and
+denoises at `cfg_tar=12.0`, and DDIM inversion is known to degrade as inversion-side guidance
+grows. The reconstruction eval above uses no CFG.
+
+The quartile breakdown supports this being a real, structured signal rather than noise: the loss
+is concentrated almost entirely in the cleanest quarter (q4 4.4e-4 vs q1 ~0), which is where the
+shift gap is largest.
+
+### What follows
+
+1. **Diagnostic, cheap, run first:** DDIM inversion on MedleyMD at `cfg_src=1.0`, everything else
+   identical to the existing DDIM-inv row (baselines array index 6, eval index 6). If preservation
+   jumps toward DDPM-inv, the gap is confirmed as CFG-driven and the No-CFG loss is targeting the
+   wrong error.
+2. **Reconsider the loss.** [inversion_methods.md](inversion_methods.md) has six variants; only
+   No-CFG is implemented. A CFG-aware variant is what the benchmark gap actually calls for.
+3. The trajectory dataset and sweep are still worth generating — they are reusable across loss
+   variants, since the cached targets are conditional epsilon on the same grid. Only
+   `save_uncond_target: true` is needed for the CFG variants, and that costs a second teacher
+   forward per step, so decide before generating the full corpus.
+
+---
+
 ## 2026-08-12 — Benchmark reproduction DONE; LoRA path is next
 
 The goal of this phase was reproducing the existing benchmark, and that is finished. Six
