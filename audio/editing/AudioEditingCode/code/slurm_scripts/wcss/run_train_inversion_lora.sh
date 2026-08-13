@@ -16,8 +16,9 @@
 #   bash editing/AudioEditingCode/code/slurm_scripts/wcss/submit_train.sh
 #
 # Prerequisites:
-#   wandb login            # once, on the login node; WANDB_PROJECT comes from .env
-#   python src/inversion_lora/verify_trajectories.py --root_dir <data_root> --check_step 16
+#   WANDB_API_KEY in ~/.bashrc (alongside HF_TOKEN; it is a secret, so not in .env). `wandb login`
+#   needs the venv, which is not available on the login node, so the key is the way in.
+#   The trajectory dataset must have passed run_verify_trajectories.sh.
 
 set -uo pipefail
 
@@ -40,6 +41,14 @@ CONFIGS=(
   "16|8|2e-4|r16_a8_lr2e-4"
   "32|16|2e-4|r32_a16_lr2e-4"
 )
+
+# Fail before the 12 GB model load rather than after it: wandb only reports a bad credential
+# once it tries to sync, by which point the job has burned several minutes.
+if [ -z "${WANDB_API_KEY:-}" ] && ! grep -qs "api.wandb.ai" "$HOME/.netrc"; then
+  echo "ERROR: no W&B credential. Add WANDB_API_KEY to ~/.bashrc (next to HF_TOKEN), or pass" >&2
+  echo "  wandb_mode=offline to this script and sync the runs later." >&2
+  exit 1
+fi
 
 TASK_ID="${SLURM_ARRAY_TASK_ID:?This script must run as a SLURM array job}"
 if [ "$TASK_ID" -ge "${#CONFIGS[@]}" ]; then
