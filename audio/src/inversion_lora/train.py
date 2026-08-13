@@ -4,6 +4,7 @@
 import json
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -70,6 +71,40 @@ def timestep_quartile(timesteps: torch.Tensor, num_train_timesteps: int) -> torc
     return (fraction * NUM_QUARTILES).long().clamp(0, NUM_QUARTILES - 1)
 
 
+class LoRAEMA:
+    """Exponential moving average of the LoRA parameters.
+
+    Only the adapter is averaged, which is 7.7M parameters at rank 8, so the shadow copy costs
+    about 30 MB and the per-step update is negligible against a UNet forward.
+    """
+
+    def __init__(self, named_parameters: dict[str, torch.Tensor], decay: float):
+        """Seed the shadow weights from the current parameters.
+
+        Args:
+            named_parameters: The trainable adapter parameters, by name.
+            decay: Averaging decay; the shadow tracks roughly the last `1 / (1 - decay)` steps.
+        """
+        assert 0.0 <= decay < 1.0, f"decay must be in [0, 1), got {decay}"
+        self.decay = decay
+        self.shadow = {
+            name: param.detach().clone().float() for name, param in named_parameters.items()
+        }
+
+    @torch.no_grad()
+    def update(self, named_parameters: dict[str, torch.Tensor]) -> None:
+        """Pull the shadow weights towards the live parameters by `1 - decay`."""
+        for name, param in named_parameters.items():
+            self.shadow[name].lerp_(param.detach().float(), 1.0 - self.decay)
+
+    def state_dict(self) -> dict[str, torch.Tensor]:
+        return {name: value.clone() for name, value in self.shadow.items()}
+
+    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
+        assert set(state) == set(self.shadow), "EMA state does not match the current adapter"
+        self.shadow = {name: value.detach().clone().float() for name, value in state.items()}
+
+
 def git_sha() -> str:
     """Return the current commit SHA so checkpoints are traceable to their code."""
     return subprocess.check_output(
@@ -124,6 +159,18 @@ class AudioLDM2InversionTrainer:
             lr=float(cfg.learning_rate),
             weight_decay=float(cfg.weight_decay),
         )
+
+        self.lora_named_parameters = {
+            name: param for name, param in self.unet.named_parameters() if param.requires_grad
+        }
+        self.ema: LoRAEMA | None = None
+        if cfg.get("ema_decay") is not None:
+            self.ema = LoRAEMA(self.lora_named_parameters, float(cfg.ema_decay))
+            logger.info(
+                "EMA enabled: decay={} (averages roughly the last {:.0f} steps)",
+                float(cfg.ema_decay),
+                1.0 / (1.0 - float(cfg.ema_decay)),
+            )
 
     def _freeze_components(self) -> None:
         for name in FROZEN_COMPONENTS:
@@ -201,6 +248,30 @@ class AudioLDM2InversionTrainer:
         self._quartile_sums.zero_()
         self._quartile_counts.zero_()
         return out
+
+    @contextmanager
+    def ema_weights(self):
+        """Temporarily install the EMA weights into the adapter, then restore the live ones.
+
+        Swapping in place keeps everything downstream -- checkpoint format, eval, the adapter
+        toggle -- identical between the raw and averaged weights, with no second copy of the
+        model. A no-op when EMA is disabled.
+        """
+        if self.ema is None:
+            yield
+            return
+        backup = {
+            name: param.detach().clone() for name, param in self.lora_named_parameters.items()
+        }
+        try:
+            with torch.no_grad():
+                for name, param in self.lora_named_parameters.items():
+                    param.copy_(self.ema.shadow[name])
+            yield
+        finally:
+            with torch.no_grad():
+                for name, param in self.lora_named_parameters.items():
+                    param.copy_(backup[name])
 
     def set_lora_enabled(self, enabled: bool) -> None:
         """Toggle every injected adapter; disabling restores the frozen teacher exactly."""
@@ -345,15 +416,32 @@ class AudioLDM2InversionTrainer:
         with path.with_suffix(".json").open("w", encoding="utf-8") as f:
             json.dump(meta, f, indent=2)
 
+        if self.ema is not None:
+            # Written through the same code path as the raw weights, so the EMA checkpoint is
+            # loadable by anything that loads a normal one.
+            with self.ema_weights():
+                # get_peft_model_state_dict returns views onto the live parameters, so this must
+                # be cloned before the context restores them, or the file holds the raw weights.
+                ema_state = {
+                    key: value.detach().clone()
+                    for key, value in get_peft_model_state_dict(
+                        self.unet, adapter_name=str(self.cfg.adapter_name)
+                    ).items()
+                }
+            ema_path = path.with_name(f"{path.stem}_ema{path.suffix}")
+            torch.save(ema_state, ema_path)
+            with ema_path.with_suffix(".json").open("w", encoding="utf-8") as f:
+                json.dump({**meta, "ema_decay": float(self.cfg.ema_decay)}, f, indent=2)
+
         if save_training_state:
-            torch.save(
-                {
-                    "global_step": self.global_step,
-                    "lora_state_dict": adapter_state,
-                    "optimizer_state_dict": self.optimizer.state_dict(),
-                },
-                self.checkpoint_dir / f"training_state_{filename}",
-            )
+            state = {
+                "global_step": self.global_step,
+                "lora_state_dict": adapter_state,
+                "optimizer_state_dict": self.optimizer.state_dict(),
+            }
+            if self.ema is not None:
+                state["ema_state_dict"] = self.ema.state_dict()
+            torch.save(state, self.checkpoint_dir / f"training_state_{filename}")
         logger.info("Saved checkpoint {}", path)
         return path
 
@@ -364,6 +452,13 @@ class AudioLDM2InversionTrainer:
             self.unet, state["lora_state_dict"], adapter_name=str(self.cfg.adapter_name)
         )
         self.optimizer.load_state_dict(state["optimizer_state_dict"])
+        if self.ema is not None:
+            if "ema_state_dict" not in state:
+                raise KeyError(
+                    f"{path} has no EMA state but ema_decay is set. Resuming would restart the "
+                    "average from the current weights and silently misreport eval/ema/*."
+                )
+            self.ema.load_state_dict(state["ema_state_dict"])
         return int(state["global_step"])
 
     def train(
@@ -421,6 +516,8 @@ class AudioLDM2InversionTrainer:
                     )
                 self.optimizer.step()
                 self.optimizer.zero_grad(set_to_none=True)
+                if self.ema is not None:
+                    self.ema.update(self.lora_named_parameters)
                 self.global_step += 1
                 progress.update(1)
 
@@ -440,6 +537,10 @@ class AudioLDM2InversionTrainer:
                     recent = []
                 if val_loader is not None and self._due(self.cfg.eval_every_steps):
                     metrics = self.validate(val_loader, self.cfg.max_val_batches)
+                    if self.ema is not None:
+                        with self.ema_weights():
+                            ema_metrics = self.validate(val_loader, self.cfg.max_val_batches)
+                        metrics.update({"val/loss_ema": ema_metrics["val/loss"]})
                     if metrics:
                         logger.info("step {} {}", self.global_step, metrics)
                         self.tracker.log(metrics, step=self.global_step)
