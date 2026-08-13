@@ -379,19 +379,28 @@ class AudioLDM2InversionTrainer:
             metrics.update({f"{prefix}/{kind}/{key}": value for key, value in scores.items()})
             # Generated samples have a true initial noise to compare against; real audio has
             # none, so a fresh standard normal draw is the only available reference.
-            reference = (
-                fixtures["generated_noise"]
-                if kind == "generated"
-                else torch.randn(
-                    inverted.shape, generator=torch.Generator().manual_seed(int(self.cfg.seed))
-                )
+            gaussian = torch.randn(
+                inverted.shape, generator=torch.Generator().manual_seed(int(self.cfg.seed))
             )
+            reference = fixtures["generated_noise"] if kind == "generated" else gaussian
             metrics.update(
                 noise_report(
                     inverted,
                     reference,
-                    prefix=f"{prefix}/{kind}",
+                    prefix=f"{prefix}/{kind}/noise",
                     reference_is_ground_truth=kind == "generated",
+                    seed=int(self.cfg.seed),
+                )
+            )
+            # The same statistics on the clean latent being inverted. It is structured audio, so
+            # it should look markedly non-Gaussian: this is the control that shows the metrics
+            # can tell the two apart, rather than reading at the floor for everything.
+            metrics.update(
+                noise_report(
+                    fixtures[kind],
+                    gaussian,
+                    prefix=f"{prefix}/{kind}/latent",
+                    reference_is_ground_truth=False,
                     seed=int(self.cfg.seed),
                 )
             )

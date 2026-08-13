@@ -9,7 +9,7 @@ num_inference_steps: 200 # must match the trajectory dataset's DDIM grid
 adapter_name: inversion
 
 data_root: ${oc.env:LORAINV_DATA_ROOT}/audioldm2_trajectories_gonogo_fp32
-val_fraction: 0.05 # split by trajectory, never by transition
+val_fraction: 0.10 # split by trajectory, never by transition; must exceed recon_num_generated
 # 285k train transitions / 32 = ~8.9k steps per epoch, so max_train_steps=20000 is ~2.2 epochs.
 # At batch 4 the sweep would have seen 0.28 of one epoch.
 batch_size: 32
@@ -42,12 +42,13 @@ eval_every_steps: 1000
 save_every_steps: 2000
 max_val_batches: 50
 
-# Invert-then-denoise reconstruction eval. Costs ~2 * N * 2 * num_inference_steps UNet forwards;
-# at 32 + 32 samples on the 200-step grid that is ~25k forwards, roughly 20 min on one H100.
-# Set recon_every_steps to 0 to switch the whole thing off.
+# Invert-then-denoise reconstruction eval. Costs ~2 * N * 2 * num_inference_steps UNet forwards.
+# Measured on an H100: 53 s per batch of 8, so 128 + 128 samples is ~28 min per eval and ~3.8 h
+# across a 20k-step run. 128 also drops the corr_topk floor from 0.65 to ~0.33, which is what
+# makes that metric able to resolve anything. Set recon_every_steps to 0 to switch it off.
 recon_every_steps: 2500
-recon_num_generated: 32
-recon_num_real: 32
+recon_num_generated: 128
+recon_num_real: 128
 recon_batch_size: 8
 recon_duration_s: 10.24 # AudioLDM2's native length; the latent grid follows from it
 recon_prompts_csv: ${oc.env:MEDLEY_PROMPTS_CSV}
