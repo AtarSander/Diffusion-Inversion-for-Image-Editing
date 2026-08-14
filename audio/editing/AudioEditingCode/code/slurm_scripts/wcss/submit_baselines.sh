@@ -30,7 +30,26 @@ echo "account   : $HPC_PWR_ACCOUNT"
 echo "partition : $HPC_PWR_PARTITION"
 echo "submitting from: $AUDIO_ROOT"
 
+# LORA_PATH selects the LoRA config/run. sbatch does not reliably carry the submitting
+# environment into the job here, so forward it explicitly instead of hoping it propagates -- and
+# check the checkpoint exists now, on the login node, rather than failing 12 tasks later.
+EXPORT_ARGS=()
+if [ -n "${LORA_PATH:-}" ]; then
+  if [ ! -f "$LORA_PATH" ]; then
+    echo "ERROR: LORA_PATH=$LORA_PATH does not exist" >&2
+    exit 1
+  fi
+  if [ ! -f "${LORA_PATH%.pt}.json" ]; then
+    echo "ERROR: ${LORA_PATH%.pt}.json missing; it carries the LoRA config needed to rebuild" >&2
+    echo "       the adapter. Point at a checkpoint written by src/inversion_lora/train.py." >&2
+    exit 1
+  fi
+  echo "lora path : $LORA_PATH"
+  EXPORT_ARGS=(--export=ALL,LORA_PATH="$LORA_PATH")
+fi
+
 sbatch \
+  "${EXPORT_ARGS[@]}" \
   --account="$HPC_PWR_ACCOUNT" \
   --partition="$HPC_PWR_PARTITION" \
   "$@" \
