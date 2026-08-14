@@ -75,12 +75,15 @@ EXTRA_ARGS=()
 if [ "$CFG_IDX" -eq "${#CONFIGS[@]}" ]; then
   : "${LORA_PATH:?set LORA_PATH=<checkpoint.pt> to run the LoRA config (array 84-95)}"
   IFS='|' read -r SCRIPT MODE STEPS CFG_SRC CFG_TAR TSTART <<< "$LORA_CONFIG"
-  source "$(dirname "${BASH_SOURCE[0]}")/lora_run_name.sh"
+  # SLURM spools only the batch script, so BASH_SOURCE points into /var/spool and the helper is
+  # not there. cwd is the submit directory (audio/), so source it from the repo instead.
+  source "editing/AudioEditingCode/code/slurm_scripts/wcss/lora_run_name.sh" || exit 1
   RUN_NAME="$(lora_run_name "$LORA_PATH")"
   EXTRA_ARGS=(--lora_path "$LORA_PATH")
 else
   IFS='|' read -r SCRIPT MODE STEPS CFG_SRC CFG_TAR TSTART RUN_NAME <<< "${CONFIGS[$CFG_IDX]}"
 fi
+: "${RUN_NAME:?run name resolved empty; edits would land in the parent directory}"
 echo "task=$TASK_ID config=$RUN_NAME shard=$PART/$N_PARTS node=$(hostname)"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 

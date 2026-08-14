@@ -60,7 +60,7 @@ RUNS=(
 # Index 7: a LoRA-inversion run. Its directory name comes from the checkpoint, so it is only
 # resolvable with LORA_PATH set -- hence not in the default --array range.
 if [ -n "${LORA_PATH:-}" ]; then
-  source "$(dirname "${BASH_SOURCE[0]}")/lora_run_name.sh"
+  source "editing/AudioEditingCode/code/slurm_scripts/wcss/lora_run_name.sh" || exit 1
   RUNS+=("$EDITS_ROOT/audioldm2_ddim/$(lora_run_name "$LORA_PATH")/audios")
 fi
 
