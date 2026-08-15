@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 from audioldm_run import run_audioldm_edit
 from tqdm import tqdm
+from run_paths import resolve_run_dir
 from utils import set_reproducability
 
 from env import PATH_AUDIOS_MEDLEY, PATH_PROMPTS_MEDLEY, PATH_EDIT_OUTPUTS
@@ -145,7 +146,7 @@ def main(
         run_name = f"{model_name}_{mode_name}_{dt_str}_cfg_src{cfg_src_str}_cfg_tar{cfg_tar_str}_tstart{tstart}_steps{num_diffusion_steps}"
 
     # Create output directory
-    path_dir_outs = (PATH_DIR_OUTPUT / f"{dataset_name}" / f"audioldm2_{mode}" / run_name / "audios").resolve()
+    path_dir_outs = resolve_run_dir(PATH_DIR_OUTPUT, dataset_name, f"audioldm2_{mode}", run_name)
     path_dir_outs.mkdir(parents=True, exist_ok=True)
 
     set_reproducability(seed, extreme=False)

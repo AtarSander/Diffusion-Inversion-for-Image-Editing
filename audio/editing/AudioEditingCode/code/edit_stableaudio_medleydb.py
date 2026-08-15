@@ -6,6 +6,7 @@ from stable_audio_run import run_stable_audio_edit
 from tqdm import tqdm
 import numpy as np
 
+from run_paths import resolve_run_dir
 from utils import set_reproducability
 import pandas as pd
 
@@ -122,7 +123,7 @@ def main(
         run_name = f"stable_audio_{mode_name}_{dt_str}_cfg_src{cfg_src_str}_cfg_tar{cfg_tar_str}_tstart{tstart}_steps{num_diffusion_steps}"
 
     # Create output directory
-    path_dir_outs = (PATH_DIR_OUTPUT / f"{dataset_name}" / "stable_audio" / run_name / "audios").resolve()
+    path_dir_outs = resolve_run_dir(PATH_DIR_OUTPUT, dataset_name, "stable_audio", run_name)
     path_dir_outs.mkdir(parents=True, exist_ok=True)
 
     set_reproducability(seed, extreme=False)
