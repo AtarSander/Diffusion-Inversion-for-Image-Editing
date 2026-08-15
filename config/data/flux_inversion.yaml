@@ -1,0 +1,41 @@
+output_dir: data/processed/flux_inversion/train
+dataset_split: train
+overwrite: false
+device: auto
+
+# Recap-COCO JSONL records use the "prompt" field. Inline prompts can be used
+# for a smoke dataset without preparing Recap-COCO first.
+prompts_jsonl: null
+prompt_key: prompt
+inline_prompts:
+  - a photo of a red vintage car parked beside a calm lake at sunrise
+  - a small white house surrounded by green fields under a blue sky
+samples_per_prompt: 8
+start_index: 0
+num_samples: 16
+seed: 42
+
+height: 1024
+width: 1024
+num_inference_steps: 50
+# FLUX.1-dev uses embedded guidance, not a separate uncond/cond CFG branch.
+# Keep it fixed at 1.0 for the first controlled training experiment.
+guidance_scale: 1.0
+max_sequence_length: 512
+storage_dtype: bfloat16
+
+model:
+  model_id: black-forest-labs/FLUX.1-dev
+  torch_dtype: bfloat16
+  revision: null
+  variant: null
+  local_files_only: false
+  require_cuda: true
+  offload: model
+  # The preparation stage never decodes images, so the VAE can be omitted.
+  load_vae: false
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
