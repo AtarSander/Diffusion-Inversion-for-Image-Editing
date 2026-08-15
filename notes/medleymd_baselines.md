@@ -39,6 +39,16 @@ from the per-example CSVs.
 | DDPM-inv | **4.841** ± 0.025 | **18.572** ± 0.075 | **0.576** ± 0.004 | 0.354 ± 0.004 | 0.296 ± 0.006 | 0.196 ± 0.005 | 0.318 ± 0.008 | n/a |
 | DDIM-inv | 6.070 ± 0.021 | 14.703 ± 0.077 | 0.341 ± 0.004 | 0.352 ± 0.004 | **0.343** ± 0.005 | **0.263** ± 0.006 | **0.378** ± 0.008 | n/a |
 | SDEdit | 5.597 ± 0.021 | 18.032 ± 0.067 | 0.425 ± 0.003 | **0.357** ± 0.004 | 0.294 ± 0.005 | 0.197 ± 0.006 | 0.306 ± 0.008 | n/a |
+| DDIM-inv, cfg_src 1.0 | 5.996 ± 0.021 | 14.635 ± 0.073 | 0.350 ± 0.004 | 0.366 ± 0.004 | 0.358 ± 0.005 | 0.257 ± 0.006 | 0.370 ± 0.008 | n/a |
+| DDIM-inv + inversion LoRA | 5.995 ± 0.021 | 14.587 ± 0.074 | 0.349 ± 0.004 | **0.367** ± 0.004 | 0.357 ± 0.005 | 0.258 ± 0.006 | 0.369 ± 0.008 | n/a |
+
+The last two rows answer what the inversion LoRA is worth here. `cfg_src=1.0` removes
+inversion-side guidance; the LoRA additionally makes DDIM inversion near-exact (2.8x lower latent
+MSE, +9.8 dB reconstruction PSNR on held-out audio). Paired over the same 696 edits, the LoRA
+moves preservation by **-0.049 dB mel PSNR** against the `cfg_src=1.0` row, against a 3.985 dB gap
+to DDPM-inv. **Inversion fidelity is not what separates DDIM from DDPM inversion on this
+benchmark** -- see [audio_inversion_lora_status.md](audio_inversion_lora_status.md) for the three
+measurements that establish it.
 
 **DDIM-inv vs DDPM-inv: −3.87 dB PSNR, +25% LPAPS, SSIM 0.341 vs 0.576.** That is the headroom
 the inversion LoRA has to recover.

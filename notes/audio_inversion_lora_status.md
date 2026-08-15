@@ -8,6 +8,62 @@ Most recent first. Keep this file current — it is the handover doc between ses
 
 ---
 
+## 2026-08-15 — RESULT: the inversion LoRA works, and it does not move the editing benchmark
+
+**Both halves are now measured, and they disagree in the most informative way.**
+
+The LoRA does exactly what it was trained to do. At 2500 steps it already improved plain DDIM
+reconstruction on held-out audio by **2.8x in latent MSE (5.72e-4 → 2.07e-4) and +9.82 dB mel
+PSNR (47.55 → 57.37)**; on real MedleyDB crops, +4.91 dB. Its inverted latents recover the true
+initial noise far better than an independent Gaussian draw does (`kl_per_dim` 1.6e-5 against a
+0.068 floor).
+
+**On the editing benchmark that improvement is worth nothing.** Taking the fully trained
+`r32_a16_lr2e-4/checkpoint_final.pt` (20k steps), applying it to the DDIM inversion pass and
+running all 696 MedleyMD edits gives, paired against the like-for-like `cfg_src=1.0` baseline:
+
+| metric | LoRA − baseline | 95% CI | p |
+| --- | --- | --- | --- |
+| LPAPS | −0.0015 | [−0.0045, +0.0015] | 0.33 |
+| mel PSNR | **−0.0485** | [−0.060, −0.037] | <0.001 |
+| mel SSIM | −0.0007 | [−0.0013, −0.0002] | 0.013 |
+| CLAP | +0.0012 | [+0.0002, +0.0021] | 0.017 |
+| MuQ | −0.0008 | [−0.0021, +0.0005] | 0.25 |
+
+The gap to DDPM-inversion is **3.985 dB**. The adapter moved it **−0.049 dB** — 1.2% of the gap,
+in the wrong direction, and only detectable at all because n=696.
+
+### Why: inversion fidelity is not the bottleneck
+
+Three independent measurements now say the same thing.
+
+1. **Plain DDIM already reconstructs at 47.6 dB** on the same 200-step grid where its *edits*
+   score 14.70 dB. A method cannot be losing 33 dB to inversion error when inversion error is
+   that small.
+2. **Removing inversion-side guidance entirely changes nothing.** `cfg_src` 3.0 → 1.0 moved
+   preservation by −0.068 ± 0.11 dB. That refuted the CFG hypothesis this file recorded on
+   2026-08-13.
+3. **Making inversion 2.8x more accurate changes nothing**, as above.
+
+The remaining explanation is structural, and it is about how much source information reaches the
+reverse pass, not how accurate it is. DDPM-inversion stores **200 per-step noise vectors** and
+re-injects source information at every step. DDIM-inversion carries **one latent**, and all of it
+must survive 200 steps of `cfg_tar=12.0` guidance toward a different prompt. That is a capacity
+difference, which is why improving the accuracy of that single latent does not help.
+
+### What this means for the project
+
+- **Do not target "beat DDPM-inv on preservation" with this method.** The measured row is
+  `5.995 / 14.587 / 0.349`, on top of the DDIM baseline, and no amount of further training moves
+  it: the 20k-step checkpoint performs the same as the untrained one on this benchmark.
+- **The reconstruction result stands on its own** and is worth reporting as such: near-exact DDIM
+  inversion, +9.8 dB, verified against a no-LoRA baseline measured on identical fixtures.
+- If the goal remains the editing benchmark, the lever has to act on the reverse pass — the
+  CFG-aware loss variants in [inversion_methods.md](inversion_methods.md), or something that
+  carries more than one latent's worth of source information.
+
+---
+
 ## 2026-08-13 — Pipeline runs end to end, and the No-CFG loss looks near-degenerate at 200 steps
 
 **Everything is wired and verified. The problem is what it measures.**
