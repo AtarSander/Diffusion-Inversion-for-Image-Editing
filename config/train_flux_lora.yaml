@@ -1,0 +1,102 @@
+# Minimal inversion-specific LoRA training for FLUX.1-dev.
+# Project-original objective and trainer; external API and protocol boundaries are
+# documented in docs/flow_matching_provenance.md.
+output_dir: outputs/flux_inversion_lora
+overwrite: false
+seed: 42
+
+max_train_steps: 1000
+learning_rate: 5.0e-5
+weight_decay: 0.0
+gradient_accumulation_steps: 4
+gradient_checkpointing: true
+max_grad_norm: 1.0
+mixed_precision: bf16
+
+adam_beta1: 0.9
+adam_beta2: 0.999
+adam_epsilon: 1.0e-8
+
+log_every_steps: 10
+# Aggregate per-timestep train MSE over a longer window so every one of the
+# 50 inversion steps is represented by multiple randomly sampled items.
+report_train_per_step: true
+train_per_step_log_every_steps: 250
+validate_every_steps: 100
+save_every_steps: 250
+# Validation uses a fixed, deterministic set of complete trajectories and a
+# separate batch size, so changing the training batch cannot change val data.
+max_validation_batches: null
+validate_before_training: true
+report_validation_per_step: true
+save_training_state: true
+
+resume:
+  enabled: false
+  checkpoint_path: null
+
+wandb:
+  project: diff-inversion
+  entity: null
+  group: flux-inversion-lora
+  run_name: null
+  job_type: train
+  mode: online
+  id: null
+  resume: null
+  tags:
+    - flux
+    - flow-matching
+    - inversion
+    - lora
+
+lr_scheduler:
+  name: cosine
+  warmup_steps: 500
+  # Half a cosine wave: decay monotonically from the peak LR to zero.
+  num_cycles: 0.5
+  power: 1.0
+
+model:
+  model_id: black-forest-labs/FLUX.1-dev
+  torch_dtype: bfloat16
+  revision: null
+  variant: null
+  local_files_only: false
+  require_cuda: true
+
+data:
+  train_dir: data/processed/flux_inversion/train
+  val_dir: null
+  # Fail early instead of silently mixing trajectories from another setup.
+  # FLUX calls this embedded guidance; at 1.0 it is not classical two-branch CFG.
+  expected_guidance_scale: 1.0
+  expected_num_inference_steps: 50
+  batch_size: 1
+  validation_batch_size: 4
+  # 20 trajectories x 50 timesteps = 1000 fixed validation items, with
+  # exactly 20 examples contributing to every per-timestep metric.
+  validation_num_trajectories: 20
+  validation_sample_seed: 314159
+  balance_inversion_steps: true
+  num_workers: 0
+  pin_memory: true
+  # inversion_step=0 is the first image->noise step, i.e. the clean end.
+  min_inversion_step: 0
+  max_inversion_step: null
+
+lora:
+  r: 16
+  lora_alpha: 8
+  lora_dropout: 0.0
+  init_lora_weights: gaussian
+  target_modules:
+    - to_q
+    - to_k
+    - to_v
+    - to_out.0
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null

@@ -1,0 +1,19 @@
+# @package hydra.launcher
+
+submitit_folder: ${hydra.sweep.dir}/.submitit/%j
+cpus_per_task: 16
+gpus_per_node: 1
+tasks_per_node: 1
+mem_gb: 64
+nodes: 1
+name: ${hydra.job.name}
+_target_: hydra_plugins.hydra_submitit_launcher.submitit_launcher.SlurmLauncher
+account: null
+partition: gpu-l
+additional_parameters:
+  time: "24:00:00"
+  nodelist: h86
+array_parallelism: 7
+setup:
+  - "module load uv"
+  - "bash \"$REPO_DIR/scripts/ensure_submitit_env.sh\""
