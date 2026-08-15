@@ -16,4 +16,3 @@ additional_parameters:
 array_parallelism: 7
 setup:
   - "module load uv"
-  - "bash \"$REPO_DIR/scripts/ensure_submitit_env.sh\""
