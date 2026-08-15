@@ -12,7 +12,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.inversion_lora.noise_metrics import (  # noqa: E402
     kl_div_per_dim,
     kl_div_scalar,
-    normality_rejection_rate,
     top_k_corr_in_patches,
 )
 from src.inversion_lora.reconstruct import mel_metrics  # noqa: E402
@@ -73,13 +72,6 @@ def test_kl_grows_when_the_scale_is_wrong():
     reference = torch.randn(64, 4, 8, 8)
     assert kl_div_scalar(reference, 2.0 * reference) > kl_div_scalar(reference, 1.1 * reference)
     assert kl_div_per_dim(reference, 2.0 * reference) > kl_div_per_dim(reference, 1.1 * reference)
-
-
-def test_normality_accepts_gaussian_and_rejects_uniform():
-    gaussian = torch.randn(8, 4, 16, 16)
-    uniform = torch.rand(8, 4, 16, 16)
-    assert normality_rejection_rate(gaussian, limit=1000)["normality_accepted"] > 0.5
-    assert normality_rejection_rate(uniform, limit=1000)["normality_rejected"] > 0.5
 
 
 def test_correlated_latents_score_above_iid_noise():

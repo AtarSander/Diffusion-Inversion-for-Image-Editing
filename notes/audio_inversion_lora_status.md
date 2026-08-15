@@ -51,6 +51,52 @@ re-injects source information at every step. DDIM-inversion carries **one latent
 must survive 200 steps of `cfg_tar=12.0` guidance toward a different prompt. That is a capacity
 difference, which is why improving the accuracy of that single latent does not help.
 
+### The 256-sample sweep: reconstruction improves, noise statistics do not
+
+The learning-rate sweep (job 5696356) ran the larger eval: 256 + 256 fixtures on a 50-step grid,
+with the clean latent scored alongside the inverted one as a control.
+
+**Reconstruction improves, and saturates almost immediately.** Against the identical no-LoRA
+baseline (generated 8.47e-3 / 35.92 dB, real 1.25e-2 / 34.42 dB):
+
+| lr | gen latent MSE | gen mel PSNR | real mel PSNR |
+| --- | --- | --- | --- |
+| 3e-4 | 1.53x | +2.16 dB | +1.86 dB |
+| 5e-4 | 1.53x | +2.19 dB | +1.85 dB |
+| 1e-3 | 1.52x | +2.18 dB | +1.75 dB |
+| 2e-3 | 1.51x | +2.16 dB | +1.76 dB |
+| 5e-3 | 0.003x | **-17.96 dB** | -16.01 dB |
+| 1e-2 | 0.003x | -17.64 dB | -15.78 dB |
+
+Three things follow. The four working rates are indistinguishable, so **learning rate is not
+binding** across a 7x range, on top of rank not being binding (r4 matched r32). The ceiling sits
+between 2e-3 and 5e-3, where training diverges outright. And it is **converged by step 2500**:
+38.04 dB there against 38.12 dB at 20000, so 17500 further steps bought 0.08 dB.
+
+The +2.2 dB here is smaller than the +9.8 dB measured on the 200-step grid because this eval is
+out of distribution for the adapter: it learned 5-timestep shifts and is tested on 20-timestep
+ones. Both numbers are real; they measure different things.
+
+**`corr_topk` is flat for the entire run.** Generated inverted latents sit at 0.252 before
+training and 0.251 after, against a 0.249 iid floor; real audio 0.274 -> 0.273. The single
+0.001 move happens by step 2500 and nothing changes over the next 17500. There is no correlation
+structure in an inverted latent for the adapter to remove.
+
+The metric is nonetheless working, which the same table demonstrates three ways: the clean-latent
+control reads **0.871**, far above the floor; the inverted latents read 0.25, at it; and the
+diverging lr=5e-3 run is tracked in real time, 0.251 -> 0.320 -> 0.929 -> 0.991. One small real
+signal: real-audio inversions sit ~8x further above the floor than generated ones (0.274 vs
+0.252), consistent with real audio gaining less reconstruction (+1.85 vs +2.19 dB).
+
+**The Shapiro-Wilk normality rate was dropped, and an earlier claim retracted.** It assumes iid
+samples; latent elements are spatially correlated. Feeding it data that is marginally exactly
+N(0,1) but spatially smoothed drives the rejection rate from 4% to 29% purely from correlation,
+so it responds to structure rather than non-normality and its p-values are not calibrated here.
+At 256 tests the rate also carries a +/-2.7% confidence interval, so the "5.9% -> 5.5%" reported
+above is noise, not an improvement. The claim that the inverted latents were "already Gaussian"
+rested on that number and is not supported by it; `corr_topk` against its measured floor is the
+statement that does hold.
+
 ### What this means for the project
 
 - **Do not target "beat DDPM-inv on preservation" with this method.** The measured row is

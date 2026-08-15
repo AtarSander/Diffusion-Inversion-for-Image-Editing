@@ -1,10 +1,9 @@
-# ABOUTME: Distributional checks on inverted latents: KL to a Gaussian reference, Shapiro-Wilk
-# ABOUTME: normality rejection rate, and top-k cross-dimension correlation within latent patches.
+# ABOUTME: Distributional checks on inverted latents: KL to a Gaussian reference and top-k
+# ABOUTME: cross-dimension correlation within latent patches, each against a measured null.
 
 import numpy as np
 import torch
 import torch.distributions as dist
-from scipy.stats import shapiro
 
 
 def kl_div_scalar(reference: torch.Tensor, latents: torch.Tensor) -> float:
@@ -42,38 +41,6 @@ def kl_div_per_dim(reference: torch.Tensor, latents: torch.Tensor) -> float:
     q = dist.Normal(latents.mean(dim=0).float(), latents.std(dim=0).float() + 1e-6)
     divergence = dist.kl_divergence(p, q).sum()
     return float(divergence / np.prod(latents.shape[1:]))
-
-
-def normality_rejection_rate(
-    latents: torch.Tensor, limit: int = 5_000, p_value: float = 0.05, seed: int = 0
-) -> dict[str, float]:
-    """Shapiro-Wilk normality test per example, on a random subsample of its elements.
-
-    Elements are drawn *without* replacement. Sampling with replacement puts repeated values in
-    the sample, and Shapiro-Wilk treats ties as evidence against normality, so it rejects true
-    Gaussian input at a rate far above the nominal 5%.
-
-    Args:
-        latents: Latents `[N, ...]`; each example is tested independently.
-        limit: Maximum elements per test, since Shapiro-Wilk is unreliable above a few thousand.
-        p_value: Rejection threshold.
-        seed: Seed for the element subsampling, so repeated evals test the same positions.
-
-    Returns:
-        Fraction of examples whose normality was rejected and accepted.
-    """
-    assert latents.ndim >= 2, latents.shape
-    generator = torch.Generator().manual_seed(seed)
-    flat = latents.detach().float().cpu().flatten(1)
-    count = min(flat.shape[1], limit)
-
-    rejected = 0
-    for row in flat:
-        indices = torch.randperm(row.shape[0], generator=generator)[:count]
-        _, p = shapiro(row[indices].numpy())
-        rejected += int(p <= p_value)
-    total = flat.shape[0]
-    return {"normality_rejected": rejected / total, "normality_accepted": 1 - rejected / total}
 
 
 def top_k_corr_in_patches(
@@ -131,6 +98,12 @@ def noise_report(
 ) -> dict[str, float]:
     """Full distributional comparison of inverted latents against a Gaussian reference.
 
+    A Shapiro-Wilk normality rate used to live here and was removed: it assumes iid samples,
+    while latent elements are spatially correlated, so it is not calibrated on this data.
+    Feeding it samples that are marginally exactly N(0,1) but spatially smoothed drives the
+    rejection rate from 4% to 29% purely from correlation. `corr_topk` measures that correlation
+    directly, against a measured null, and the KL terms cover the distributional match.
+
     `corr_topk` and `kl_per_dim` both estimate per-dimension statistics across the batch, so both
     carry a positive floor that grows as the batch shrinks: at N=2 every correlation is exactly
     1.0 and `kl_per_dim` is enormous, whatever the latents look like. Each is therefore reported
@@ -165,7 +138,6 @@ def noise_report(
         f"{prefix}/corr_topk_reference": top_k_corr_in_patches(null_draw)["mean"],
         f"{prefix}/latent_mean": float(latents.mean()),
         f"{prefix}/latent_std": float(latents.std()),
-        **{f"{prefix}/{key}": value for key, value in normality_rejection_rate(latents).items()},
     }
     if reference_is_ground_truth:
         # The sharpest available signal: inversion of a generated sample should return the very
