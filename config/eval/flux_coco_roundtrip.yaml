@@ -1,0 +1,41 @@
+# @package _global_
+
+# Inherits the protocol and provenance notes from flux_baseline.yaml; see
+# docs/flow_matching_provenance.md.
+
+defaults:
+  - flux_baseline
+  - _self_
+
+# The first experiment doubles as the future LoRA validation split.
+output_dir: data/processed/flux_inversion/val_g1
+dataset_split: val
+overwrite: false
+
+prompts: []
+prompts_jsonl: data/recap_coco/val.jsonl
+prompt_key: prompt
+samples_per_prompt: 1
+start_index: 0
+num_samples: 100
+seed: 42
+
+# Match the paper-style FLUX baseline before scaling data generation.
+height: 1024
+width: 1024
+num_inference_steps: 50
+guidance_scale: 1.0
+max_sequence_length: 512
+
+lora:
+  enabled: false
+  path: null
+  scale: 1.0
+
+save:
+  # Avoid duplicate stacked trajectory files. training_data retains the
+  # cleaner states and teacher velocities required by FluxInversionDataset.
+  trajectories: false
+  velocities: false
+  training_data: true
+  storage_dtype: bfloat16

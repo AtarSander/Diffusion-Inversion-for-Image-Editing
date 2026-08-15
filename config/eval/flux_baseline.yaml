@@ -1,0 +1,104 @@
+# @package _global_
+
+# Provenance: the 50-step explicit-Euler setup follows TABA Appendix P; schedule
+# construction follows Diffusers 0.37.1. Optional latent scaling is only an
+# ablation inspired by Stable Flow / UniEdit-Flow, not a Stable Flow reproduction.
+# Exact source boundaries: docs/flow_matching_provenance.md.
+
+output_dir: outputs/flux_baseline
+# Optional completed FLUX round-trip directory. When set, reuse its exact
+# generated latents and images and run only inversion plus reconstruction.
+source_dir: null
+overwrite: false
+device: auto
+
+prompts:
+  - a photo of a red vintage car parked beside a calm lake at sunrise
+prompts_jsonl: null
+prompt_key: prompt
+samples_per_prompt: 1
+start_index: 0
+num_samples: null
+dataset_split: null
+seed: 42
+
+height: 1024
+width: 1024
+num_inference_steps: 50
+guidance_scale: 1.0
+max_sequence_length: 512
+
+# Experimental preprocessing applied only to the clean latent passed into
+# image-to-noise inversion. 1.0 is the unmodified explicit-Euler baseline;
+# TABA's bundled UniEdit-Flow script uses 1.5 for its sampled-latent experiment.
+inversion:
+  latent_nudging_scalar: 1.0
+  # euler: 1 NFE/step; fixed_point with one refinement and heun: 2 NFE/step.
+  # fixed_point is a minimal implicit-Euler refinement, not full ReNoise.
+  solver: euler
+  fixed_point_refinement_steps: 1
+
+model:
+  model_id: black-forest-labs/FLUX.1-dev
+  torch_dtype: bfloat16
+  revision: null
+  variant: null
+  local_files_only: false
+  require_cuda: true
+  # none loads the full pipeline on GPU; model and sequential use Accelerate offload.
+  offload: model
+  vae_tiling: true
+
+# The adapter is enabled only for image-to-noise inversion. Normal sampling and
+# reconstruction continue to use the frozen base FLUX mapping.
+lora:
+  enabled: false
+  path: null
+  scale: 1.0
+
+# Appendix-P-style editability comparison. By default the target prompt is the
+# next source prompt in the dataset (offset=1), matching the SDXL/TABA setup.
+editing:
+  enabled: false
+  target_prompts_jsonl: null
+  target_prompt_key: prompt
+  target_prompt_offset: 1
+  target_prompt_template: null
+  guidance_scale: null
+  # Generate the same target prompt once from the true Gaussian noise and once
+  # from the ODE-inverted latent, as in the two columns of Appendix P Table 19.
+  generate_initial_noise_reference: true
+
+save:
+  trajectories: true
+  velocities: true
+  training_data: false
+  storage_dtype: bfloat16
+
+metrics:
+  max_elements: 200000
+  normality_sample_size: 5000
+  qq_num_quantiles: 201
+  plain_threshold: 0.025
+  patch_size: 8
+  top_k: 20
+  min_correlation_samples: 8
+  clip:
+    enabled: false
+    model_name: openai/clip-vit-base-patch32
+    device: auto
+    batch_size: 64
+
+wandb:
+  mode: disabled
+  project: diff-inversion
+  entity: null
+  group: flux-evaluation
+  run_name: null
+  tags: [flux, evaluation]
+  max_preview_samples: 16
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
