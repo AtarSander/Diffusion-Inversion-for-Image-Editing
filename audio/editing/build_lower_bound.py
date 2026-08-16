@@ -19,6 +19,8 @@ SPLIT_CSVS = {
     "hparam": "captions_gpt5_hparam.csv",
     "test": "captions_gpt5_test.csv",
     "loc": "captions_gpt5_loc.csv",
+    # One row per distinct MedleyDB track, for the reconstruction experiments.
+    "tracks": "captions_gpt5.csv",
 }
 
 
@@ -42,11 +44,18 @@ def build_split(split: str, out_root: Path, overwrite: bool = False) -> Path:
         raise FileNotFoundError(f"Missing split CSV: {csv_path}")
 
     df = pd.read_csv(csv_path, index_col=0, header=0)
+    if split == "tracks":
+        # The drivers number a 35-track subset by the row's original index, not its position in
+        # the subset, so the reference has to do the same or the paired metrics find no overlap.
+        df = df.drop_duplicates(subset="filename", keep="first")
+        names = list(df.index)
+    else:
+        names = list(range(len(df)))
     target_dir = out_root / f"lower_bound_{split}" / "audios"
     target_dir.mkdir(parents=True, exist_ok=True)
 
     written = 0
-    for idx, (_, row) in enumerate(df.iterrows()):
+    for idx, (_, row) in zip(names, df.iterrows()):
         filename = row["filename"]
         dirname = filename.split("_MIX")[0]
         source = (Path(PATH_AUDIOS_MEDLEY) / dirname / filename).resolve()

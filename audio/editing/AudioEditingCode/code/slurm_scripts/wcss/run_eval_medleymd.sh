@@ -64,6 +64,13 @@ if [ -n "${LORA_PATH:-}" ]; then
   RUNS+=("$EDITS_ROOT/audioldm2_ddim/$(lora_run_name "$LORA_PATH")/audios")
 fi
 
+# RUN_DIRS lets a submission name the run directories directly, for anything not in the fixed
+# list above (reconstruction runs, extra LoRA checkpoints). Colon-separated, indexed by task id.
+if [ -n "${RUN_DIRS:-}" ]; then
+  IFS=':' read -r -a RUNS <<< "$RUN_DIRS"
+  echo "scoring ${#RUNS[@]} directories from RUN_DIRS"
+fi
+
 TASK_ID="${SLURM_ARRAY_TASK_ID:?This script must run as a SLURM array job}"
 if [ "$TASK_ID" -ge "${#RUNS[@]}" ]; then
   echo "ERROR: task $TASK_ID but only ${#RUNS[@]} runs are defined." >&2
@@ -74,16 +81,26 @@ RUN_DIR="${RUNS[$TASK_ID]}"
 echo "task=$TASK_ID node=$(hostname)"
 echo "run_dir=$RUN_DIR"
 
+EXPECTED="${EXPECTED_ROWS:-696}"
+EVAL_ARGS=()
+if [ -n "${UNIQUE_TRACKS:-}" ]; then
+  EVAL_ARGS=(--unique_tracks True)
+  EXPECTED="${EXPECTED_ROWS:-35}"
+fi
+
 n=$(find "$RUN_DIR" -name 'a*.wav' 2>/dev/null | wc -l)
-echo "edits found: $n"
-if [ "$n" -ne 696 ]; then
-  echo "ERROR: expected 696 edits, found $n -- scoring an incomplete run would be misleading" >&2
+echo "edits found: $n (expecting $EXPECTED)"
+if [ "$n" -ne "$EXPECTED" ]; then
+  echo "ERROR: expected $EXPECTED edits, found $n -- scoring an incomplete run would be misleading" >&2
   exit 1
 fi
 
 # FAD and mel PSNR/SSIM need the paired reference. Check it up front: it is the last thing
 # eval_medley touches, so a missing reference otherwise wastes the whole LPAPS/CLAP/MuLan pass.
 REF_DIR="$(python -c 'import sys; sys.path.insert(0, "editing/AudioEditingCode/code"); import env; print(env.PATH_LOWER_BOUND_MEDLEY)')"
+if [ -n "${UNIQUE_TRACKS:-}" ]; then
+  REF_DIR="${REF_DIR%/lower_bound_full/audios}/lower_bound_tracks/audios"
+fi
 ref_n=$(find "$REF_DIR" -name 'a*.wav' 2>/dev/null | wc -l)
 echo "reference files: $ref_n  ($REF_DIR)"
 if [ "$ref_n" -ne "$n" ]; then
@@ -92,7 +109,7 @@ if [ "$ref_n" -ne "$n" ]; then
   exit 1
 fi
 
-python -m editing.eval_medley --path_audio "$RUN_DIR"
+python -m editing.eval_medley --path_audio "$RUN_DIR" "${EVAL_ARGS[@]}"
 rc=$?
 if [ "$rc" -ne 0 ]; then
   echo "FAILED rc=$rc: $RUN_DIR" >&2

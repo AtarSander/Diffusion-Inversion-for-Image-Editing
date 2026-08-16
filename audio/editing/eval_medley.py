@@ -21,8 +21,12 @@ DISABLE_TQDM = False
 
 
 
-def prepare_data(path_edited_audio: str, limit: int | None = None):
-    df_musiccaps = prepare_dataset(Path(PATH_AUDIOS_MEDLEY), Path(PATH_PROMPTS_MEDLEY))
+def prepare_data(
+    path_edited_audio: str, limit: int | None = None, unique_tracks: bool = False
+):
+    df_musiccaps = prepare_dataset(
+        Path(PATH_AUDIOS_MEDLEY), Path(PATH_PROMPTS_MEDLEY), unique_tracks=unique_tracks
+    )
     if limit is not None:
         df_musiccaps = df_musiccaps.head(limit)
     target_prompts = []
@@ -429,13 +433,15 @@ def calculate_source_distance_metrics(device: torch.device, path_edited_audio: s
     return metrics, per_file
 
 
-def main(path_audio: str, limit: int | None = None):
+def main(path_audio: str, limit: int | None = None, unique_tracks: bool = False):
     """Score one edit run against its source audio and its target prompts.
 
     Args:
         path_audio: Directory of `a{idx}.wav` edits to score.
         limit: Score only the first N examples and skip the directory-level PSNR/SSIM pass, to
             check the wiring in seconds. The written files are then partial, not a result.
+        unique_tracks: Score the 35-track subset instead of all 696 rows. The paired reference
+            must have been built with the same flag.
     """
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     (
@@ -446,7 +452,7 @@ def main(path_audio: str, limit: int | None = None):
         srs_src,
         srs_edit,
         classification_tasks,
-    ) = prepare_data(path_audio, limit=limit)
+    ) = prepare_data(path_audio, limit=limit, unique_tracks=unique_tracks)
     if limit is not None:
         print(f"*** SMOKE RUN: first {len(edits)} examples only, PSNR/SSIM skipped ***")
     path_save_metrics = Path(path_audio).parent

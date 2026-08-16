@@ -6,6 +6,12 @@ import numpy as np
 import pandas as pd
 from audioldm_run import run_audioldm_edit
 from tqdm import tqdm
+import sys as _sys
+_AUDIO_ROOT = Path(__file__).resolve().parents[3]
+if str(_AUDIO_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_AUDIO_ROOT))
+from editing.dataset_medley import prepare_dataset  # noqa: E402
+
 from run_paths import resolve_run_dir
 from utils import set_reproducability
 
@@ -55,25 +61,6 @@ AUDIOLDM_HOOKS = {
 dt_str = datetime.now().strftime("%Y%m%d%H%M%S")
 
 
-def prepare_dataset(path_audios: Path, path_prompts: Path):
-    df_prompts = pd.read_csv(path_prompts, index_col=0, header=0)
-    df_instruments = []
-    for idx, row in df_prompts.iterrows():
-        filename = row["filename"]
-        dirname = filename.split("_MIX")[0]
-        path_to_audio = (path_audios / dirname / filename).resolve()
-        df_instruments.append(
-            {
-                "path_yt": path_to_audio,
-                "original_prompt": row["source_captions"],
-                "editing_prompt": row["target_captions"],
-                "edit_class": row["edit"],
-            }
-        )
-    df_instruments = pd.DataFrame(df_instruments)
-    return df_instruments
-
-
 def main(
     dataset_name: str = "medleymd",
     mode: str = "ddpm",
@@ -91,6 +78,8 @@ def main(
     range_end: int | None = None,
     model_id: str = "cvssp/audioldm2-large",
     lora_path: str | None = None,
+    unique_tracks: bool = False,
+    reconstruct: bool = False,
 ):
     """
     Main function to edit audio files using AudioLDM2 methods.
@@ -111,6 +100,10 @@ def main(
         model_id: AudioLDM model to use (default: "cvssp/audioldm2-large")
         lora_path: Trained inversion-LoRA checkpoint, applied to the DDIM inversion pass only
             (default: None)
+        unique_tracks: Score one row per distinct MedleyDB track (35) instead of all 696
+        reconstruct: Denoise with the *source* caption instead of the target one, turning the
+            edit into a reconstruction of the input. Combined with cfg_tar=1.0 this measures how
+            exactly inversion round-trips real audio (default: False)
 
     Returns:
         None
@@ -132,7 +125,11 @@ def main(
             assert range_start <= range_end, f"{range_start=} must be <= {range_end=}"
 
     # Prepare dataset
-    df_instruments = prepare_dataset(path_audios=Path(PATH_AUDIOS_MEDLEY), path_prompts=Path(PATH_PROMPTS_MEDLEY))
+    df_instruments = prepare_dataset(
+        path_audios=Path(PATH_AUDIOS_MEDLEY),
+        path_prompts=Path(PATH_PROMPTS_MEDLEY),
+        unique_tracks=unique_tracks,
+    )
 
     # Generate run name if not provided
     if run_name is None:
@@ -152,7 +149,7 @@ def main(
     set_reproducability(seed, extreme=False)
 
     print(f"Processing {len(df_instruments)} audio files...")
-    print(f"Mode: {mode}")
+    print(f"Mode: {mode}{' (reconstruction: denoising with the source caption)' if reconstruct else ''}")
     print(f"Output directory: {path_dir_outs}")
 
     all_rows = list(df_instruments.iterrows())
@@ -174,7 +171,7 @@ def main(
         for idx, row in all_rows:
             path_to_audio = str(row["path_yt"])
             source_prompt = row["original_prompt"]
-            target_prompt = row["editing_prompt"]
+            target_prompt = row["original_prompt"] if reconstruct else row["editing_prompt"]
             edit_class = row["edit_class"]
 
             layers_to_hook = None
