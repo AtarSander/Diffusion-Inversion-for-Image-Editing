@@ -134,8 +134,16 @@ class AudioLDM2InversionTrainer:
         self.eval_fixtures: dict[str, Any] | None = None
 
         self._freeze_components()
+        lora_cfg = OmegaConf.to_container(cfg.lora, resolve=True)
+        preset = cfg.get("lora_preset")
+        if preset is not None:
+            presets = OmegaConf.to_container(cfg.lora_target_presets, resolve=True)
+            if preset not in presets:
+                raise KeyError(f"lora_preset={preset!r} not in {sorted(presets)}")
+            lora_cfg["target_modules"] = presets[preset]
+            logger.info("LoRA preset {}: {}", preset, lora_cfg["target_modules"])
         inject_adapter_in_model(
-            LoraConfig(**OmegaConf.to_container(cfg.lora, resolve=True)),
+            LoraConfig(**lora_cfg),
             self.unet,
             adapter_name=str(cfg.adapter_name),
         )
@@ -154,6 +162,7 @@ class AudioLDM2InversionTrainer:
             len(self.trainable_parameters),
         )
 
+        self.lora_config_used = lora_cfg
         self.optimizer = torch.optim.AdamW(
             self.trainable_parameters,
             lr=float(cfg.learning_rate),
@@ -373,9 +382,12 @@ class AudioLDM2InversionTrainer:
             "real_names": real_names,
         }
 
-        baseline = self._reconstruction_pass(set_lora_enabled=None, prefix="eval_no_lora")
-        logger.info("Plain DDIM inversion baseline: {}", baseline)
-        self.tracker.log(baseline, step=self.global_step)
+        # Logged under the same `eval/` names at step 0, so W&B shows one continuous curve whose
+        # first point is plain DDIM. A separate eval_no_lora/* namespace made the reference
+        # invisible on the panel that mattered.
+        baseline = self._reconstruction_pass(set_lora_enabled=None, prefix="eval")
+        logger.info("Plain DDIM inversion baseline (logged as step 0): {}", baseline)
+        self.tracker.log(baseline, step=0)
         self.baseline_reconstruction = baseline
 
     def _reconstruction_pass(
@@ -452,7 +464,7 @@ class AudioLDM2InversionTrainer:
             "git_sha": git_sha(),
             "model_id": str(self.cfg.model_id),
             "num_inference_steps": int(self.cfg.num_inference_steps),
-            "lora": OmegaConf.to_container(self.cfg.lora, resolve=True),
+            "lora": self.lora_config_used,
             "adapter_name": str(self.cfg.adapter_name),
         }
         with path.with_suffix(".json").open("w", encoding="utf-8") as f:

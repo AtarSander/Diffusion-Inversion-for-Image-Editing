@@ -15,6 +15,17 @@ val_fraction: 0.20 # split by trajectory, never by transition; must exceed recon
 batch_size: 32
 num_workers: 8
 
+# Which module families the adapter touches. attn is what every run so far used; the loss
+# plateaued at 85% of the shift gap regardless of rank or learning rate, so the remaining lever
+# is the form of the adapter rather than its size. Module counts in the AudioLDM2 UNet:
+# to_q/to_k/to_v 256 each, to_out.0 256, ff.net.0.proj 128, ff.net.2 128, proj_in/proj_out 64
+# each, conv1/conv2 22 each, conv_shortcut 15.
+lora_preset: attn
+lora_target_presets:
+  attn: [to_q, to_k, to_v, to_out.0]
+  attn_ff: [to_q, to_k, to_v, to_out.0, ff.net.0.proj, ff.net.2]
+  full: [to_q, to_k, to_v, to_out.0, ff.net.0.proj, ff.net.2, proj_in, proj_out, conv1, conv2, conv_shortcut]
+
 lora:
   r: 8
   lora_alpha: 4

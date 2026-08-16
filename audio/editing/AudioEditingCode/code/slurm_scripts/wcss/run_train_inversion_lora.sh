@@ -15,6 +15,7 @@
 # Submit from audio/ once the trajectory array has finished and been verified:
 #   bash editing/AudioEditingCode/code/slurm_scripts/wcss/submit_train.sh --array=0-5   # rank+lr cross
 #   bash editing/AudioEditingCode/code/slurm_scripts/wcss/submit_train.sh --array=6-11  # lr sweep
+#   bash editing/AudioEditingCode/code/slurm_scripts/wcss/submit_train.sh --array=12-23 # rerun + conv/ff
 #   bash editing/AudioEditingCode/code/slurm_scripts/wcss/submit_train.sh
 #
 # Prerequisites:
@@ -35,23 +36,43 @@ export TOKENIZERS_PARALLELISM=false
 # rank|alpha|learning_rate|run_name
 # Rank and learning rate are the two that decide whether the adapter has the capacity to close
 # the shift gap at all; alpha tracks rank so the effective scale alpha/r stays comparable.
+# preset|rank|alpha|learning_rate|run_name
+# preset selects which module families the adapter touches (see lora_target_presets in the
+# config): attn is attention projections only, attn_ff adds the feed-forward layers, full adds
+# the transformer in/out projections and the ResNet convs.
 CONFIGS=(
-  "8|4|5e-5|r8_a4_lr5e-5"
-  "8|4|2e-4|r8_a4_lr2e-4"
-  "8|4|1e-5|r8_a4_lr1e-5"
-  "4|2|2e-4|r4_a2_lr2e-4"
-  "16|8|2e-4|r16_a8_lr2e-4"
-  "32|16|2e-4|r32_a16_lr2e-4"
-  # Indices 6-11 (--array=6-11): learning rate sweep above 2e-4, at fixed rank 8.
-  # The first sweep showed rank is not binding (r4 matched r32) while lr1e-5 was clearly
-  # under-trained, and moving from batch 4 to 32 shifts the optimum upward, so the open question
-  # is how far up it goes. This brackets it from just above the old best to certainly too high.
-  "8|4|3e-4|r8_a4_lr3e-4"
-  "8|4|5e-4|r8_a4_lr5e-4"
-  "8|4|1e-3|r8_a4_lr1e-3"
-  "8|4|2e-3|r8_a4_lr2e-3"
-  "8|4|5e-3|r8_a4_lr5e-3"
-  "8|4|1e-2|r8_a4_lr1e-2"
+  # 0-5: the original rank + learning-rate cross, scored on the old 32-sample eval.
+  "attn|8|4|5e-5|r8_a4_lr5e-5"
+  "attn|8|4|2e-4|r8_a4_lr2e-4"
+  "attn|8|4|1e-5|r8_a4_lr1e-5"
+  "attn|4|2|2e-4|r4_a2_lr2e-4"
+  "attn|16|8|2e-4|r16_a8_lr2e-4"
+  "attn|32|16|2e-4|r32_a16_lr2e-4"
+  # 6-11: learning rates above 2e-4. Found the plateau (3e-4..2e-3 identical) and the ceiling
+  # (5e-3 diverges).
+  "attn|8|4|3e-4|r8_a4_lr3e-4"
+  "attn|8|4|5e-4|r8_a4_lr5e-4"
+  "attn|8|4|1e-3|r8_a4_lr1e-3"
+  "attn|8|4|2e-3|r8_a4_lr2e-3"
+  "attn|8|4|5e-3|r8_a4_lr5e-3"
+  "attn|8|4|1e-2|r8_a4_lr1e-2"
+  # 12-17: the 0-5 cross re-run, so it is measured by the 256-sample eval the later runs use.
+  # Names carry the preset, so these do not collide with the originals in W&B.
+  "attn|8|4|5e-5|attn_r8_a4_lr5e-5"
+  "attn|8|4|2e-4|attn_r8_a4_lr2e-4"
+  "attn|8|4|1e-5|attn_r8_a4_lr1e-5"
+  "attn|4|2|2e-4|attn_r4_a2_lr2e-4"
+  "attn|16|8|2e-4|attn_r16_a8_lr2e-4"
+  "attn|32|16|2e-4|attn_r32_a16_lr2e-4"
+  # 18-23: more of the network, at the learning rate the sweep settled on. Rank is varied within
+  # each preset because adding module families may change where rank starts to bind, which it
+  # did not for attention alone.
+  "attn_ff|8|4|5e-4|attnff_r8_a4_lr5e-4"
+  "attn_ff|16|8|5e-4|attnff_r16_a8_lr5e-4"
+  "attn_ff|32|16|5e-4|attnff_r32_a16_lr5e-4"
+  "full|8|4|5e-4|full_r8_a4_lr5e-4"
+  "full|16|8|5e-4|full_r16_a8_lr5e-4"
+  "full|32|16|5e-4|full_r32_a16_lr5e-4"
 )
 
 # Fail before the 12 GB model load rather than after it: wandb only reports a bad credential
@@ -68,12 +89,13 @@ if [ "$TASK_ID" -ge "${#CONFIGS[@]}" ]; then
   exit 2
 fi
 
-IFS='|' read -r RANK ALPHA LR RUN_NAME <<< "${CONFIGS[$TASK_ID]}"
-echo "task=$TASK_ID rank=$RANK alpha=$ALPHA lr=$LR run=$RUN_NAME node=$(hostname)"
+IFS='|' read -r PRESET RANK ALPHA LR RUN_NAME <<< "${CONFIGS[$TASK_ID]}"
+echo "task=$TASK_ID preset=$PRESET rank=$RANK alpha=$ALPHA lr=$LR run=$RUN_NAME node=$(hostname)"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 
 python src/inversion_lora/train.py \
   device=cuda:0 \
+  lora_preset="$PRESET" \
   lora.r="$RANK" \
   lora.lora_alpha="$ALPHA" \
   learning_rate="$LR" \
