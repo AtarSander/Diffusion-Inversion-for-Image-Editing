@@ -12,6 +12,10 @@
 #SBATCH --output=outputs/logs/slurm/baselines-%A_%a.out
 #SBATCH --error=outputs/logs/slurm/baselines-%A_%a.err
 #
+# Set SKIP_EXISTING=1 to resume a run whose shards were killed by the time limit: each shard
+# then only produces the files missing from its slice, so the whole array can be resubmitted
+# without recomputing what already exists.
+#
 # Submit from the audio/ directory:
 #   cd /lustre/pd03/hpc-tomtrz0116-1775130553/lstanisz/code/lorainv/audio
 #   mkdir -p outputs/logs/slurm
@@ -101,7 +105,7 @@ for attempt in 1 2 3; do
     --seed 42 \
     --n_parts "$N_PARTS" \
     --part_id "$PART" \
-    --run_name "$RUN_NAME" "${EXTRA_ARGS[@]}" && { ok=1; break; }
+    --run_name "$RUN_NAME" "${EXTRA_ARGS[@]}" ${SKIP_EXISTING:+--skip_existing True} && { ok=1; break; }
   echo "attempt $attempt failed for $RUN_NAME shard $PART; retrying in 120s..." >&2
   sleep 120
 done

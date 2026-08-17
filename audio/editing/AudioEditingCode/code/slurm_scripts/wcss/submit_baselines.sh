@@ -34,6 +34,8 @@ echo "submitting from: $AUDIO_ROOT"
 # environment into the job here, so forward it explicitly instead of hoping it propagates -- and
 # check the checkpoint exists now, on the login node, rather than failing 12 tasks later.
 EXPORT_ARGS=()
+FORWARD=()
+[ -n "${SKIP_EXISTING:-}" ] && FORWARD+=("SKIP_EXISTING=$SKIP_EXISTING") && echo "skip_existing: on (resuming)"
 if [ -n "${LORA_PATH:-}" ]; then
   if [ ! -f "$LORA_PATH" ]; then
     echo "ERROR: LORA_PATH=$LORA_PATH does not exist" >&2
@@ -45,7 +47,11 @@ if [ -n "${LORA_PATH:-}" ]; then
     exit 1
   fi
   echo "lora path : $LORA_PATH"
-  EXPORT_ARGS=(--export=ALL,LORA_PATH="$LORA_PATH")
+  FORWARD+=("LORA_PATH=$LORA_PATH")
+fi
+
+if [ ${#FORWARD[@]} -gt 0 ]; then
+  EXPORT_ARGS=(--export=ALL,"$(IFS=,; echo "${FORWARD[*]}")")
 fi
 
 sbatch \

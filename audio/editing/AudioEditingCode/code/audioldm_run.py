@@ -545,7 +545,12 @@ def run_audioldm_edit(
             )
 
     if save_edit_wav_path is not None:
-        torchaudio.save(save_edit_wav_path, audio, sample_rate=sr)
+        # Write then rename, so a job killed by the time limit leaves either nothing or a
+        # complete file. A half-written wav is indistinguishable from a short one -- torchaudio
+        # reports the frames actually present -- so a resume would skip it as finished.
+        _tmp = f"{save_edit_wav_path}.partial.{os.getpid()}"
+        torchaudio.save(_tmp, audio, sample_rate=sr)
+        os.replace(_tmp, save_edit_wav_path)
     else:
         save_full_path_spec = os.path.join(save_path, image_name_png + ".png")
         save_full_path_wave = os.path.join(save_path, image_name_png + ".wav")

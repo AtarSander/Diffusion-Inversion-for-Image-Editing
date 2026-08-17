@@ -4,6 +4,7 @@ from pathlib import Path
 import fire
 import numpy as np
 import pandas as pd
+import torchaudio
 from audioldm_run import run_audioldm_edit
 from tqdm import tqdm
 import sys as _sys
@@ -61,6 +62,29 @@ AUDIOLDM_HOOKS = {
 dt_str = datetime.now().strftime("%Y%m%d%H%M%S")
 
 
+def is_complete_wav(path: Path) -> bool:
+    """Whether `path` is a readable, non-empty wav.
+
+    Outputs are written to a temporary name and renamed into place, so a file that exists is a
+    complete one and its presence is enough to skip. This only rejects the degenerate cases --
+    absent, empty, or unreadable -- because a truncated wav cannot be recognised from its own
+    contents: torchaudio reports the frames actually present, so a half-written file looks
+    exactly like a legitimately shorter one.
+
+    Args:
+        path: Candidate output wav.
+
+    Returns:
+        True if the file exists and decodes to at least one frame.
+    """
+    if not path.exists():
+        return False
+    try:
+        return torchaudio.info(str(path)).num_frames > 0
+    except Exception:
+        return False
+
+
 def main(
     dataset_name: str = "medleymd",
     mode: str = "ddpm",
@@ -80,6 +104,7 @@ def main(
     lora_path: str | None = None,
     unique_tracks: bool = False,
     reconstruct: bool = False,
+    skip_existing: bool = False,
 ):
     """
     Main function to edit audio files using AudioLDM2 methods.
@@ -100,6 +125,9 @@ def main(
         model_id: AudioLDM model to use (default: "cvssp/audioldm2-large")
         lora_path: Trained inversion-LoRA checkpoint, applied to the DDIM inversion pass only
             (default: None)
+        skip_existing: Skip rows whose output wav is already on disk, so a shard killed by the
+            time limit resumes instead of restarting. Off by default: when a run is deliberately
+            regenerated, silently keeping stale audio would be the worse failure.
         unique_tracks: Score one row per distinct MedleyDB track (35) instead of all 696
         reconstruct: Denoise with the *source* caption instead of the target one, turning the
             edit into a reconstruction of the input. Combined with cfg_tar=1.0 this measures how
@@ -167,6 +195,7 @@ def main(
         all_rows = all_rows[range_start:range_end]
 
     # Process each audio file in the dataset
+    skipped = 0
     with tqdm(total=len(all_rows), desc="Processing files") as pbar:
         for idx, row in all_rows:
             path_to_audio = str(row["path_yt"])
@@ -180,6 +209,11 @@ def main(
 
             # Create output path for this specific file
             output_wav_path = str(path_dir_outs / f"a{idx}.wav")
+
+            if skip_existing and is_complete_wav(Path(output_wav_path)):
+                skipped += 1
+                pbar.update(1)
+                continue
 
             # Call the run_audioldm_edit function with save_edit_wav_path
             run_audioldm_edit(
@@ -201,7 +235,7 @@ def main(
             )
             pbar.update(1)
 
-    print(f"\nCompleted processing {len(all_rows)} files.")
+    print(f"\nCompleted processing {len(all_rows)} files ({skipped} skipped, already present).")
     print(f"Results saved to: {path_dir_outs}")
 
 
