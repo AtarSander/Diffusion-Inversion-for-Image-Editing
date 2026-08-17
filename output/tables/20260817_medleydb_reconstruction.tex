@@ -1,0 +1,49 @@
+% requires: \usepackage{booktabs,multirow}
+\begin{table}[t]
+  \centering
+  \caption{DDIM reconstruction of real audio: 35 distinct MedleyDB tracks inverted and denoised
+    with the same source caption at $w_{\mathrm{src}} = w_{\mathrm{tar}} = 1$, so the output
+    should be the input. Scored against the input through the same pipeline as the editing
+    benchmark, so the absolute values include vocoder and bandwidth loss that inversion does not
+    control. Subscripts are standard errors over the 35 tracks; best per panel in bold.}
+  \label{tab:medleydb-reconstruction}
+  \begin{tabular}{ll ccc}
+    \toprule
+    Steps & Method & LPAPS $\downarrow$ & mel PSNR $\uparrow$ & mel SSIM $\uparrow$ \\
+    \midrule
+    \multirow{3}{*}{200}
+      & DDIM                 & $3.881_{\pm 0.084}$ & $19.496_{\pm 0.401}$ & $0.697_{\pm 0.019}$ \\
+      & DDIM + LoRA (attn)   & $\mathbf{3.835}_{\pm 0.079}$ & $19.514_{\pm 0.404}$ & $0.697_{\pm 0.020}$ \\
+      & DDIM + LoRA (full)   & $3.848_{\pm 0.081}$ & $\mathbf{19.524}_{\pm 0.405}$ & $\mathbf{0.698}_{\pm 0.020}$ \\
+    \midrule
+    \multirow{3}{*}{50}
+      & DDIM                 & $4.032_{\pm 0.085}$ & $19.464_{\pm 0.391}$ & $0.693_{\pm 0.018}$ \\
+      & DDIM + LoRA (attn)   & $\mathbf{3.948}_{\pm 0.082}$ & $19.453_{\pm 0.393}$ & $\mathbf{0.695}_{\pm 0.018}$ \\
+      & DDIM + LoRA (full)   & $3.974_{\pm 0.085}$ & $\mathbf{19.482}_{\pm 0.394}$ & $0.694_{\pm 0.018}$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{table}[t]
+  \centering
+  \caption{Paired difference against the no-LoRA reconstruction, over the same 35 tracks.
+    Pairing is what makes an effect this small resolvable: the spread across tracks is an order
+    of magnitude larger than every difference here. Brackets are 95\% confidence intervals.}
+  \label{tab:medleydb-reconstruction-paired}
+  \begin{tabular}{ll ccc}
+    \toprule
+    Steps & Adapter & $\Delta$LPAPS & $\Delta$mel PSNR & $\Delta$mel SSIM \\
+    \midrule
+    \multirow{2}{*}{200}
+      & attn   & $-0.0457^{*}$ {\scriptsize $[-0.0797, -0.0118]$} & $+0.0186^{*}$ {\scriptsize $[+0.0009, +0.0363]$} & $+0.0001$ {\scriptsize $[-0.0012, +0.0013]$} \\
+      & full   & $-0.0334^{*}$ {\scriptsize $[-0.0574, -0.0094]$} & $+0.0287^{*}$ {\scriptsize $[+0.0151, +0.0423]$} & $+0.0003$ {\scriptsize $[-0.0008, +0.0014]$} \\
+    \midrule
+    \multirow{2}{*}{50}
+      & attn   & $-0.0843^{*}$ {\scriptsize $[-0.1003, -0.0682]$} & $-0.0105$ {\scriptsize $[-0.0242, +0.0032]$} & $+0.0020^{*}$ {\scriptsize $[+0.0001, +0.0039]$} \\
+      & full   & $-0.0583^{*}$ {\scriptsize $[-0.0694, -0.0472]$} & $+0.0185^{*}$ {\scriptsize $[+0.0085, +0.0286]$} & $+0.0016$ {\scriptsize $[+0.0000, +0.0032]$} \\
+    \bottomrule
+  \end{tabular}
+
+  \vspace{0.4em}
+  \parbox{\linewidth}{\footnotesize $^{*}$ $p < 0.05$, paired $t$-test over the 35 tracks.}
+\end{table}
