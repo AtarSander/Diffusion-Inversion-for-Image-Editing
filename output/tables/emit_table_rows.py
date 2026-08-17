@@ -14,6 +14,16 @@ MODELS = {
         ("DDIM-inv", "audioldm2_ddim/audioldm2_ddim_cfgsrc3.0_cfgtar12.0_t200_s200"),
         ("SDEdit", "audioldm2_sdedit/audioldm2_sdedit_cfgtar12.0_t100_s200"),
     ],
+    "AudioLDM2-large, DDIM inversion variants": [
+        ("DDIM, $w_{src}$=3.0", "audioldm2_ddim/audioldm2_ddim_cfgsrc3.0_cfgtar12.0_t200_s200"),
+        ("DDIM, $w_{src}$=1.0", "audioldm2_ddim/audioldm2_ddim_cfgsrc1.0_cfgtar12.0_t200_s200"),
+        ("+ LoRA attn r8 (6k)",
+         "audioldm2_ddim/audioldm2_ddimlora_attn_r8_a4_lr2e-4_checkpoint_step_6000"),
+        ("+ LoRA attn r32 (20k)",
+         "audioldm2_ddim/audioldm2_ddimlora_r32_a16_lr2e-4_checkpoint_final"),
+        ("+ LoRA full r32 (6k)",
+         "audioldm2_ddim/audioldm2_ddimlora_full_r32_a16_lr5e-4_checkpoint_step_6000"),
+    ],
     "Stable Audio Open": [
         ("DDPM-inv", "medleymd/stable_audio/stableaudio_ddpm_cfgsrc1.0_cfgtar3.5_t50_s100"),
         ("DDIM-inv", "medleymd/stable_audio/stableaudio_ddim_cfgsrc1.0_cfgtar3.5_t100_s100"),
@@ -54,8 +64,21 @@ def stats(run: Path) -> dict[str, tuple[float, float]]:
     return out
 
 
+def safe_stats(rel: str):
+    """Stats for a run, or None when it has not been scored yet."""
+    try:
+        return stats(MOUNT / rel)
+    except (FileNotFoundError, AssertionError) as exc:
+        print(f"% skipping {rel}: {exc}")
+        return None
+
+
 results = {
-    model: {method: stats(MOUNT / rel) for method, rel in runs}
+    model: {
+        method: values
+        for method, rel in runs
+        if (values := safe_stats(rel)) is not None
+    }
     for model, runs in MODELS.items()
 }
 
@@ -68,7 +91,7 @@ for model, methods in results.items():
     for metric in ORDER:
         pick = min if metric in LOWER_IS_BETTER else max
         best[metric] = pick(methods, key=lambda m: methods[m][metric][0])
-    print(f"    \\multirow{{3}}{{*}}{{{model}}}")
+    print(f"    \\multirow{{{len(methods)}}}{{*}}{{{model}}}")
     for method in methods:
         cells = []
         for metric in ORDER:
