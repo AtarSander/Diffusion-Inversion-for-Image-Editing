@@ -14,6 +14,7 @@ import json
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -75,6 +76,39 @@ SOURCE_SAMPLE_FILES = (
     "timesteps.pt",
     "sigmas.pt",
 )
+
+
+@dataclass(frozen=True)
+class FluxGuidanceScales:
+    """Embedded-guidance values used at each stage of a FLUX round trip."""
+
+    source: float
+    inversion: float
+    reconstruction: float
+    editing: float
+
+
+def resolve_flux_guidance_scales(cfg: DictConfig) -> FluxGuidanceScales:
+    """Resolve optional stage overrides while preserving the legacy matched protocol."""
+    source = float(cfg.guidance_scale)
+    inversion_override = OmegaConf.select(cfg, "inversion.guidance_scale", default=None)
+    reconstruction_override = OmegaConf.select(
+        cfg,
+        "reconstruction.guidance_scale",
+        default=None,
+    )
+    editing_override = OmegaConf.select(cfg, "editing.guidance_scale", default=None)
+    inversion = source if inversion_override is None else float(inversion_override)
+    reconstruction = (
+        source if reconstruction_override is None else float(reconstruction_override)
+    )
+    editing = reconstruction if editing_override is None else float(editing_override)
+    return FluxGuidanceScales(
+        source=source,
+        inversion=inversion,
+        reconstruction=reconstruction,
+        editing=editing,
+    )
 
 
 def _resolve_path(path: str | Path) -> Path:
@@ -232,7 +266,11 @@ def _validate_existing_run_config(output_dir: Path, cfg: DictConfig) -> None:
         "width",
         "num_inference_steps",
         "guidance_scale",
-        "inversion",
+        "inversion.guidance_scale",
+        "inversion.latent_nudging_scalar",
+        "inversion.solver",
+        "inversion.fixed_point_refinement_steps",
+        "reconstruction.guidance_scale",
         "max_sequence_length",
         "model.model_id",
         "model.torch_dtype",
@@ -526,7 +564,7 @@ def _run_sample(
     device = _execution_device(pipe)
     height = int(cfg.height)
     width = int(cfg.width)
-    guidance_scale = float(cfg.guidance_scale)
+    guidance_scales = resolve_flux_guidance_scales(cfg)
     num_inference_steps = int(cfg.num_inference_steps)
     latent_nudging_scalar = float(cfg.inversion.latent_nudging_scalar)
     inversion_solver = validate_flux_inversion_solver(
@@ -571,7 +609,7 @@ def _run_sample(
             conditioning=conditioning,
             latent_image_ids=latent_image_ids,
             num_inference_steps=num_inference_steps,
-            guidance_scale=guidance_scale,
+            guidance_scale=guidance_scales.source,
             save_trajectory=save_trajectories or save_training_data,
             save_velocities=True,
             progress_desc=f"Sampling {sample_dir.name}",
@@ -651,7 +689,7 @@ def _run_sample(
             schedule=schedule,
             conditioning=conditioning,
             latent_image_ids=latent_image_ids,
-            guidance_scale=guidance_scale,
+            guidance_scale=guidance_scales.inversion,
             solver=inversion_solver,
             fixed_point_refinement_steps=fixed_point_refinement_steps,
             save_trajectory=save_trajectories,
@@ -664,7 +702,7 @@ def _run_sample(
         conditioning=conditioning,
         latent_image_ids=latent_image_ids,
         num_inference_steps=num_inference_steps,
-        guidance_scale=guidance_scale,
+        guidance_scale=guidance_scales.reconstruction,
         save_trajectory=False,
         save_velocities=False,
         progress_desc=f"Reconstructing {sample_dir.name}",
@@ -690,11 +728,7 @@ def _run_sample(
     edited_image_path: Path | None = None
     edited_from_initial_noise_path: Path | None = None
     if editing_enabled:
-        edit_guidance_scale = (
-            guidance_scale
-            if cfg.editing.guidance_scale is None
-            else float(cfg.editing.guidance_scale)
-        )
+        edit_guidance_scale = guidance_scales.editing
         target_conditioning = encode_flux_prompt(
             pipe,
             prompt=str(target_prompt),
@@ -770,11 +804,16 @@ def _run_sample(
             reconstructed_latent.detach().cpu(),
         ),
         "inversion_settings": {
+            "guidance_scale": guidance_scales.inversion,
             "latent_nudging_scalar": latent_nudging_scalar,
             "solver": inversion_solver,
             "fixed_point_refinement_steps": fixed_point_refinement_steps,
             "num_steps": num_inference_steps,
             "nfe": inversion_nfe,
+        },
+        "reconstruction_settings": {
+            "guidance_scale": guidance_scales.reconstruction,
+            "num_steps": num_inference_steps,
         },
         "initial_noise_stats": tensor_stats(initial_cpu, int(cfg.metrics.max_elements)),
         "inverted_noise_stats": tensor_stats(inverted_cpu, int(cfg.metrics.max_elements)),
@@ -834,7 +873,7 @@ def _run_sample(
             prompt=prompt,
             sample_index=sample_index,
             seed=seed,
-            guidance_scale=guidance_scale,
+            guidance_scale=guidance_scales.source,
             height=height,
             width=width,
             conditioning=conditioning,
@@ -852,6 +891,10 @@ def _run_sample(
                     None if cfg.prompts_jsonl is None else str(cfg.prompts_jsonl)
                 ),
                 "roundtrip_inversion_lora_enabled": bool(cfg.lora.enabled),
+                "roundtrip_inversion_guidance_scale": guidance_scales.inversion,
+                "roundtrip_reconstruction_guidance_scale": (
+                    guidance_scales.reconstruction
+                ),
                 "roundtrip_latent_nudging_scalar": latent_nudging_scalar,
                 "roundtrip_inversion_solver": inversion_solver,
                 "roundtrip_inversion_nfe": inversion_nfe,
@@ -885,19 +928,28 @@ def _run_sample(
             "inversion_solver": inversion_solver,
             "fixed_point_refinement_steps": fixed_point_refinement_steps,
             "inversion_nfe": inversion_nfe,
+            "source_guidance_scale": guidance_scales.source,
+            "inversion_guidance_scale": guidance_scales.inversion,
+            "reconstruction_guidance_scale": guidance_scales.reconstruction,
+            "editing_guidance_scale": (
+                guidance_scales.editing if editing_enabled else None
+            ),
         },
     )
     _save_json(sample_dir / "metrics.json", metrics)
 
     logger.success(
         "{}: inversion RMSE={:.6f}, oracle RMSE={:.6f}, solver={} (NFE={}), "
-        "latent nudge={:.3f}",
+        "latent nudge={:.3f}, guidance(src/inv/rec)={:.3f}/{:.3f}/{:.3f}",
         sample_dir.name,
         metrics["inversion_error"]["rmse"],
         metrics["oracle_inversion_error"]["rmse"],
         inversion_solver,
         inversion_nfe,
         latent_nudging_scalar,
+        guidance_scales.source,
+        guidance_scales.inversion,
+        guidance_scales.reconstruction,
     )
     return metrics, initial_unpacked, inverted_unpacked
 
@@ -1185,6 +1237,14 @@ def main(cfg: DictConfig) -> None:
     logger.info("FLUX baseline config:\n{}", OmegaConf.to_yaml(cfg))
     if int(cfg.num_inference_steps) <= 0:
         raise ValueError("num_inference_steps must be positive.")
+    guidance_scales = resolve_flux_guidance_scales(cfg)
+    logger.info(
+        "FLUX guidance scales: source={} inversion={} reconstruction={} editing={}",
+        guidance_scales.source,
+        guidance_scales.inversion,
+        guidance_scales.reconstruction,
+        guidance_scales.editing,
+    )
     # Validate before loading the multi-billion-parameter pipeline.
     nudge_flux_latent(
         torch.zeros((), dtype=torch.float32),
@@ -1325,8 +1385,16 @@ def main(cfg: DictConfig) -> None:
         "model_id": str(cfg.model.model_id),
         "lora": OmegaConf.to_container(cfg.lora, resolve=True),
         "inversion": OmegaConf.to_container(cfg.inversion, resolve=True),
+        "reconstruction": OmegaConf.to_container(cfg.reconstruction, resolve=True),
         "editing": OmegaConf.to_container(cfg.editing, resolve=True),
-        "guidance_scale": float(cfg.guidance_scale),
+        # Keep the legacy scalar for consumers that interpret it as source guidance.
+        "guidance_scale": guidance_scales.source,
+        "guidance_scales": {
+            "source": guidance_scales.source,
+            "inversion": guidance_scales.inversion,
+            "reconstruction": guidance_scales.reconstruction,
+            "editing": guidance_scales.editing,
+        },
         "dataset_split": (None if cfg.dataset_split is None else str(cfg.dataset_split)),
         "prompt_source": (None if cfg.prompts_jsonl is None else str(cfg.prompts_jsonl)),
         "source_dir": None if source_dir is None else source_dir.as_posix(),
