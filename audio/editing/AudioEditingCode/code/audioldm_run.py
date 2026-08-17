@@ -52,7 +52,7 @@ def create_truncated_audio(audio_path: str, max_duration: float = 60.0) -> str:
         waveform = waveform / torch.max(torch.abs(waveform))
 
     torchaudio.save(temp_file_path, waveform, sr, format="wav", encoding="PCM_S", bits_per_sample=16)
-    time.sleep(5)
+    assert temp_file_path.stat().st_size > 0, f"wrote an empty temp file: {temp_file_path}"
 
     return str(temp_file_path)
 
