@@ -123,6 +123,33 @@ class AudioLDM2TrajectoryDataset(Dataset):
         }
 
 
+def transitions_below_timestep(
+    dataset: AudioLDM2TrajectoryDataset, max_timestep: int
+) -> list[int]:
+    """Flat indices of the transitions whose timestep is at or below `max_timestep`.
+
+    Reads the cached timesteps only, so restricting training to part of the schedule costs one
+    pass over the index rather than any latent I/O.
+
+    Args:
+        dataset: An indexed trajectory dataset.
+        max_timestep: Noisiest timestep to keep.
+
+    Returns:
+        Indices into `dataset`, ascending.
+    """
+    keep: list[int] = []
+    start = 0
+    for sample in dataset.samples:
+        keep.extend(
+            start + i for i, t in enumerate(sample["timesteps"]) if t <= max_timestep
+        )
+        start += sample["num_transitions"]
+    if not keep:
+        raise ValueError(f"No transitions at or below timestep {max_timestep}")
+    return keep
+
+
 def split_sample_ids(
     root_dir: str | Path, val_fraction: float, seed: int = 0
 ) -> tuple[set[int], set[int]]:

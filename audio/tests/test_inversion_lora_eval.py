@@ -15,30 +15,61 @@ from src.inversion_lora.noise_metrics import (  # noqa: E402
     top_k_corr_in_patches,
 )
 from src.inversion_lora.reconstruct import mel_metrics  # noqa: E402
-from src.inversion_lora.train import NUM_QUARTILES, timestep_quartile  # noqa: E402
+from src.inversion_lora.dataset import transitions_below_timestep  # noqa: E402
+from src.inversion_lora.train import band_labels, timestep_band  # noqa: E402
+
+DDIM_GRID = torch.arange(996, 0, -5)  # the 200-step grid this model trains on
 
 
-def test_quartiles_split_the_schedule_noisiest_first():
-    """Quartile 0 must be the noisiest end, so q1 reads as 'the first 25% of denoising steps'."""
-    # Boundaries are half-open on the noisy side: t=750 opens quartile 1, t=250 opens quartile 3.
+def test_bands_split_the_schedule_noisiest_first():
+    """Band 0 must be the noisiest end, so it reads as 'the first 25% of denoising steps'."""
+    # Boundaries are half-open on the noisy side: t=750 opens band 1, t=250 opens band 3.
     timesteps = torch.tensor([999, 800, 750, 600, 500, 300, 250, 100, 0])
-    quartiles = timestep_quartile(timesteps, num_train_timesteps=1000)
-    assert quartiles.tolist() == [0, 0, 1, 1, 2, 2, 3, 3, 3]
+    bands = timestep_band(timesteps, band_top=1000, num_bands=4)
+    assert bands.tolist() == [0, 0, 1, 1, 2, 2, 3, 3, 3]
 
 
-def test_quartiles_cover_a_real_ddim_grid_evenly():
-    """The 200-step grid this model uses must land 50 steps in each bucket."""
-    timesteps = torch.arange(996, 0, -5)
-    assert len(timesteps) == 200
-    counts = torch.bincount(
-        timestep_quartile(timesteps, num_train_timesteps=1000), minlength=NUM_QUARTILES
-    )
-    assert counts.tolist() == [50, 50, 50, 50]
+def test_bands_cover_a_real_ddim_grid_evenly():
+    """The 200-step grid must land 50 steps in each quarter and 10 in each fifth of the last."""
+    assert len(DDIM_GRID) == 200
+    quarters = torch.bincount(timestep_band(DDIM_GRID, 1000, 4), minlength=4)
+    assert quarters.tolist() == [50, 50, 50, 50]
+
+    tail = DDIM_GRID[DDIM_GRID <= 250]
+    assert len(tail) == 50
+    fifths = torch.bincount(timestep_band(tail, 250, 5), minlength=5)
+    assert fifths.tolist() == [10, 10, 10, 10, 10]
 
 
-def test_quartile_index_stays_in_range_at_the_boundary():
-    assert timestep_quartile(torch.tensor([0]), 1000).item() == NUM_QUARTILES - 1
-    assert timestep_quartile(torch.tensor([1000]), 1000).item() == 0
+def test_band_index_stays_in_range_at_the_boundary():
+    assert timestep_band(torch.tensor([0]), 1000, 4).item() == 3
+    assert timestep_band(torch.tensor([1000]), 1000, 4).item() == 0
+
+
+def test_bands_that_do_not_cover_the_data_are_rejected():
+    """Setting the fine bands without restricting the data must fail, not silently mislabel."""
+    with pytest.raises(AssertionError, match="above band_top"):
+        timestep_band(DDIM_GRID, band_top=250, num_bands=5)
+
+
+def test_band_names_report_their_share_of_the_full_schedule():
+    assert band_labels(1000, 4, 1000) == ["q100_75", "q75_50", "q50_25", "q25_00"]
+    assert band_labels(250, 5, 1000) == ["q25_20", "q20_15", "q15_10", "q10_05", "q05_00"]
+
+
+def test_restricting_the_dataset_keeps_exactly_the_cleanest_quarter():
+    """The filter must select by timestep, not by position, across trajectory boundaries."""
+
+    class FakeDataset:
+        samples = [
+            {"timesteps": DDIM_GRID.tolist(), "num_transitions": 200},
+            {"timesteps": DDIM_GRID.tolist(), "num_transitions": 200},
+        ]
+
+    keep = transitions_below_timestep(FakeDataset(), 250)
+    assert len(keep) == 100
+    assert keep[:3] == [150, 151, 152] and keep[50:53] == [350, 351, 352]
+    assert max(DDIM_GRID[i % 200] for i in keep) == 246
 
 
 def test_identical_mel_is_a_perfect_reconstruction():

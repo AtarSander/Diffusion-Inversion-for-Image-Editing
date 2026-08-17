@@ -15,6 +15,18 @@ val_fraction: 0.20 # split by trajectory, never by transition; must exceed recon
 batch_size: 32
 num_workers: 8
 
+# Restrict training to the cleanest tail of the schedule: keep only transitions with
+# t <= train_max_timestep. The shift gap is ~300x larger in the last quarter (t <= 250) than in
+# the first, so training there alone spends every step where the error actually is. null keeps
+# all 200 transitions per trajectory. Validation stays on the full schedule either way, so a
+# restricted run still shows what it does to the 75% it no longer sees and its val/loss stays
+# comparable with the unrestricted runs.
+train_max_timestep: null
+# Break the training loss into this many equal bands of [0, train_max_timestep], noisiest first,
+# each named by its share of the full schedule: 4 over the whole schedule gives q100_75..q25_00,
+# and 5 over t <= 250 gives q25_20..q05_00.
+num_loss_bands: 4
+
 # Which module families the adapter touches. attn is what every run so far used; the loss
 # plateaued at 85% of the shift gap regardless of rank or learning rate, so the remaining lever
 # is the form of the adapter rather than its size. Module counts in the AudioLDM2 UNet:

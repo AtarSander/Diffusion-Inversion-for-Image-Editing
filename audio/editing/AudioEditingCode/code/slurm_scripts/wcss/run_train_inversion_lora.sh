@@ -16,6 +16,7 @@
 #   bash editing/AudioEditingCode/code/slurm_scripts/wcss/submit_train.sh --array=0-5   # rank+lr cross
 #   bash editing/AudioEditingCode/code/slurm_scripts/wcss/submit_train.sh --array=6-11  # lr sweep
 #   bash editing/AudioEditingCode/code/slurm_scripts/wcss/submit_train.sh --array=12-23 # rerun + conv/ff
+#   bash editing/AudioEditingCode/code/slurm_scripts/wcss/submit_train.sh --array=24-26 # t<=250 only
 #   bash editing/AudioEditingCode/code/slurm_scripts/wcss/submit_train.sh
 #
 # Prerequisites:
@@ -73,6 +74,13 @@ CONFIGS=(
   "full|8|4|5e-4|full_r8_a4_lr5e-4"
   "full|16|8|5e-4|full_r16_a8_lr5e-4"
   "full|32|16|5e-4|full_r32_a16_lr5e-4"
+  # 24-26: train only on the cleanest quarter of the schedule (t <= 250), where the shift gap is
+  # ~300x what it is at the noisy end, with the loss split into 5% bands (q25_20..q05_00). Same
+  # 20k steps, but each one now lands where the error is; an epoch is a quarter as long, so this
+  # is ~9 epochs over 71k transitions rather than 2.2 over 285k.
+  "attn|8|4|5e-4|q4_attn_r8_a4_lr5e-4|train_max_timestep=250 num_loss_bands=5"
+  "attn|32|16|5e-4|q4_attn_r32_a16_lr5e-4|train_max_timestep=250 num_loss_bands=5"
+  "full|32|16|5e-4|q4_full_r32_a16_lr5e-4|train_max_timestep=250 num_loss_bands=5"
 )
 
 # Fail before the 12 GB model load rather than after it: wandb only reports a bad credential
@@ -89,8 +97,11 @@ if [ "$TASK_ID" -ge "${#CONFIGS[@]}" ]; then
   exit 2
 fi
 
-IFS='|' read -r PRESET RANK ALPHA LR RUN_NAME <<< "${CONFIGS[$TASK_ID]}"
+# EXTRA is optional: space-separated Hydra overrides for configs that need more than the four
+# fields above, so the entries that do not need any stay untouched.
+IFS='|' read -r PRESET RANK ALPHA LR RUN_NAME EXTRA <<< "${CONFIGS[$TASK_ID]}"
 echo "task=$TASK_ID preset=$PRESET rank=$RANK alpha=$ALPHA lr=$LR run=$RUN_NAME node=$(hostname)"
+echo "extra overrides: ${EXTRA:-none}"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 
 python src/inversion_lora/train.py \
@@ -101,7 +112,8 @@ python src/inversion_lora/train.py \
   learning_rate="$LR" \
   run_name="$RUN_NAME" \
   wandb_mode=online \
-  checkpoint_dir="${LORAINV_CHECKPOINT_ROOT:?not set or empty in .env}/$RUN_NAME"
+  checkpoint_dir="${LORAINV_CHECKPOINT_ROOT:?not set or empty in .env}/$RUN_NAME" \
+  ${EXTRA:-}
 rc=$?
 if [ "$rc" -ne 0 ]; then
   echo "FAILED rc=$rc: $RUN_NAME" >&2

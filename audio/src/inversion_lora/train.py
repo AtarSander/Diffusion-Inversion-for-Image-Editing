@@ -30,6 +30,7 @@ from src.inversion_lora.dataset import (  # noqa: E402
     AudioLDM2TrajectoryDataset,
     collate_trajectory_batch,
     split_sample_ids,
+    transitions_below_timestep,
 )
 from src.inversion_lora.noise_metrics import noise_report  # noqa: E402
 from src.inversion_lora.reconstruct import (  # noqa: E402
@@ -49,26 +50,53 @@ FROZEN_COMPONENTS = (
     "vocoder",
 )
 
-NUM_QUARTILES = 4
+def timestep_band(timesteps: torch.Tensor, band_top: int, num_bands: int) -> torch.Tensor:
+    """Bucket timesteps into equal bands of `[0, band_top]`, noisiest first.
 
-
-def timestep_quartile(timesteps: torch.Tensor, num_train_timesteps: int) -> torch.Tensor:
-    """Bucket timesteps into quarters of the noise schedule.
-
-    Quartile 0 is the noisiest quarter, i.e. the first quarter of the denoising trajectory, and
-    quartile 3 is the cleanest. With a uniformly spaced DDIM grid this is the same as bucketing
-    by step index, so "the first 25% of steps" reads the same either way.
+    Band 0 is `(band_top - width, band_top]` and the last band ends at t=0. Boundaries are
+    half-open on the noisy side, so a timestep landing exactly on one belongs to the cleaner
+    band. With a uniformly spaced DDIM grid this is the same as bucketing by step index, so
+    "the first 25% of steps" reads the same either way.
 
     Args:
         timesteps: Integer timesteps `[B]`.
+        band_top: Noisiest timestep the training set contains, i.e. the top of band 0.
+        num_bands: Number of equal bands to split `[0, band_top]` into.
+
+    Returns:
+        Band index per element, in `[0, num_bands - 1]`.
+    """
+    assert timesteps.ndim == 1, timesteps.shape
+    index = ((band_top - timesteps.double()) * num_bands / band_top).floor().long()
+    assert int(index.min()) >= 0, (
+        f"timestep {int(timesteps.max())} is above band_top={band_top}: the loss bands do not "
+        "cover the training data, so train_max_timestep and num_loss_bands disagree"
+    )
+    return index.clamp(max=num_bands - 1)
+
+
+def band_labels(band_top: int, num_bands: int, num_train_timesteps: int) -> list[str]:
+    """Name each band by the share of the full schedule it covers, noisiest first.
+
+    Four bands over the whole schedule give `q100_75`..`q25_00`; five over `t <= 250` give
+    `q25_20`..`q05_00`.
+
+    Args:
+        band_top: Top of band 0, in timesteps.
+        num_bands: Number of equal bands.
         num_train_timesteps: The scheduler's training horizon, e.g. 1000.
 
     Returns:
-        Quartile index per element, in `[0, 3]`.
+        One label per band.
     """
-    assert timesteps.ndim == 1, timesteps.shape
-    fraction = 1.0 - timesteps.float() / float(num_train_timesteps)
-    return (fraction * NUM_QUARTILES).long().clamp(0, NUM_QUARTILES - 1)
+    width = band_top / num_bands
+    labels = [
+        f"q{100 * (band_top - i * width) / num_train_timesteps:02.0f}"
+        f"_{100 * (band_top - (i + 1) * width) / num_train_timesteps:02.0f}"
+        for i in range(num_bands)
+    ]
+    assert len(set(labels)) == num_bands, f"bands round to duplicate names: {labels}"
+    return labels
 
 
 class LoRAEMA:
@@ -129,8 +157,12 @@ class AudioLDM2InversionTrainer:
         self.global_step = 0
         self.baseline_reference = float("nan")
         self.num_train_timesteps = int(ldm.model.scheduler.config.num_train_timesteps)
-        self._quartile_sums = torch.zeros(NUM_QUARTILES, dtype=torch.float64)
-        self._quartile_counts = torch.zeros(NUM_QUARTILES, dtype=torch.float64)
+        self.band_top = int(cfg.train_max_timestep or self.num_train_timesteps)
+        self.band_labels = band_labels(
+            self.band_top, int(cfg.num_loss_bands), self.num_train_timesteps
+        )
+        self._band_sums = torch.zeros(len(self.band_labels), dtype=torch.float64)
+        self._band_counts = torch.zeros(len(self.band_labels), dtype=torch.float64)
         self.eval_fixtures: dict[str, Any] | None = None
 
         self._freeze_components()
@@ -247,26 +279,26 @@ class AudioLDM2InversionTrainer:
         finally:
             self.set_lora_enabled(True)
 
-    def record_quartiles(self, losses: torch.Tensor, timesteps: torch.Tensor) -> None:
-        """Accumulate per-example losses into their noise-schedule quartiles."""
+    def record_bands(self, losses: torch.Tensor, timesteps: torch.Tensor) -> None:
+        """Accumulate per-example losses into their noise-schedule bands."""
         assert losses.shape == timesteps.shape, (losses.shape, timesteps.shape)
-        quartiles = timestep_quartile(timesteps.cpu(), self.num_train_timesteps)
+        bands = timestep_band(timesteps.cpu(), self.band_top, len(self.band_labels))
         values = losses.detach().double().cpu()
-        self._quartile_sums.scatter_add_(0, quartiles, values)
-        self._quartile_counts.scatter_add_(0, quartiles, torch.ones_like(values))
+        self._band_sums.scatter_add_(0, bands, values)
+        self._band_counts.scatter_add_(0, bands, torch.ones_like(values))
 
-    def pop_quartile_losses(self) -> dict[str, float]:
-        """Mean loss per quartile since the last call, then reset the accumulator.
+    def pop_band_losses(self) -> dict[str, float]:
+        """Mean loss per band since the last call, then reset the accumulator.
 
-        Quartiles with no examples in the window are omitted rather than reported as zero.
+        Bands with no examples in the window are omitted rather than reported as zero.
         """
         out = {}
-        for index in range(NUM_QUARTILES):
-            count = float(self._quartile_counts[index])
+        for index, label in enumerate(self.band_labels):
+            count = float(self._band_counts[index])
             if count > 0:
-                out[f"train/loss_q{index + 1}"] = float(self._quartile_sums[index]) / count
-        self._quartile_sums.zero_()
-        self._quartile_counts.zero_()
+                out[f"train/loss_{label}"] = float(self._band_sums[index]) / count
+        self._band_sums.zero_()
+        self._band_counts.zero_()
         return out
 
     @contextmanager
@@ -559,7 +591,7 @@ class AudioLDM2InversionTrainer:
                         f"Non-finite training loss at step {self.global_step}: {float(loss)}"
                     )
                 (loss / accum).backward()
-                self.record_quartiles(per_example, batch["timestep"])
+                self.record_bands(per_example, batch["timestep"])
                 recent.append(float(loss))
                 micro_step += 1
                 if micro_step % accum:
@@ -580,7 +612,7 @@ class AudioLDM2InversionTrainer:
 
                 if self._due(self.cfg.log_every_steps):
                     train_loss = sum(recent) / len(recent)
-                    quartiles = self.pop_quartile_losses()
+                    bands = self.pop_band_losses()
                     # Also to the logger: with the tracker disabled the curve would otherwise be
                     # invisible, which makes a smoke run unreadable.
                     logger.info(
@@ -588,9 +620,9 @@ class AudioLDM2InversionTrainer:
                         self.global_step,
                         train_loss,
                         self.baseline_reference,
-                        " ".join(f"{k.split('/')[-1]}={v:.6f}" for k, v in quartiles.items()),
+                        " ".join(f"{k.split('/')[-1]}={v:.6f}" for k, v in bands.items()),
                     )
-                    self.tracker.log({"train/loss": train_loss, **quartiles}, step=self.global_step)
+                    self.tracker.log({"train/loss": train_loss, **bands}, step=self.global_step)
                     recent = []
                 if val_loader is not None and self._due(self.cfg.eval_every_steps):
                     metrics = self.validate(val_loader, self.cfg.max_val_batches)
@@ -649,6 +681,15 @@ def main(cfg: DictConfig) -> None:
     logger.info(
         "train: {:,} transitions from {} trajectories", len(train_dataset), len(train_ids)
     )
+    if cfg.train_max_timestep:
+        keep = transitions_below_timestep(train_dataset, int(cfg.train_max_timestep))
+        logger.info(
+            "train: restricted to t <= {}: {:,} of {:,} transitions",
+            int(cfg.train_max_timestep),
+            len(keep),
+            len(train_dataset),
+        )
+        train_dataset = Subset(train_dataset, keep)
     val_loader = None
     if val_ids:
         val_dataset = AudioLDM2TrajectoryDataset(cfg.data_root, sample_ids=val_ids)
