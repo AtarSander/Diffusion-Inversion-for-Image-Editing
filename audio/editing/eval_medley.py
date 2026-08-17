@@ -15,17 +15,22 @@ from editing.AudioEditingCode.evals.lpaps import LPAPS
 from editing.AudioEditingCode.evals.meta_clap_consistency import CLAPTextConsistencyMetric, convert_audio
 from editing.AudioEditingCode.evals.utils import calc_clap_win, calc_lpaps_win
 from editing.dataset_medley import prepare_dataset
-from editing.AudioEditingCode.code.env import PATH_AUDIOS_MEDLEY, PATH_PROMPTS_MEDLEY, PATH_LOWER_BOUND_MEDLEY
+from editing.AudioEditingCode.code.env import PATH_AUDIOS_MEDLEY, medley_split_paths
 from src.metrics.alignment import MusicAlignmentEval
 DISABLE_TQDM = False
 
 
 
 def prepare_data(
-    path_edited_audio: str, limit: int | None = None, unique_tracks: bool = False
+    path_edited_audio: str,
+    limit: int | None = None,
+    unique_tracks: bool = False,
+    split: str = "full",
 ):
     df_musiccaps = prepare_dataset(
-        Path(PATH_AUDIOS_MEDLEY), Path(PATH_PROMPTS_MEDLEY), unique_tracks=unique_tracks
+        Path(PATH_AUDIOS_MEDLEY),
+        Path(medley_split_paths(split)[0]),
+        unique_tracks=unique_tracks,
     )
     if limit is not None:
         df_musiccaps = df_musiccaps.head(limit)
@@ -433,7 +438,12 @@ def calculate_source_distance_metrics(device: torch.device, path_edited_audio: s
     return metrics, per_file
 
 
-def main(path_audio: str, limit: int | None = None, unique_tracks: bool = False):
+def main(
+    path_audio: str,
+    limit: int | None = None,
+    unique_tracks: bool = False,
+    split: str = "full",
+):
     """Score one edit run against its source audio and its target prompts.
 
     Args:
@@ -442,6 +452,8 @@ def main(path_audio: str, limit: int | None = None, unique_tracks: bool = False)
             check the wiring in seconds. The written files are then partial, not a result.
         unique_tracks: Score the 35-track subset instead of all 696 rows. The paired reference
             must have been built with the same flag.
+        split: Benchmark split the run was produced with, i.e. which prompt CSV names its rows.
+            Must match the driver's --split, or the prompts are paired with the wrong audio.
     """
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     (
@@ -452,7 +464,7 @@ def main(path_audio: str, limit: int | None = None, unique_tracks: bool = False)
         srs_src,
         srs_edit,
         classification_tasks,
-    ) = prepare_data(path_audio, limit=limit, unique_tracks=unique_tracks)
+    ) = prepare_data(path_audio, limit=limit, unique_tracks=unique_tracks, split=split)
     if limit is not None:
         print(f"*** SMOKE RUN: first {len(edits)} examples only, PSNR/SSIM skipped ***")
     path_save_metrics = Path(path_audio).parent
@@ -533,11 +545,9 @@ def main(path_audio: str, limit: int | None = None, unique_tracks: bool = False)
         print("smoke run: PSNR/SSIM need the whole directory, skipping. Re-run without --limit.")
         return
 
-    # The 35-track subset has its own reference; the full one would share only 35 of 696
-    # filenames and the paired metrics would refuse to score.
-    lower_bound = PATH_LOWER_BOUND_MEDLEY
-    if unique_tracks:
-        lower_bound = str(Path(PATH_LOWER_BOUND_MEDLEY).parents[1] / "lower_bound_tracks" / "audios")
+    # Every subset has its own reference; the full one shares only part of its filenames with a
+    # subset's edits, and the paired metrics refuse to score that.
+    lower_bound = medley_split_paths("tracks" if unique_tracks else split)[1]
     print(f"paired reference: {lower_bound}")
     source_distance_metrics, psnr_ssim_per_file = calculate_source_distance_metrics(device=device, path_edited_audio=path_audio, path_lower_bound=lower_bound)
     psnr_ssim_per_file.to_csv((path_save_metrics / "psnr_ssim_per_file.csv"))

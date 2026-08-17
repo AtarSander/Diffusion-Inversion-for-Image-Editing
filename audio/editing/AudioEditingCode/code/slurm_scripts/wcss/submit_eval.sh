@@ -41,14 +41,17 @@ if ! .venv_eval/bin/python -V >/dev/null 2>&1; then
 fi
 
 if .venv_eval/bin/python -V >/dev/null 2>&1; then
-  PYTHONPATH="$AUDIO_ROOT:$AUDIO_ROOT/editing/AudioEditingCode" .venv_eval/bin/python - <<'PYCODE'
+  PYTHONPATH="$AUDIO_ROOT:$AUDIO_ROOT/editing/AudioEditingCode" \
+  .venv_eval/bin/python - "${SPLIT:-full}" "${UNIQUE_TRACKS:-}" <<'PYCODE'
+import sys
 from pathlib import Path
 
-from editing.AudioEditingCode.code.env import PATH_LOWER_BOUND_MEDLEY
+from editing.AudioEditingCode.code.env import medley_split_paths
 from editing.eval_medley import ensure_resampled
 
-out = ensure_resampled(Path(PATH_LOWER_BOUND_MEDLEY), 32000)
-print(f"    reference cache ready: {out} ({len(list(out.glob('*.wav')))} wavs)")
+split = "tracks" if sys.argv[2] else sys.argv[1]
+out = ensure_resampled(Path(medley_split_paths(split)[1]), 32000)
+print(f"    reference cache ready ({split}): {out} ({len(list(out.glob('*.wav')))} wavs)")
 PYCODE
 else
   echo "    SKIPPED: .venv_eval interpreter unusable here (run 'module load"
@@ -65,7 +68,7 @@ echo "submitting from: $AUDIO_ROOT"
 # check the checkpoint exists now, on the login node, rather than failing 12 tasks later.
 EXPORT_ARGS=()
 FORWARD=()
-for var in RUN_DIRS UNIQUE_TRACKS EXPECTED_ROWS; do
+for var in RUN_DIRS UNIQUE_TRACKS EXPECTED_ROWS SPLIT; do
   [ -n "${!var:-}" ] && FORWARD+=("$var=${!var}")
 done
 if [ ${#FORWARD[@]} -gt 0 ]; then

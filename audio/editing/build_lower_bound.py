@@ -8,26 +8,19 @@ import fire
 import pandas as pd
 
 from editing.AudioEditingCode.code.env import (
+    MEDLEY_SPLIT_CSVS as SPLIT_CSVS,
+)
+from editing.AudioEditingCode.code.env import (
     PATH_AUDIOS_MEDLEY,
     PATH_LOWER_BOUND_MEDLEY,
     PATH_PROMPTS_MEDLEY,
 )
 
-# Splits produced by notebooks/08_create_medley_small.ipynb, stratified by `edit`.
-SPLIT_CSVS = {
-    "full": "captions_gpt5.csv",
-    "hparam": "captions_gpt5_hparam.csv",
-    "test": "captions_gpt5_test.csv",
-    "loc": "captions_gpt5_loc.csv",
-    # One row per distinct MedleyDB track, for the reconstruction experiments.
-    "tracks": "captions_gpt5.csv",
-}
-
 
 def build_split(split: str, out_root: Path, overwrite: bool = False) -> Path:
     """Copy one source mix per benchmark row, named to match the edit outputs.
 
-    The name `a{idx}.wav` uses the row's position in the split, exactly as the edit drivers
+    The name `a{idx}.wav` uses the row's index in the prompt CSV, exactly as the edit drivers
     number their outputs. `get_filename_intersection_ratio` needs >99% filename overlap or
     `calculate_psnr_ssim` silently returns -1 instead of failing.
 
@@ -45,12 +38,11 @@ def build_split(split: str, out_root: Path, overwrite: bool = False) -> Path:
 
     df = pd.read_csv(csv_path, index_col=0, header=0)
     if split == "tracks":
-        # The drivers number a 35-track subset by the row's original index, not its position in
-        # the subset, so the reference has to do the same or the paired metrics find no overlap.
         df = df.drop_duplicates(subset="filename", keep="first")
-        names = list(df.index)
-    else:
-        names = list(range(len(df)))
+    # The drivers number every output by the row's original index, not by its position in the
+    # split, so the reference has to do the same or the paired metrics find no overlap. The two
+    # only coincide for the full split, whose index is already 0..695.
+    names = list(df.index)
     target_dir = out_root / f"lower_bound_{split}" / "audios"
     target_dir.mkdir(parents=True, exist_ok=True)
 

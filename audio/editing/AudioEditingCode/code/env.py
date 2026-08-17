@@ -77,6 +77,48 @@ PATH_LOWER_BOUND_MEDLEY = _resolve(
     "MEDLEY_LOWER_BOUND_DIR", AUDIO_ROOT / "outputs/medleymd/lower_bound_full/audios"
 )
 
+# Benchmark splits: prompt-CSV subsets produced by notebooks/08_create_medley_small.ipynb,
+# stratified by `edit`. Every subset keeps the row indices of the full set, so an output named
+# a{idx}.wav denotes the same row whichever split produced it.
+MEDLEY_SPLIT_CSVS = {
+    "full": "captions_gpt5.csv",
+    "hparam": "captions_gpt5_hparam.csv",
+    "test": "captions_gpt5_test.csv",
+    "loc": "captions_gpt5_loc.csv",
+    # One row per distinct MedleyDB track. Taken from the full CSV by the drivers' and eval's
+    # --unique_tracks flag rather than by a CSV of its own, but it needs its own reference set.
+    "tracks": "captions_gpt5.csv",
+}
+
+
+def medley_split_paths(split: str) -> tuple[str, str]:
+    """Prompts CSV and paired-reference directory for one benchmark split.
+
+    The full split returns the configured paths untouched; every other split is derived from
+    them, so moving either one in .env moves all the splits with it.
+
+    Args:
+        split: Key of `MEDLEY_SPLIT_CSVS`.
+
+    Returns:
+        `(prompts_csv, lower_bound_dir)`.
+    """
+    if split not in MEDLEY_SPLIT_CSVS:
+        raise ValueError(f"Unknown split {split!r}; expected one of {list(MEDLEY_SPLIT_CSVS)}")
+    if split == "full":
+        return PATH_PROMPTS_MEDLEY, PATH_LOWER_BOUND_MEDLEY
+
+    reference = Path(PATH_LOWER_BOUND_MEDLEY)
+    if reference.name != "audios" or not reference.parent.name.startswith("lower_bound_"):
+        raise ValueError(
+            f"MEDLEY_LOWER_BOUND_DIR should end in lower_bound_<split>/audios, got {reference}. "
+            f"The {split!r} reference is derived from it and cannot be located."
+        )
+    return (
+        str(Path(PATH_PROMPTS_MEDLEY).parent / MEDLEY_SPLIT_CSVS[split]),
+        str(reference.parents[1] / f"lower_bound_{split}" / "audios"),
+    )
+
 # Scratch for AudioLDM2's 60 s truncated copies; audioldm_run.py creates it on demand.
 ALDM2_TEMP_DIR = _resolve("ALDM2_TEMP_DIR", AUDIO_ROOT / ".temp/audioldm2")
 

@@ -64,6 +64,19 @@ if [ -n "${LORA_PATH:-}" ]; then
   RUNS+=("$EDITS_ROOT/audioldm2_ddim/$(lora_run_name "$LORA_PATH")/audios")
 fi
 
+# SPLIT=hparam scores the hyperparameter sweep instead of these baselines. The grid lives in one
+# file that both the edit job and this one read, so the run directories are derived rather than
+# retyped -- there is no way for the two to disagree about which runs exist.
+SPLIT="${SPLIT:-full}"
+if [ "$SPLIT" != "full" ]; then
+  source "editing/AudioEditingCode/code/slurm_scripts/wcss/hparam_sweep_configs.sh" || exit 1
+  RUNS=()
+  while IFS='|' read -r mode tstart cfg; do
+    RUNS+=("$EDITS_ROOT/audioldm2_$mode/$(sweep_run_name "$mode" "$tstart" "$cfg")/audios")
+  done < <(sweep_configs)
+  echo "split=$SPLIT: scoring ${#RUNS[@]} sweep runs"
+fi
+
 # RUN_DIRS lets a submission name the run directories directly, for anything not in the fixed
 # list above (reconstruction runs, extra LoRA checkpoints). Colon-separated, indexed by task id.
 if [ -n "${RUN_DIRS:-}" ]; then
@@ -81,12 +94,33 @@ RUN_DIR="${RUNS[$TASK_ID]}"
 echo "task=$TASK_ID node=$(hostname)"
 echo "run_dir=$RUN_DIR"
 
-EXPECTED="${EXPECTED_ROWS:-696}"
-EVAL_ARGS=()
+EVAL_ARGS=(--split "$SPLIT")
+REF_SPLIT="$SPLIT"
 if [ -n "${UNIQUE_TRACKS:-}" ]; then
-  EVAL_ARGS=(--unique_tracks True)
-  EXPECTED="${EXPECTED_ROWS:-35}"
+  EVAL_ARGS+=(--unique_tracks True)
+  REF_SPLIT=tracks
 fi
+
+# Ask env.py and the split CSV for the reference directory and the row count rather than
+# hardcoding either: the paired metrics silently return -1 when the reference does not match the
+# edits, so both numbers have to come from the same place the eval reads them from.
+read -r REF_DIR EXPECTED < <(python - "$REF_SPLIT" <<'PYCODE'
+import sys
+
+sys.path.insert(0, "editing/AudioEditingCode/code")
+import pandas as pd
+import env
+
+split = sys.argv[1]
+csv, reference = env.medley_split_paths(split)
+frame = pd.read_csv(csv, index_col=0)
+if split == "tracks":
+    frame = frame.drop_duplicates(subset="filename", keep="first")
+print(reference, len(frame))
+PYCODE
+)
+: "${REF_DIR:?could not resolve the paired reference for split=$REF_SPLIT}"
+EXPECTED="${EXPECTED_ROWS:-$EXPECTED}"
 
 n=$(find "$RUN_DIR" -name 'a*.wav' 2>/dev/null | wc -l)
 echo "edits found: $n (expecting $EXPECTED)"
@@ -97,15 +131,11 @@ fi
 
 # FAD and mel PSNR/SSIM need the paired reference. Check it up front: it is the last thing
 # eval_medley touches, so a missing reference otherwise wastes the whole LPAPS/CLAP/MuLan pass.
-REF_DIR="$(python -c 'import sys; sys.path.insert(0, "editing/AudioEditingCode/code"); import env; print(env.PATH_LOWER_BOUND_MEDLEY)')"
-if [ -n "${UNIQUE_TRACKS:-}" ]; then
-  REF_DIR="${REF_DIR%/lower_bound_full/audios}/lower_bound_tracks/audios"
-fi
 ref_n=$(find "$REF_DIR" -name 'a*.wav' 2>/dev/null | wc -l)
 echo "reference files: $ref_n  ($REF_DIR)"
 if [ "$ref_n" -ne "$n" ]; then
   echo "ERROR: reference has $ref_n files but the run has $n. Build it first:" >&2
-  echo "  python -m editing.build_lower_bound --splits full" >&2
+  echo "  python -m editing.build_lower_bound --splits $REF_SPLIT" >&2
   exit 1
 fi
 

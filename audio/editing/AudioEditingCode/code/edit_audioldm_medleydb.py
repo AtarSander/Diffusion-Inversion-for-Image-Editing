@@ -16,7 +16,7 @@ from editing.dataset_medley import prepare_dataset  # noqa: E402
 from run_paths import resolve_run_dir
 from utils import set_reproducability
 
-from env import PATH_AUDIOS_MEDLEY, PATH_PROMPTS_MEDLEY, PATH_EDIT_OUTPUTS
+from env import PATH_AUDIOS_MEDLEY, PATH_EDIT_OUTPUTS, medley_split_paths
 
 PATH_DIR_OUTPUT = Path(PATH_EDIT_OUTPUTS).resolve()
 
@@ -105,6 +105,7 @@ def main(
     unique_tracks: bool = False,
     reconstruct: bool = False,
     skip_existing: bool = False,
+    split: str = "full",
 ):
     """
     Main function to edit audio files using AudioLDM2 methods.
@@ -128,6 +129,10 @@ def main(
         skip_existing: Skip rows whose output wav is already on disk, so a shard killed by the
             time limit resumes instead of restarting. Off by default: when a run is deliberately
             regenerated, silently keeping stale audio would be the worse failure.
+        split: Benchmark split to edit, i.e. which prompt CSV to read (default: "full", all 696
+            rows; "hparam" is the 115-row subset used for the hyperparameter sweeps). Outputs
+            are named by the row's index in the full set whichever split is used, so the eval
+            has to be given the same split.
         unique_tracks: Score one row per distinct MedleyDB track (35) instead of all 696
         reconstruct: Denoise with the *source* caption instead of the target one, turning the
             edit into a reconstruction of the input. Combined with cfg_tar=1.0 this measures how
@@ -153,9 +158,10 @@ def main(
             assert range_start <= range_end, f"{range_start=} must be <= {range_end=}"
 
     # Prepare dataset
+    prompts_csv, _ = medley_split_paths(split)
     df_instruments = prepare_dataset(
         path_audios=Path(PATH_AUDIOS_MEDLEY),
-        path_prompts=Path(PATH_PROMPTS_MEDLEY),
+        path_prompts=Path(prompts_csv),
         unique_tracks=unique_tracks,
     )
 
@@ -167,6 +173,10 @@ def main(
         mode_name = mode
         if with_hooks:
             mode_name += "_ours"
+        # The split goes in the name: a run scored against the wrong split's reference fails
+        # silently, so the directory has to say which rows it holds.
+        if split != "full":
+            mode_name += f"_{split}"
         model_name = model_id.split("/")[-1]
         run_name = f"{model_name}_{mode_name}_{dt_str}_cfg_src{cfg_src_str}_cfg_tar{cfg_tar_str}_tstart{tstart}_steps{num_diffusion_steps}"
 
@@ -177,6 +187,7 @@ def main(
     set_reproducability(seed, extreme=False)
 
     print(f"Processing {len(df_instruments)} audio files...")
+    print(f"Split: {split} ({prompts_csv})")
     print(f"Mode: {mode}{' (reconstruction: denoising with the source caption)' if reconstruct else ''}")
     print(f"Output directory: {path_dir_outs}")
 

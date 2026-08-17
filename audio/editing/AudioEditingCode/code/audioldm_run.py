@@ -548,9 +548,15 @@ def run_audioldm_edit(
         # Write then rename, so a job killed by the time limit leaves either nothing or a
         # complete file. A half-written wav is indistinguishable from a short one -- torchaudio
         # reports the frames actually present -- so a resume would skip it as finished.
-        _tmp = f"{save_edit_wav_path}.partial.{os.getpid()}"
-        torchaudio.save(_tmp, audio, sample_rate=sr)
-        os.replace(_tmp, save_edit_wav_path)
+        # The temporary keeps the .wav suffix, because torchaudio's ffmpeg backend picks its
+        # muxer from the extension, and lives in a sibling directory, because the paired metrics
+        # glob every *.wav next to the edits and a leftover would be scored as one.
+        _dst = Path(save_edit_wav_path)
+        _tmp_dir = _dst.parent / ".partial"
+        _tmp_dir.mkdir(exist_ok=True)
+        _tmp = _tmp_dir / f"{os.getpid()}.wav"
+        torchaudio.save(str(_tmp), audio, sample_rate=sr)
+        os.replace(_tmp, _dst)
     else:
         save_full_path_spec = os.path.join(save_path, image_name_png + ".png")
         save_full_path_wave = os.path.join(save_path, image_name_png + ".wav")
