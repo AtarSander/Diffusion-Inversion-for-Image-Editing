@@ -533,7 +533,13 @@ def main(path_audio: str, limit: int | None = None, unique_tracks: bool = False)
         print("smoke run: PSNR/SSIM need the whole directory, skipping. Re-run without --limit.")
         return
 
-    source_distance_metrics, psnr_ssim_per_file = calculate_source_distance_metrics(device=device, path_edited_audio=path_audio, path_lower_bound=PATH_LOWER_BOUND_MEDLEY)
+    # The 35-track subset has its own reference; the full one would share only 35 of 696
+    # filenames and the paired metrics would refuse to score.
+    lower_bound = PATH_LOWER_BOUND_MEDLEY
+    if unique_tracks:
+        lower_bound = str(Path(PATH_LOWER_BOUND_MEDLEY).parents[1] / "lower_bound_tracks" / "audios")
+    print(f"paired reference: {lower_bound}")
+    source_distance_metrics, psnr_ssim_per_file = calculate_source_distance_metrics(device=device, path_edited_audio=path_audio, path_lower_bound=lower_bound)
     psnr_ssim_per_file.to_csv((path_save_metrics / "psnr_ssim_per_file.csv"))
 
     with open((path_save_metrics / "source_distance_metrics.json"), "w") as f:
