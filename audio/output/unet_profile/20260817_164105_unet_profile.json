@@ -1,0 +1,64 @@
+{
+  "timestamp": "20260817_164105",
+  "device": "NVIDIA RTX A5000",
+  "model_id": "cvssp/audioldm2-large",
+  "duration_s": 60,
+  "latent_shape": [
+    1,
+    8,
+    1500,
+    16
+  ],
+  "repeats": 8,
+  "variants": [
+    {
+      "variant": "as-shipped",
+      "seconds_per_forward": 0.6397849731445312,
+      "speedup": 1.0,
+      "rel_eps_error": 0.0,
+      "batch": 1
+    },
+    {
+      "variant": "cudnn tf32",
+      "seconds_per_forward": 0.618629150390625,
+      "speedup": 1.0341979079720824,
+      "rel_eps_error": 0.00014068324526306242,
+      "batch": 1
+    },
+    {
+      "variant": "cudnn tf32 + benchmark",
+      "seconds_per_forward": 0.6202593383789062,
+      "speedup": 1.0314797916894838,
+      "rel_eps_error": 0.00014068324526306242,
+      "batch": 1
+    },
+    {
+      "variant": "no tf32 at all",
+      "seconds_per_forward": 0.711568359375,
+      "speedup": 0.8991194798297115,
+      "rel_eps_error": 8.232410618802533e-05,
+      "batch": 1
+    },
+    {
+      "variant": "bf16 autocast",
+      "seconds_per_forward": 0.15727821350097657,
+      "speedup": 4.067855037916988,
+      "rel_eps_error": 0.006124935578554869,
+      "batch": 1
+    },
+    {
+      "variant": "fp16 autocast",
+      "seconds_per_forward": 0.16195993041992188,
+      "speedup": 3.9502670289233124,
+      "rel_eps_error": 0.0010192878544330597,
+      "batch": 1
+    },
+    {
+      "variant": "cudnn tf32, CFG batched",
+      "seconds_per_forward": 0.6146073608398438,
+      "speedup": 1.0409653608285505,
+      "rel_eps_error": 0.00013146060518920422,
+      "batch": 2
+    }
+  ]
+}
