@@ -108,6 +108,23 @@ RUN_DIR="${RUNS[$TASK_ID]}"
 echo "task=$TASK_ID node=$(hostname)"
 echo "run_dir=$RUN_DIR"
 
+# An archived run holds its wavs in audios.tar instead of an audios/ directory. The metrics walk
+# a directory -- audioldm_eval's PSNR/SSIM and FAD passes are vendored and take paths -- so
+# materialise it on node-local scratch. ensure_resampled writes its 32 kHz cache as a sibling of
+# the audio directory, so that lands on scratch too and never reaches the shared filesystem.
+RUN_PARENT="$(dirname "$RUN_DIR")"
+METRICS_DIR="$RUN_PARENT"
+SCRATCH=""
+if [ ! -d "$RUN_DIR" ] && [ -f "$RUN_PARENT/audios.tar" ]; then
+  SCRATCH="${SLURM_TMPDIR:-${TMPDIR:-/tmp}}/lorainv-${SLURM_JOB_ID:-$$}-${SLURM_ARRAY_TASK_ID:-0}"
+  trap 'rm -rf "$SCRATCH"' EXIT
+  mkdir -p "$SCRATCH" || exit 4
+  python -m editing.archive_run unpack --run_dir "$RUN_PARENT" --dest "$SCRATCH" || exit 4
+  RUN_DIR="$SCRATCH/audios"
+  METRICS_DIR="$SCRATCH"
+  echo "unpacked to scratch: $RUN_DIR"
+fi
+
 EVAL_ARGS=(--split "$SPLIT")
 REF_SPLIT="$SPLIT"
 if [ -n "${UNIQUE_TRACKS:-}" ]; then
@@ -158,5 +175,16 @@ rc=$?
 if [ "$rc" -ne 0 ]; then
   echo "FAILED rc=$rc: $RUN_DIR" >&2
   exit "$rc"
+fi
+
+# eval_medley writes its CSVs next to the audio it scored, which for an archived run is scratch.
+if [ -n "$SCRATCH" ]; then
+  written=$(find "$METRICS_DIR" -maxdepth 1 \( -name '*.csv' -o -name '*.json' \) | wc -l)
+  if [ "$written" -eq 0 ]; then
+    echo "ERROR: no metrics written to $METRICS_DIR; nothing to copy back" >&2
+    exit 5
+  fi
+  find "$METRICS_DIR" -maxdepth 1 \( -name '*.csv' -o -name '*.json' \) -exec cp {} "$RUN_PARENT/" \;
+  echo "copied $written metric files back to $RUN_PARENT"
 fi
 echo "done: $RUN_DIR"
