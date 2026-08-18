@@ -1,0 +1,8 @@
+{
+  "timestamp": "20260818_114622",
+  "runs_root": "/nas/lstanisz/code/lorainv/pwr-mount/audio/outputs/edits/medleymd",
+  "pattern": "audioldm2_*_hparam_*",
+  "split": "hparam",
+  "num_configs": 48,
+  "git_sha": "f3dc5bf10e0550862da864537632591b677b381a"
+}

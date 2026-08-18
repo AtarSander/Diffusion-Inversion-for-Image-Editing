@@ -170,5 +170,120 @@ def main(
         print(f"  {row['variant']:26s} {line}")
 
 
+
+def lora_overhead(
+    device: str = "cuda:0",
+    duration_s: float = 60.0,
+    preset: str = "full",
+    rank: int = 32,
+    alpha: int = 16,
+    model_id: str = "cvssp/audioldm2-large",
+    repeats: int = 6,
+    prompt: str = "A recording of an old upbeat cool jazz song.",
+):
+    """Measure what an injected inversion LoRA costs per forward, unfused versus merged.
+
+    The recon jobs ran the `full` preset at 2.3x the no-LoRA cost, which would dominate any
+    sweep that uses those checkpoints. PEFT keeps the adapter as a separate branch per module;
+    `merge_adapter` folds B@A into the base weight, which should cost nothing at inference. This
+    checks both the speed and that merging leaves epsilon unchanged.
+
+    Args:
+        device: CUDA device to profile on.
+        duration_s: Input length in seconds.
+        preset: Which module family set to inject, as in the training config.
+        rank: LoRA rank.
+        alpha: LoRA alpha.
+        model_id: AudioLDM2 checkpoint.
+        repeats: Timed forwards per variant.
+        prompt: Conditioning text.
+    """
+    from omegaconf import OmegaConf
+    from peft import LoraConfig, inject_adapter_in_model
+
+    torch_device = torch.device(device)
+    torch.cuda.set_device(torch_device)
+    set_reproducability(42, extreme=False)
+
+    presets = OmegaConf.load(AUDIO_ROOT / "config/train_inversion_lora.yaml").lora_target_presets
+    targets = list(presets[preset])
+
+    ldm = load_model(model_id, torch_device, 200, edit_method="ddim")
+    hidden, class_labels, mask = ldm.encode_text([prompt])
+    height = latent_height(ldm.model, duration_s)
+    latent = torch.randn(
+        1, 8, height // ldm.model.vae_scale_factor, 16, device=torch_device, dtype=torch.float32
+    )
+    timestep = torch.tensor([501], device=torch_device)
+
+    def forward():
+        with torch.inference_mode():
+            return ldm.unet_forward(
+                latent,
+                timestep=timestep,
+                encoder_hidden_states=hidden,
+                class_labels=class_labels,
+                encoder_attention_mask=mask,
+            )[0].sample
+
+    base_seconds, base_eps = timed_forwards(forward, repeats)
+    print(f"no adapter                 {base_seconds * 1000:7.1f} ms/forward   1.00x")
+
+    unet = ldm.model.unet
+    inject_adapter_in_model(
+        LoraConfig(r=rank, lora_alpha=alpha, target_modules=targets, init_lora_weights=True),
+        unet,
+        adapter_name="inversion",
+    )
+    # init_lora_weights zeroes lora_B, which would make merging a no-op and the equality test
+    # meaningless; give it the magnitude a trained adapter has.
+    for name, param in unet.named_parameters():
+        if "lora_B" in name:
+            param.data.normal_(0, 0.01)
+    layers = [m for m in unet.modules() if m is not unet and hasattr(m, "enable_adapters")]
+    for layer in layers:
+        layer.enable_adapters(True)
+    print(f"injected {preset} r{rank}: {len(layers)} layers")
+
+    unfused_seconds, unfused_eps = timed_forwards(forward, repeats)
+    print(
+        f"adapter, unfused           {unfused_seconds * 1000:7.1f} ms/forward  "
+        f"{base_seconds / unfused_seconds:5.2f}x"
+    )
+
+    start = torch.cuda.Event(enable_timing=True)
+    end = torch.cuda.Event(enable_timing=True)
+    start.record()
+    for layer in layers:
+        layer.merge(adapter_names=["inversion"])
+    end.record()
+    torch.cuda.synchronize()
+    merge_ms = start.elapsed_time(end)
+
+    merged_seconds, merged_eps = timed_forwards(forward, repeats)
+    error = float((merged_eps.float() - unfused_eps.float()).abs().max() / unfused_eps.abs().max())
+    print(
+        f"adapter, merged            {merged_seconds * 1000:7.1f} ms/forward  "
+        f"{base_seconds / merged_seconds:5.2f}x   merge {merge_ms:.0f} ms   "
+        f"eps rel. err vs unfused {error:.2e}"
+    )
+
+    for layer in layers:
+        layer.unmerge()
+    restored_seconds, restored_eps = timed_forwards(forward, repeats)
+    unmerge_error = float(
+        (restored_eps.float() - unfused_eps.float()).abs().max() / unfused_eps.abs().max()
+    )
+    print(f"after unmerge              {restored_seconds * 1000:7.1f} ms/forward   "
+          f"eps rel. err vs unfused {unmerge_error:.2e}")
+
+    for layer in layers:
+        layer.enable_adapters(False)
+    off_seconds, off_eps = timed_forwards(forward, repeats)
+    off_error = float((off_eps.float() - base_eps.float()).abs().max() / base_eps.abs().max())
+    print(f"adapter disabled           {off_seconds * 1000:7.1f} ms/forward   "
+          f"eps rel. err vs no adapter {off_error:.2e}")
+
+
 if __name__ == "__main__":
-    fire.Fire(main)
+    fire.Fire({"main": main, "lora_overhead": lora_overhead})

@@ -77,6 +77,20 @@ if [ "$SPLIT" != "full" ]; then
   echo "split=$SPLIT: scoring ${#RUNS[@]} sweep runs"
 fi
 
+# ARM=lora scores the inversion-LoRA arm instead, from its own grid file. Same derivation rule:
+# the eval never retypes a run directory the edit job produced.
+if [ "${ARM:-}" = "lora" ]; then
+  source "editing/AudioEditingCode/code/slurm_scripts/wcss/lora_sweep_configs.sh" || exit 1
+  RUNS=()
+  while IFS='|' read -r ckpt tstart cfg; do
+    RUNS+=("$EDITS_ROOT/audioldm2_ddim/$(lora_sweep_run_name "$ckpt" "$tstart" "$cfg")/audios")
+  done < <(lora_sweep_configs)
+  # The grid file owns the split, so a submission cannot pair the LoRA runs with the wrong
+  # prompt CSV by forgetting SPLIT.
+  SPLIT="$LORA_SPLIT"
+  echo "arm=lora: scoring ${#RUNS[@]} LoRA sweep runs on split=$SPLIT"
+fi
+
 # RUN_DIRS lets a submission name the run directories directly, for anything not in the fixed
 # list above (reconstruction runs, extra LoRA checkpoints). Colon-separated, indexed by task id.
 if [ -n "${RUN_DIRS:-}" ]; then
