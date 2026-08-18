@@ -1,10 +1,12 @@
 # ABOUTME: Emit the LaTeX body rows for the MedleyMD results table with SEM instead of SD,
 # ABOUTME: computed from the per-example CSVs so n is counted rather than assumed.
 
-import json
+import sys
 from pathlib import Path
 
-import pandas as pd
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "audio"))
+
+from editing.run_metrics import aggregates, per_example  # noqa: E402
 
 MOUNT = Path("/nas/lstanisz/code/lorainv/pwr-mount/audio/outputs/edits/medleymd")
 
@@ -31,29 +33,29 @@ MODELS = {
     ],
 }
 
-# metric label -> (csv file, column)
+# table label -> column in the consolidated per-example table
 COLUMNS = [
-    ("LPAPS", "lpaps_to_source.csv", "lpaps"),
-    ("CLAP", "clap_to_target_prompt.csv", "clap"),
-    ("MuLan", "mulan_to_target_prompt.csv", "muqt_sim_p0"),
-    ("CLAP_dir", "directional_to_prompts.csv", "clap_dir"),
-    ("MuLan_dir", "directional_to_prompts.csv", "mulan_dir"),
-    ("psnr", "psnr_ssim_per_file.csv", "psnr"),
-    ("ssim", "psnr_ssim_per_file.csv", "ssim"),
+    ("LPAPS", "lpaps"),
+    ("CLAP", "clap"),
+    ("MuLan", "muqt_sim_p0"),
+    ("CLAP_dir", "clap_dir"),
+    ("MuLan_dir", "mulan_dir"),
+    ("psnr", "psnr"),
+    ("ssim", "ssim"),
 ]
 
 
 def stats(run: Path) -> dict[str, tuple[float, float]]:
     """Mean and standard error for every per-example metric of one run."""
     out = {}
-    for label, filename, column in COLUMNS:
-        series = pd.read_csv(run / filename, index_col=0)[column]
-        assert len(series) == 696, f"{run.name}/{filename}: {len(series)} rows, expected 696"
+    for label, column in COLUMNS:
+        series = per_example(run, column)
+        assert len(series) == 696, f"{run.name}/{column}: {len(series)} rows, expected 696"
         out[label] = (series.mean(), series.sem())
 
     # The aggregates the eval reported must match what the per-file CSVs say, or the table and
     # source_distance_metrics.json would disagree about the same run.
-    distances = json.loads((run / "source_distance_metrics.json").read_text())
+    distances = aggregates(run)["source_distance"]
     for key in ("psnr", "ssim"):
         assert abs(out[key][0] - float(distances[key])) < 5e-4, (
             f"{run.name}: {key} per-file mean {out[key][0]:.4f} != reported {distances[key]}"

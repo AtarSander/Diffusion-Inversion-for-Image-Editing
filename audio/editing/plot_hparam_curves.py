@@ -15,6 +15,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 from editing.AudioEditingCode.code.env import PATH_EDIT_OUTPUTS  # noqa: E402
+from editing.run_metrics import PER_EXAMPLE_CSV, per_example  # noqa: E402
 
 RUN_RE = re.compile(
     r"audioldm2_(?P<mode>ddpm|ddim|sdedit)"
@@ -23,16 +24,9 @@ RUN_RE = re.compile(
     r"_cfgtar(?P<cfg_tar>[\d.]+)_t(?P<tstart>\d+)_s(?P<steps>\d+)$"
 )
 
-# label -> (csv file, column). LPAPS is the x axis; the rest are candidate y axes.
-METRICS = {
-    "lpaps": ("lpaps_to_source.csv", "lpaps"),
-    "clap": ("clap_to_target_prompt.csv", "clap"),
-    "muq": ("mulan_to_target_prompt.csv", "muqt_sim_p0"),
-    "clap_dir": ("directional_to_prompts.csv", "clap_dir"),
-    "muq_dir": ("directional_to_prompts.csv", "mulan_dir"),
-    "psnr": ("psnr_ssim_per_file.csv", "psnr"),
-    "ssim": ("psnr_ssim_per_file.csv", "ssim"),
-}
+# plot label -> column in the consolidated per-example table. LPAPS is the x axis.
+METRICS = {"lpaps": "lpaps", "clap": "clap", "muq": "muqt_sim_p0", "clap_dir": "clap_dir",
+           "muq_dir": "mulan_dir", "psnr": "psnr", "ssim": "ssim"}
 
 MODE_LABELS = {"ddpm": "DDPM-inv", "ddim": "DDIM-inv", "sdedit": "SDEdit"}
 MODE_COLORS = {"ddpm": "#1f77b4", "ddim": "#d62728", "sdedit": "#2ca02c"}
@@ -52,7 +46,7 @@ def load_run(run_dir: Path) -> dict | None:
     match = RUN_RE.match(run_dir.name)
     if match is None:
         return None
-    if not (run_dir / "lpaps_to_source.csv").exists():
+    if not (run_dir / PER_EXAMPLE_CSV).exists():
         return None
 
     row = {
@@ -63,12 +57,12 @@ def load_run(run_dir: Path) -> dict | None:
         "steps": int(match["steps"]),
         "run": run_dir.name,
     }
-    for label, (filename, column) in METRICS.items():
-        path = run_dir / filename
-        if not path.exists():
+    for label, column in METRICS.items():
+        try:
+            series = per_example(run_dir, column)
+        except (FileNotFoundError, KeyError):
             row[label] = row[f"{label}_sem"] = float("nan")
             continue
-        series = pd.read_csv(path, index_col=0)[column]
         row["n"] = len(series)
         row[label] = series.mean()
         row[f"{label}_sem"] = series.sem()

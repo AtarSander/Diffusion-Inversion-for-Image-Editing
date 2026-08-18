@@ -7,25 +7,21 @@ import fire
 import pandas as pd
 from scipy import stats
 
+from editing.run_metrics import per_example
+
 METRICS = [
-    ("LPAPS", "lpaps_to_source.csv", "lpaps", "lower"),
-    ("mel PSNR", "psnr_ssim_per_file.csv", "psnr", "higher"),
-    ("mel SSIM", "psnr_ssim_per_file.csv", "ssim", "higher"),
+    ("LPAPS", "lpaps", "lower"),
+    ("mel PSNR", "psnr", "higher"),
+    ("mel SSIM", "ssim", "higher"),
 ]
 
 
-def load(run: Path, filename: str, column: str) -> pd.Series | None:
-    """Per-example metric keyed by the row index, or None if that metric was not written."""
-    path = run / filename
-    if not path.exists():
+def load(run: Path, column: str) -> pd.Series | None:
+    """Per-example metric, or None if that metric was not written for this run."""
+    try:
+        return per_example(run, column)
+    except (FileNotFoundError, KeyError):
         return None
-    series = pd.read_csv(path, index_col=0)[column]
-    # psnr_ssim_per_file is keyed by filename, the rest by row index; normalise to the index.
-    series.index = [
-        int(str(i).removeprefix("a").removesuffix(".wav")) if str(i).startswith("a") else int(i)
-        for i in series.index
-    ]
-    return series.sort_index()
 
 
 def main(root: str, steps: str = "200,50", baseline: str = "nolora", variants: str = "attn,full"):
@@ -50,15 +46,15 @@ def main(root: str, steps: str = "200,50", baseline: str = "nolora", variants: s
 
         print(f"\n{'metric':10s} {'no LoRA':>18} " + " ".join(f"{v + ' LoRA':>18}" for v in variant_list))
         rows = {}
-        for label, filename, column, _ in METRICS:
-            base = load(base_run, filename, column)
+        for label, column, _ in METRICS:
+            base = load(base_run, column)
             if base is None:
                 print(f"{label:10s} {'not scored yet':>18}")
                 continue
             cells = [f"{base.mean():.3f} ± {base.sem():.3f}"]
             rows[label] = (base, {})
             for variant in variant_list:
-                other = load(root / f"recon_tracks_s{step}_{variant}", filename, column)
+                other = load(root / f"recon_tracks_s{step}_{variant}", column)
                 if other is None:
                     cells.append(f"{'-':>18}")
                     continue
@@ -67,7 +63,7 @@ def main(root: str, steps: str = "200,50", baseline: str = "nolora", variants: s
             print(f"{label:10s} " + " ".join(f"{c:>18}" for c in cells))
 
         for label, (base, others) in rows.items():
-            better = next(d for m, _, _, d in METRICS if m == label)
+            better = next(d for m, _, d in METRICS if m == label)
             for variant, other in others.items():
                 common = base.index.intersection(other.index)
                 delta = other.loc[common] - base.loc[common]

@@ -3,32 +3,30 @@
 
 from pathlib import Path
 
+import sys
+
 import pandas as pd
 from scipy import stats
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "audio"))
+
+from editing.run_metrics import per_example  # noqa: E402
 
 ROOT = Path(
     "/nas/lstanisz/code/lorainv/pwr-mount/audio/outputs/edits/medleymd/audioldm2_ddim"
 )
 STEPS = ["200", "50"]
 VARIANTS = [("nolora", "DDIM"), ("attn", "DDIM + LoRA (attn)"), ("full", "DDIM + LoRA (full)")]
-METRICS = [
-    ("LPAPS", "lpaps_to_source.csv", "lpaps", "lower"),
-    ("psnr", "psnr_ssim_per_file.csv", "psnr", "higher"),
-    ("ssim", "psnr_ssim_per_file.csv", "ssim", "higher"),
-]
+METRICS = [("LPAPS", "lpaps", "lower"), ("psnr", "psnr", "higher"), ("ssim", "ssim", "higher")]
 
 
-def load(step: str, variant: str, filename: str, column: str) -> pd.Series:
-    series = pd.read_csv(ROOT / f"recon_tracks_s{step}_{variant}" / filename, index_col=0)[column]
-    series.index = [
-        int(str(i).removeprefix("a").removesuffix(".wav")) if str(i).startswith("a") else int(i)
-        for i in series.index
-    ]
-    return series.sort_index()
+def load(step: str, variant: str, column: str) -> pd.Series:
+    """One metric for one reconstruction run, keyed so the variants can be paired."""
+    return per_example(ROOT / f"recon_tracks_s{step}_{variant}", column)
 
 
 data = {
-    (step, variant): {m: load(step, variant, f, c) for m, f, c, _ in METRICS}
+    (step, variant): {m: load(step, variant, c) for m, c, _ in METRICS}
     for step in STEPS
     for variant, _ in VARIANTS
 }
@@ -49,13 +47,13 @@ print(r"""% requires: \usepackage{booktabs,multirow}
 
 for step in STEPS:
     best = {}
-    for metric, _, _, direction in METRICS:
+    for metric, _, direction in METRICS:
         pick = min if direction == "lower" else max
         best[metric] = pick(VARIANTS, key=lambda v: data[(step, v[0])][metric].mean())[0]
     print(f"    \\multirow{{3}}{{*}}{{{step}}}")
     for variant, label in VARIANTS:
         cells = []
-        for metric, _, _, _ in METRICS:
+        for metric, _, _ in METRICS:
             series = data[(step, variant)][metric]
             digits = 3 if metric != "psnr" else 3
             body = f"{series.mean():.{digits}f}"
@@ -84,7 +82,7 @@ for step in STEPS:
     print(f"    \\multirow{{2}}{{*}}{{{step}}}")
     for variant, label in VARIANTS[1:]:
         cells = []
-        for metric, _, _, _ in METRICS:
+        for metric, _, _ in METRICS:
             base = data[(step, "nolora")][metric]
             other = data[(step, variant)][metric]
             common = base.index.intersection(other.index)

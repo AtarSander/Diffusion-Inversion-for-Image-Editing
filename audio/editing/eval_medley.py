@@ -14,6 +14,7 @@ from tqdm import tqdm
 from editing.AudioEditingCode.evals.lpaps import LPAPS
 from editing.AudioEditingCode.evals.meta_clap_consistency import CLAPTextConsistencyMetric, convert_audio
 from editing.AudioEditingCode.evals.utils import calc_clap_win, calc_lpaps_win
+from editing import run_metrics
 from editing.dataset_medley import prepare_dataset
 from editing.AudioEditingCode.code.env import PATH_AUDIOS_MEDLEY, medley_split_paths
 from src.metrics.alignment import MusicAlignmentEval
@@ -470,18 +471,40 @@ def main(
     path_save_metrics = Path(path_audio).parent
     lpaps_source_target_df = get_lpaps(source_audios, edits, srs_src, srs_edit, device)
     lpaps_source_target_df["classification_task"] = classification_tasks
-    lpaps_source_target_df.to_csv((path_save_metrics / "lpaps_to_source.csv"))
     clap_target_targetp_df = get_clap(target_prompts, edits, srs_edit, device)
     clap_target_targetp_df["classification_task"] = classification_tasks
-    clap_target_targetp_df.to_csv((path_save_metrics / "clap_to_target_prompt.csv"))
     mulan_target_targetp_df = get_mulan(target_prompts, edits, srs_edit, device)
     mulan_target_targetp_df["classification_task"] = classification_tasks
-    mulan_target_targetp_df.to_csv((path_save_metrics / "mulan_to_target_prompt.csv"))
     directional_df = get_directional(
         source_prompts, target_prompts, source_audios, edits, srs_src, srs_edit, device
     )
     directional_df["classification_task"] = classification_tasks
-    directional_df.to_csv((path_save_metrics / "directional_to_prompts.csv"))
+
+    # Every prompt metric is keyed by position in the split and computed in that order, so they
+    # go in one table: eight small files per run is what made these outputs inode-bound.
+    count = len(classification_tasks)
+    for name, frame in (
+        ("clap", clap_target_targetp_df),
+        ("mulan", mulan_target_targetp_df),
+        ("directional", directional_df),
+    ):
+        assert list(frame.index) == list(range(count)), (
+            f"{name} is not keyed by position 0..{count - 1}; the consolidated table would "
+            "misalign it against the others"
+        )
+    assert len(lpaps_source_target_df) == count, (len(lpaps_source_target_df), count)
+    per_example_frame = pd.DataFrame(
+        {
+            "lpaps": lpaps_source_target_df["lpaps"].to_numpy(),
+            "clap": clap_target_targetp_df["clap"].to_numpy(),
+            "muqt_sim_p0": mulan_target_targetp_df["muqt_sim_p0"].to_numpy(),
+            "clap_dir": directional_df["clap_dir"].to_numpy(),
+            "mulan_dir": directional_df["mulan_dir"].to_numpy(),
+            "classification_task": classification_tasks,
+        }
+    )
+    # Written now and again after the PSNR/SSIM pass, so a failure there still leaves these.
+    run_metrics.write_per_example(path_save_metrics, per_example_frame)
 
     final_results = {
         "LPAPS": {
@@ -506,8 +529,6 @@ def main(
         },
     }
     print(final_results)
-    with open((path_save_metrics / "final_results.json"), "w") as f:
-        json.dump(final_results, f)
 
     per_task_result = {
         task: {
@@ -538,8 +559,9 @@ def main(
         }
         for task in list(set(classification_tasks))
     }
-    with open((path_save_metrics / "per_task_results.json"), "w") as f:
-        json.dump(per_task_result, f)
+    run_metrics.write_aggregates(
+        path_save_metrics, {"final": final_results, "per_task": per_task_result}
+    )
 
     if limit is not None:
         print("smoke run: PSNR/SSIM need the whole directory, skipping. Re-run without --limit.")
@@ -550,10 +572,16 @@ def main(
     lower_bound = medley_split_paths("tracks" if unique_tracks else split)[1]
     print(f"paired reference: {lower_bound}")
     source_distance_metrics, psnr_ssim_per_file = calculate_source_distance_metrics(device=device, path_edited_audio=path_audio, path_lower_bound=lower_bound)
-    psnr_ssim_per_file.to_csv((path_save_metrics / "psnr_ssim_per_file.csv"))
-
-    with open((path_save_metrics / "source_distance_metrics.json"), "w") as f:
-        json.dump(source_distance_metrics, f)
+    psnr_ssim_per_file.to_csv((path_save_metrics / run_metrics.PSNR_CSV))
+    run_metrics.write_per_example(path_save_metrics, per_example_frame)
+    run_metrics.write_aggregates(
+        path_save_metrics,
+        {
+            "final": final_results,
+            "per_task": per_task_result,
+            "source_distance": source_distance_metrics,
+        },
+    )
 
 
 if __name__ == "__main__":

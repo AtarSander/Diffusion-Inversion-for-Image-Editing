@@ -17,6 +17,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 from editing.AudioEditingCode.code.env import PATH_EDIT_OUTPUTS  # noqa: E402
+from editing.run_metrics import PER_EXAMPLE_CSV, per_example  # noqa: E402
 
 BASE_RE = re.compile(
     r"audioldm2_(?P<mode>ddpm|ddim|sdedit)_hparam"
@@ -33,29 +34,15 @@ LORA_RE = re.compile(
     r"_cfgtar(?P<cfg_tar>[\d.]+)_t(?P<tstart>\d+)_s(?P<steps>\d+)$"
 )
 
-METRICS = {
-    "lpaps": ("lpaps_to_source.csv", "lpaps"),
-    "clap": ("clap_to_target_prompt.csv", "clap"),
-    "muq": ("mulan_to_target_prompt.csv", "muqt_sim_p0"),
-    "clap_dir": ("directional_to_prompts.csv", "clap_dir"),
-    "psnr": ("psnr_ssim_per_file.csv", "psnr"),
-    "ssim": ("psnr_ssim_per_file.csv", "ssim"),
-}
+# plot label -> column in the consolidated per-example table
+METRICS = {"lpaps": "lpaps", "clap": "clap", "muq": "muqt_sim_p0", "clap_dir": "clap_dir",
+           "psnr": "psnr", "ssim": "ssim"}
 Y_PANELS = [("clap", "CLAP to target caption"), ("muq", "MuQ-MuLan to target caption"),
             ("clap_dir", "Directional CLAP")]
 PAIRED = [("lpaps", "LPAPS", "lower"), ("psnr", "mel PSNR", "higher"),
           ("clap", "CLAP", "higher")]
 
 
-def per_example(run_dir: Path, metric: str) -> pd.Series:
-    """One metric's per-example values, indexed by row so runs can be paired."""
-    filename, column = METRICS[metric]
-    series = pd.read_csv(run_dir / filename, index_col=0)[column]
-    series.index = [
-        int(str(i).removeprefix("a").removesuffix(".wav")) if str(i).startswith("a") else int(i)
-        for i in series.index
-    ]
-    return series.sort_index()
 
 
 def collect(root: Path) -> pd.DataFrame:
@@ -75,7 +62,7 @@ def collect(root: Path) -> pd.DataFrame:
     ]
     for run_dir in candidates:
         match = LORA_RE.match(run_dir.name) or BASE_RE.match(run_dir.name)
-        if match is None or not (run_dir / "lpaps_to_source.csv").exists():
+        if match is None or not (run_dir / PER_EXAMPLE_CSV).exists():
             continue
         groups = match.groupdict()
         label = groups.get("checkpoint")
@@ -88,10 +75,11 @@ def collect(root: Path) -> pd.DataFrame:
             "cfg_tar": float(groups["cfg_tar"]),
             "run_dir": run_dir,
         }
-        for metric in METRICS:
-            if not (run_dir / METRICS[metric][0]).exists():
+        for metric, column in METRICS.items():
+            try:
+                values = per_example(run_dir, column)
+            except (FileNotFoundError, KeyError):
                 continue
-            values = per_example(run_dir, metric)
             row["n"] = len(values)
             row[metric] = values.mean()
             row[f"{metric}_sem"] = values.sem()
@@ -172,8 +160,8 @@ def main(
             xs, deltas, errors = [], [], []
             for _, row in frame[frame["checkpoint"] == checkpoint].sort_values("tstart").iterrows():
                 twin = baseline.loc[(row["tstart"], row["cfg_tar"])]
-                lora_values = per_example(row["run_dir"], metric)
-                base_values = per_example(twin["run_dir"], metric)
+                lora_values = per_example(row["run_dir"], METRICS[metric])
+                base_values = per_example(twin["run_dir"], METRICS[metric])
                 common = lora_values.index.intersection(base_values.index)
                 delta = lora_values.loc[common] - base_values.loc[common]
                 pvalue = stats.ttest_rel(lora_values.loc[common], base_values.loc[common]).pvalue
