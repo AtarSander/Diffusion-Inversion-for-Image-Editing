@@ -19,9 +19,15 @@ import matplotlib.pyplot as plt  # noqa: E402
 from editing.AudioEditingCode.code.env import PATH_EDIT_OUTPUTS  # noqa: E402
 
 BASE_RE = re.compile(
-    r"audioldm2_ddim_hparam_cfgsrc(?P<cfg_src>[\d.]+)_cfgtar(?P<cfg_tar>[\d.]+)"
+    r"audioldm2_(?P<mode>ddpm|ddim|sdedit)_hparam"
+    r"(?:_cfgsrc(?P<cfg_src>[\d.]+))?_cfgtar(?P<cfg_tar>[\d.]+)"
     r"_t(?P<tstart>\d+)_s(?P<steps>\d+)$"
 )
+
+# The other two methods come from the same sweep at the same settings. They are not adapters, so
+# they are carried as pseudo-checkpoints purely to put the LoRA differences on a scale where a
+# real method difference is visible.
+METHOD_LABELS = {"ddpm": "DDPM-inv", "sdedit": "SDEdit"}
 LORA_RE = re.compile(
     r"audioldm2_ddimlora_hparam_(?P<checkpoint>.+?)"
     r"_cfgtar(?P<cfg_tar>[\d.]+)_t(?P<tstart>\d+)_s(?P<steps>\d+)$"
@@ -62,13 +68,22 @@ def collect(root: Path) -> pd.DataFrame:
         Rows with checkpoint, tstart, cfg_tar and the mean/SEM of each metric.
     """
     rows = []
-    for run_dir in sorted((root / "audioldm2_ddim").glob("audioldm2_ddim*hparam*")):
+    candidates = [
+        path
+        for mode in ("ddim", "ddpm", "sdedit")
+        for path in sorted((root / f"audioldm2_{mode}").glob(f"audioldm2_{mode}*hparam*"))
+    ]
+    for run_dir in candidates:
         match = LORA_RE.match(run_dir.name) or BASE_RE.match(run_dir.name)
         if match is None or not (run_dir / "lpaps_to_source.csv").exists():
             continue
         groups = match.groupdict()
+        label = groups.get("checkpoint")
+        if label is None:
+            mode = groups["mode"]
+            label = "no LoRA" if mode == "ddim" else METHOD_LABELS[mode]
         row = {
-            "checkpoint": groups.get("checkpoint", "no LoRA"),
+            "checkpoint": label,
             "tstart": int(groups["tstart"]),
             "cfg_tar": float(groups["cfg_tar"]),
             "run_dir": run_dir,
@@ -108,8 +123,12 @@ def main(
     frame = collect(root)
     keep = [float(c) for c in str(cfg_tars).split(",")]
     frame = frame[frame["cfg_tar"].isin(keep)].copy()
-    checkpoints = [c for c in frame["checkpoint"].unique() if c != "no LoRA"]
-    print(f"{len(frame)} runs: 1 baseline + {len(checkpoints)} checkpoints, "
+    methods = [c for c in METHOD_LABELS.values() if c in set(frame["checkpoint"])]
+    checkpoints = [
+        c for c in frame["checkpoint"].unique() if c != "no LoRA" and c not in methods
+    ]
+    print(f"{len(frame)} runs: 1 baseline + {len(checkpoints)} checkpoints "
+          f"+ {len(methods)} methods, "
           f"tstart {sorted(frame['tstart'].unique())}, cfg_tar {sorted(frame['cfg_tar'].unique())}")
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -117,9 +136,18 @@ def main(
     (out_dir / "plots").mkdir(parents=True, exist_ok=True)
 
     palette = plt.get_cmap("tab10")
-    colours = {"no LoRA": "black"}
+    colours = {"no LoRA": "black", "DDPM-inv": "#1f77b4", "SDEdit": "#2ca02c"}
     for i, checkpoint in enumerate(checkpoints):
         colours[checkpoint] = palette(i % 10)
+
+    def style(name):
+        """Reference methods are drawn heavy and dashed; adapters thin, so overlap stays legible."""
+        if name == "no LoRA":
+            return {"marker": "o", "markersize": 6, "linewidth": 2.4, "alpha": 1.0, "zorder": 4}
+        if name in methods:
+            return {"marker": "^", "markersize": 6, "linewidth": 2.0, "alpha": 0.9,
+                    "linestyle": "--", "zorder": 3}
+        return {"marker": "s", "markersize": 4, "linewidth": 1.0, "alpha": 0.75, "zorder": 2}
 
     # Panel row 1: the fronts overlaid. Row 2: paired differences against the no-LoRA twin.
     figure, axes = plt.subplots(2, 3, figsize=(16.5, 9.2))
@@ -129,12 +157,8 @@ def main(
             axis.errorbar(
                 group["lpaps"], group[y],
                 xerr=group["lpaps_sem"], yerr=group[f"{y}_sem"],
-                marker="o" if checkpoint == "no LoRA" else "s",
-                markersize=6 if checkpoint == "no LoRA" else 4,
-                linewidth=2.2 if checkpoint == "no LoRA" else 1.0,
-                alpha=1.0 if checkpoint == "no LoRA" else 0.75,
                 capsize=2, color=colours[checkpoint], label=short(checkpoint),
-                zorder=3 if checkpoint == "no LoRA" else 2,
+                **style(checkpoint),
             )
         axis.set_xlabel("LPAPS to source $\\downarrow$")
         axis.set_ylabel(f"{title} $\\uparrow$")
@@ -144,7 +168,7 @@ def main(
     baseline = frame[frame["checkpoint"] == "no LoRA"].set_index(["tstart", "cfg_tar"])
     records = []
     for axis, (metric, label, direction) in zip(axes[1], PAIRED):
-        for checkpoint in checkpoints:
+        for checkpoint in checkpoints + methods:
             xs, deltas, errors = [], [], []
             for _, row in frame[frame["checkpoint"] == checkpoint].sort_values("tstart").iterrows():
                 twin = baseline.loc[(row["tstart"], row["cfg_tar"])]
@@ -163,17 +187,33 @@ def main(
                     "n_better": int((delta < 0).sum() if direction == "lower" else (delta > 0).sum()),
                     "n": len(delta),
                 })
-            axis.errorbar(xs, deltas, yerr=errors, marker="s", markersize=4, linewidth=1.0,
-                          capsize=2, color=colours[checkpoint], label=short(checkpoint))
+            axis.errorbar(xs, deltas, yerr=errors, capsize=2, color=colours[checkpoint],
+                          label=short(checkpoint), **style(checkpoint))
         axis.axhline(0, color="black", linewidth=1.0, zorder=1)
+        # SDEdit differs from DDIM by ~0.7 LPAPS and the adapters by ~0.002, so a linear axis
+        # would render one of the two invisible. Linear inside the adapters' range, log outside.
+        adapter_max = max(
+            abs(record["delta"])
+            for record in records
+            if record["metric"] == metric and record["checkpoint"] in checkpoints
+        )
+        threshold = max(adapter_max * 2, 1e-4)
+        axis.set_yscale("symlog", linthresh=threshold)
+        axis.axhspan(-threshold, threshold, color="0.9", zorder=0)
         axis.set_xlabel("tstart (jittered by cfg_tar)")
-        axis.set_ylabel(f"$\\Delta$ {label} vs no LoRA ({'lower' if direction == 'lower' else 'higher'} is better)")
+        axis.set_ylabel(
+            f"$\\Delta$ {label} vs no-LoRA DDIM "
+            f"({'lower' if direction == 'lower' else 'higher'} is better)"
+        )
         axis.grid(alpha=0.25, linewidth=0.5)
+    axes[1][0].legend(fontsize=7, loc="upper left", ncol=2)
 
     figure.suptitle(
-        f"Inversion LoRA on the MedleyMD hparam split: DDIM only, n={int(frame['n'].iloc[0])} "
-        f"edits per point\ntop: fronts overlaid on the no-LoRA baseline (black); "
-        "bottom: paired difference per setting, 95% CI",
+        f"Inversion LoRA on the MedleyMD hparam split, n={int(frame['n'].iloc[0])} edits per point"
+        "\ntop: LoRA fronts on the no-LoRA DDIM baseline (black), with DDPM-inv and SDEdit at the "
+        "same settings for scale"
+        "\nbottom: paired difference vs no-LoRA DDIM, 95% CI; linear inside the grey band, log "
+        "outside it",
         fontsize=11,
     )
     figure.tight_layout()
