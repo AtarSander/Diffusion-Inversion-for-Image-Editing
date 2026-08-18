@@ -1,0 +1,18 @@
+{
+  "timestamp": "20260818_193455",
+  "runs_root": "/nas/lstanisz/code/lorainv/pwr-mount/audio/outputs/edits/medleymd",
+  "cfg_tars": [
+    6.0,
+    12.0
+  ],
+  "checkpoints": [
+    "attn_r32_a16_lr2e-4_checkpoint_step_4000",
+    "attn_r32_a16_lr2e-4_checkpoint_step_4000_ema",
+    "full_r8_a4_lr5e-4_checkpoint_step_2000",
+    "full_r8_a4_lr5e-4_checkpoint_step_2000_ema",
+    "q4_full_r32_a16_lr5e-4_checkpoint_step_6000",
+    "q4_full_r32_a16_lr5e-4_checkpoint_step_6000_ema"
+  ],
+  "num_runs": 56,
+  "git_sha": "5e2c66977e8db7158b134415f87b7d619cd0c8fe"
+}
