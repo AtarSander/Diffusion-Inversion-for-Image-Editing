@@ -90,7 +90,7 @@ def collect(root: Path) -> pd.DataFrame:
 def short(checkpoint: str) -> str:
     """Compact legend label: training run plus step, EMA marked."""
     if checkpoint == "no LoRA":
-        return checkpoint
+        return "DDIM Inv. (no LoRA)"
     stem = checkpoint.replace("_checkpoint_step_", " @")
     return stem.replace("_ema", " EMA")
 
@@ -137,9 +137,8 @@ def main(
                     "linestyle": "--", "zorder": 3}
         return {"marker": "s", "markersize": 4, "linewidth": 1.0, "alpha": 0.75, "zorder": 2}
 
-    # Panel row 1: the fronts overlaid. Row 2: paired differences against the no-LoRA twin.
-    figure, axes = plt.subplots(2, 3, figsize=(16.5, 9.2))
-    for axis, (y, title) in zip(axes[0], Y_PANELS):
+    figure, axes = plt.subplots(1, 3, figsize=(16.5, 4.8))
+    for axis, (y, title) in zip(axes, Y_PANELS):
         for checkpoint, group in frame.groupby("checkpoint"):
             group = group.sort_values("lpaps")
             axis.errorbar(
@@ -148,16 +147,22 @@ def main(
                 capsize=2, color=colours[checkpoint], label=short(checkpoint),
                 **style(checkpoint),
             )
+        # Optimal editing is the top-left corner: nothing changed that should not have, everything
+        # changed that should. Unlabelled -- it marks the direction, it is not a data point.
+        axis.plot(0.045, 0.955, marker="*", markersize=22, color="gold",
+                  markeredgecolor="#7a6000", markeredgewidth=0.8, transform=axis.transAxes,
+                  clip_on=False, zorder=6, label="_nolegend_")
         axis.set_xlabel("LPAPS to source $\\downarrow$")
         axis.set_ylabel(f"{title} $\\uparrow$")
         axis.grid(alpha=0.25, linewidth=0.5)
-    axes[0][0].legend(fontsize=7, loc="lower right")
+    axes[0].legend(fontsize=7, loc="lower right")
 
+    # The paired differences are no longer plotted, but they are what the markdown reports: an
+    # effect of ~0.002 LPAPS against a spread ten times larger is only resolvable pairwise.
     baseline = frame[frame["checkpoint"] == "no LoRA"].set_index(["tstart", "cfg_tar"])
     records = []
-    for axis, (metric, label, direction) in zip(axes[1], PAIRED):
+    for metric, label, direction in PAIRED:
         for checkpoint in checkpoints + methods:
-            xs, deltas, errors = [], [], []
             for _, row in frame[frame["checkpoint"] == checkpoint].sort_values("tstart").iterrows():
                 twin = baseline.loc[(row["tstart"], row["cfg_tar"])]
                 lora_values = per_example(row["run_dir"], METRICS[metric])
@@ -165,44 +170,18 @@ def main(
                 common = lora_values.index.intersection(base_values.index)
                 delta = lora_values.loc[common] - base_values.loc[common]
                 pvalue = stats.ttest_rel(lora_values.loc[common], base_values.loc[common]).pvalue
-                xs.append(row["tstart"] + (row["cfg_tar"] - 9) * 1.5)
-                deltas.append(delta.mean())
-                errors.append(1.96 * delta.std() / len(delta) ** 0.5)
                 records.append({
                     "checkpoint": checkpoint, "tstart": row["tstart"], "cfg_tar": row["cfg_tar"],
-                    "metric": metric, "delta": delta.mean(), "ci95": errors[-1],
+                    "metric": metric, "delta": delta.mean(),
+                    "ci95": 1.96 * delta.std() / len(delta) ** 0.5,
                     "p": pvalue, "better": direction,
                     "n_better": int((delta < 0).sum() if direction == "lower" else (delta > 0).sum()),
                     "n": len(delta),
                 })
-            axis.errorbar(xs, deltas, yerr=errors, capsize=2, color=colours[checkpoint],
-                          label=short(checkpoint), **style(checkpoint))
-        axis.axhline(0, color="black", linewidth=1.0, zorder=1)
-        # SDEdit differs from DDIM by ~0.7 LPAPS and the adapters by ~0.002, so a linear axis
-        # would render one of the two invisible. Linear inside the adapters' range, log outside.
-        adapter_max = max(
-            abs(record["delta"])
-            for record in records
-            if record["metric"] == metric and record["checkpoint"] in checkpoints
-        )
-        threshold = max(adapter_max * 2, 1e-4)
-        axis.set_yscale("symlog", linthresh=threshold)
-        axis.axhspan(-threshold, threshold, color="0.9", zorder=0)
-        axis.set_xlabel("tstart (jittered by cfg_tar)")
-        axis.set_ylabel(
-            f"$\\Delta$ {label} vs no-LoRA DDIM "
-            f"({'lower' if direction == 'lower' else 'higher'} is better)"
-        )
-        axis.grid(alpha=0.25, linewidth=0.5)
-    axes[1][0].legend(fontsize=7, loc="upper left", ncol=2)
 
     figure.suptitle(
-        f"Inversion LoRA on the MedleyMD hparam split, n={int(frame['n'].iloc[0])} edits per point"
-        "\ntop: LoRA fronts on the no-LoRA DDIM baseline (black), with DDPM-inv and SDEdit at the "
-        "same settings for scale"
-        "\nbottom: paired difference vs no-LoRA DDIM, 95% CI; linear inside the grey band, log "
-        "outside it",
-        fontsize=11,
+        f"Inversion LoRA on MedleyMD, DDIM grid (n={int(frame['n'].iloc[0])} edits per point)",
+        fontsize=12,
     )
     figure.tight_layout()
     plot_path = out_dir / "plots" / f"{stamp}_lora_tradeoff.png"
