@@ -1,0 +1,95 @@
+# Train the Stable Audio Open shifted-denoiser inversion LoRA on cached DPMSolver trajectories.
+# Run:   uv run --python .venv/bin/python src/inversion_lora/train_stable_audio.py device=cuda:0
+# Smoke: ... device=cuda:0 data_root=/tmp/sao_smoke batch_size=2 max_train_steps=4 \
+#            log_every_steps=1 eval_every_steps=2 save_every_steps=4 max_val_batches=2 \
+#            wandb_mode=disabled checkpoint_dir=/tmp/sao_smoke_ckpt
+
+device: cpu # set cuda:N explicitly; never auto-grab a shared GPU
+seed: 42
+
+model_id: stabilityai/stable-audio-open-1.0
+schedule: beta # must match the trajectory dataset's scheduler
+num_inference_steps: 100 # must match the trajectory dataset's grid
+duration_s: null # must match the dataset's duration; null uses the model's maximum
+adapter_name: inversion
+
+data_root: ${oc.env:LORAINV_DATA_ROOT}/stable_audio_trajectories_fp32
+val_fraction: 0.20 # split by trajectory, never by transition
+# 1500 trajectories x 100 transitions, 80% of which train: 120k transitions. At an effective
+# batch of 32 that is 3.75k steps per epoch, so max_train_steps=20000 is ~5.3 epochs.
+# The DiT is 1.06B parameters at latent [64, 1024], so the per-device batch is small and the
+# effective batch comes from accumulation instead.
+batch_size: 4
+gradient_accumulation_steps: 8
+num_workers: 8
+
+# Restrict training to the cleanest tail of the schedule by keeping only transitions with
+# t <= train_max_timestep. null keeps all 100. Unlike AudioLDM2, Stable Audio's shift gap is
+# fairly flat across the schedule (0.85% relative at t=999 rising to 3.68% at t=10, so 4.3x
+# rather than ~300x), which is a weaker reason to restrict; see output/sao_probe/REPORT.md.
+train_max_timestep: null
+# Equal bands of [0, train_max_timestep], noisiest first, each named by its share of the schedule.
+num_loss_bands: 4
+
+# Which module families the adapter touches, by suffix, in the 24-block DiT. Module counts:
+# to_q/to_k/to_v/to_out.0 48 each (self- and cross-attention per block), ff.net.0.proj and
+# ff.net.2 24 each, proj_in/proj_out 1 each, timestep_proj.0/.2 and global_proj.0/.2 1 each.
+# timestep_proj is where the schedule enters the network, the analogue of AudioLDM2's
+# time_embedding.linear_*, so `full` includes it.
+lora_preset: attn
+lora_target_presets:
+  attn: [to_q, to_k, to_v, to_out.0]
+  attn_ff: [to_q, to_k, to_v, to_out.0, ff.net.0.proj, ff.net.2]
+  full:
+    [
+      to_q,
+      to_k,
+      to_v,
+      to_out.0,
+      ff.net.0.proj,
+      ff.net.2,
+      proj_in,
+      proj_out,
+      timestep_proj.0,
+      timestep_proj.2,
+      global_proj.0,
+      global_proj.2,
+    ]
+
+lora:
+  r: 8
+  lora_alpha: 4
+  lora_dropout: 0.0
+  init_lora_weights: true
+  target_modules:
+    - to_q
+    - to_k
+    - to_v
+    - to_out.0
+
+learning_rate: 5e-5
+weight_decay: 0.0
+
+# Exponential moving average of the adapter weights, saved next to every checkpoint as
+# <name>_ema.pt in the same format. null disables it.
+ema_decay: 0.999
+max_grad_norm: 1.0
+max_train_steps: 20000
+
+log_every_steps: 50
+eval_every_steps: 1000
+save_every_steps: 2000
+max_val_batches: 50
+
+save_training_state: true
+checkpoint_dir: ${oc.env:LORAINV_CHECKPOINT_ROOT}/stable_audio_inversion_r8
+resume_from: null
+
+wandb_project: audio-inversion-lora
+wandb_mode: online # disabled for smoke runs
+run_name: null
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null

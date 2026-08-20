@@ -1,0 +1,35 @@
+# Stable Audio Open trajectory generation for inversion-LoRA training.
+# Run:   uv run --python .venv/bin/python src/inversion_lora/generate_trajectories_stable_audio.py device=cuda:0
+# Smoke: ... device=cuda:0 num_samples=2 num_inference_steps=20 output_dir=/tmp/sao_smoke
+
+device: cpu # set to cuda:N explicitly; never auto-grab a shared GPU
+
+model_id: stabilityai/stable-audio-open-1.0
+# `beta` is the deterministic DPMSolverMultistep grid the editing code's `ddim` mode builds, and
+# the only invertible option: Stable Audio's native cosine scheduler is an SDE with an unseeded
+# Brownian noise sampler. See output/sao_probe/REPORT.md.
+schedule: beta
+num_inference_steps: 100 # matches the editing baselines (edit_stableaudio_medleydb.py)
+# Duration the timing conditioning declares; null uses the model's maximum (47.55 s), which is
+# also what the MedleyMD edits run at since every mix is longer than the window. The latent length
+# is fixed at 1024 either way, so this does not change the storage cost.
+duration_s: null
+# Sampling is unconditional-free (no CFG), self-consistent with the no-CFG distillation loss.
+
+captions_csv: editing/music_caps_dl/metadata/musiccaps-public.csv
+caption_column: caption
+
+# 1500 trajectories x 100 transitions x [64, 1024] fp32 is ~79 GB: 26.5 MB of latents plus
+# 26.2 MB of targets per trajectory. Point this at scratch/lustre, never at the repo.
+output_dir: ${oc.env:LORAINV_DATA_ROOT}/stable_audio_trajectories_fp32
+start_index: 0
+num_samples: 1500 # null => all captions from start_index
+seed: 42
+
+store_dtype: float32
+overwrite: false
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null

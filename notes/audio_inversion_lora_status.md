@@ -8,6 +8,79 @@ Most recent first. Keep this file current — it is the handover doc between ses
 
 ---
 
+## 2026-08-20 — Port started: Stable Audio Open, objective only
+
+Scope agreed this session: trajectories + training loop + val loss on **Stable Audio Open**. No
+reconstruction eval, no editing sweep — the AudioLDM2 result is closed (see below), so the SAO run
+only has to show whether the objective is learnable on a second architecture before anything
+downstream is built.
+
+### What the probe settled first (`output/sao_probe/REPORT.md`)
+
+- **SAO's native scheduler is an SDE.** `CosineDPMSolverMultistepScheduler` hardcodes
+  `sde-dpmsolver++` with an unseeded `BrownianTreeNoiseSampler`: same latent seed, different audio
+  (decoded RMS 0.090 vs 0.315). DDIM-style inversion is undefined on it, and diffusers 0.32.2 has
+  no deterministic cosine variant.
+- **The editing code's `ddim` mode silently changes the noise schedule.**
+  `DPMSolverMultistepScheduler.from_config(cosine_config)` drops `sigma_min`/`sigma_max`/
+  `sigma_schedule` and falls back to linear betas: sigma 157.4..0.047 instead of 500..0.3, and
+  timesteps 999..10 instead of 0.9987..0.1855. The DiT's time embedding takes `log(t)` of a value
+  it only ever saw in (0, 1), so every SAO DDIM/inversion baseline queries it ~1000x out of range.
+  It still decodes plausible audio (`output/sao_probe/beta_100steps.wav`) — **this is worth a
+  listen and probably worth a separate look**; it is not something the LoRA port introduced.
+- **Decision: distil the beta-grid DPMSolver teacher**, i.e. exactly what the existing SAO DDIM
+  baselines run, so the adapter is comparable with numbers already on disk.
+- **The objective has signal there**: shift gap 0.85% relative at t=999 rising to 3.68% at t=10
+  (e_RMS 0.0018 -> 0.0163). Flat compared with AudioLDM2, whose MSE varied ~300x across the
+  schedule, so `train_max_timestep` is a much weaker lever here.
+
+### What was built
+
+| file | role |
+| --- | --- |
+| `src/inversion_lora/stable_audio.py` | teacher: conditioning, batched per-example-timestep DiT forward, deterministic reverse trajectories |
+| `src/inversion_lora/generate_trajectories_stable_audio.py` | trajectory cache, same on-disk layout as AudioLDM2 |
+| `src/inversion_lora/train_stable_audio.py` | `StableAudioInversionTrainer`, a subclass overriding only the forward and the first-batch log |
+| `src/inversion_lora/probe_stable_audio.py` | the schedule/shift-gap probe above |
+| `config/generate_trajectories_stable_audio.yaml`, `config/train_inversion_lora_stable_audio.yaml` | configs |
+| `tests/test_inversion_lora_stable_audio.py` | data-path tests (4) |
+
+`dataset.py` took the only change to shared code: `conditioning_keys` is now a constructor
+argument (AudioLDM2's three T5 streams stay the default) plus a `collate_stable_audio_batch` that
+needs no padding, because SAO's tokenizer pads to 128 and the two timing embeddings are appended
+at generation time, giving a fixed `text_audio` of [130, 768]. `train.py` took a 6-line change:
+the first-batch log became an overridable method.
+
+### VERIFIED end to end on an A5000
+
+- 3 trajectories generated at 20 steps, then 6 training steps at batch 4 on the result. Train loss
+  falls (0.0116 -> 0.00015 while overfitting 2 trajectories), the LoRA-disabled baseline is
+  measured, EMA runs, checkpoints and sidecars are written, `attn` preset injects 384 tensors /
+  4.13M parameters over 192 modules.
+- Batch 4 at latent [64, 1024] fits in 24 GB at ~1.9 s/step. 78 of 79 tests pass;
+  `test_directional.py` fails to import `muq`, which is pre-existing and unrelated.
+- Two bugs found by that smoke run, both fixed: the multistep solver carried its step index and
+  output history across trajectories (crashed on trajectory 2 and would have corrupted it), and
+  the duration conditioning was built with grad enabled, so its graph was freed by the first
+  backward.
+
+### Cost
+
+~4.5 s per 20-step trajectory on one A5000, so ~23 s at 100 steps: **1500 trajectories is ~9.5 h
+on one A5000**, less on an H100. Storage is fixed by SAO's latent, which is always [64, 1024]
+regardless of duration: 53 MB per fp32 trajectory, **~79 GB** for the agreed 1500.
+
+### Next
+
+1. Generate the 1500-trajectory dataset on the cluster (needs a slurm script; the AudioLDM2 one is
+   `slurm_scripts/wcss/run_generate_trajectories.sh`).
+2. Train `attn` r8 and read the val-loss curve against the LoRA-disabled baseline. If it closes a
+   comparable share of the gap to AudioLDM2's 85-88%, the objective generalises.
+3. Only then decide whether anything downstream (reconstruction, `attach_inversion_lora` for the
+   DiT, editing) is worth building. `apply_lora.py` has **not** been touched for SAO.
+
+---
+
 ## 2026-08-15 — RESULT: the inversion LoRA works, and it does not move the editing benchmark
 
 **Both halves are now measured, and they disagree in the most informative way.**

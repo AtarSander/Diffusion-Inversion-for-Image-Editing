@@ -26,6 +26,7 @@ class AudioLDM2TrajectoryDataset(Dataset):
         root_dir: str | Path,
         mmap: bool = True,
         sample_ids: set[int] | None = None,
+        conditioning_keys: tuple[str, ...] = CONDITIONING_KEYS,
     ):
         """Index the dataset without loading any latents.
 
@@ -35,9 +36,12 @@ class AudioLDM2TrajectoryDataset(Dataset):
                 pages instead of the whole multi-megabyte trajectory.
             sample_ids: Restrict to these `sample_idx` values. Splits happen at trajectory
                 level so transitions from one trajectory never straddle a train/val boundary.
+            conditioning_keys: Which tensors to read out of `conditioning.pt`. The default is
+                AudioLDM2's three streams; Stable Audio caches a single `text_audio` tensor.
         """
         self.root_dir = Path(root_dir)
         self.mmap = mmap
+        self.conditioning_keys = conditioning_keys
         self.samples: list[dict[str, Any]] = []
         self.cumulative_lengths: list[int] = []
 
@@ -107,7 +111,7 @@ class AudioLDM2TrajectoryDataset(Dataset):
         eps = target_eps[step_idx].clone()
         assert x_clean.shape == eps.shape, (x_clean.shape, eps.shape)
 
-        missing = [key for key in CONDITIONING_KEYS if key not in conditioning]
+        missing = [key for key in self.conditioning_keys if key not in conditioning]
         if missing:
             raise KeyError(f"{sample['conditioning_path']}: missing conditioning {missing}")
 
@@ -115,9 +119,7 @@ class AudioLDM2TrajectoryDataset(Dataset):
             "x_clean": x_clean,
             "target_eps": eps,
             "timestep": torch.tensor(sample["timesteps"][step_idx], dtype=torch.long),
-            "generated_prompt_embeds": conditioning["generated_prompt_embeds"],
-            "t5_prompt_embeds": conditioning["t5_prompt_embeds"],
-            "t5_attention_mask": conditioning["t5_attention_mask"],
+            **{key: conditioning[key] for key in self.conditioning_keys},
             "sample_idx": sample["sample_idx"],
             "step_idx": step_idx,
         }
@@ -218,6 +220,26 @@ def collate_trajectory_batch(items: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "t5_prompt_embeds": t5_embeds,
         "t5_attention_mask": t5_mask,
+        "sample_idx": [item["sample_idx"] for item in items],
+        "step_idx": [item["step_idx"] for item in items],
+    }
+    assert batch["x_clean"].shape == batch["target_eps"].shape
+    assert batch["timestep"].shape[0] == len(items)
+    return batch
+
+
+def collate_stable_audio_batch(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """Collate Stable Audio transitions, whose conditioning is one fixed-length tensor.
+
+    The tokenizer pads to `model_max_length` and the two timing embeddings are appended at
+    generation time, so every `text_audio` has the same shape and default stacking is exact. No
+    padding or mask is needed, unlike AudioLDM2's prompt-dependent T5 stream.
+    """
+    batch = {
+        "x_clean": torch.stack([item["x_clean"] for item in items]),
+        "target_eps": torch.stack([item["target_eps"] for item in items]),
+        "timestep": torch.stack([item["timestep"] for item in items]),
+        "text_audio": torch.stack([item["text_audio"] for item in items]),
         "sample_idx": [item["sample_idx"] for item in items],
         "step_idx": [item["step_idx"] for item in items],
     }
