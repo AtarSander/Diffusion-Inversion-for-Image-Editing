@@ -16,8 +16,11 @@ for _path in (AUDIO_ROOT, AUDIO_ROOT / "editing/AudioEditingCode/code"):
 
 from models import load_model  # noqa: E402
 
+from src.inversion_lora.generate_trajectories import latent_height  # noqa: E402
 from src.inversion_lora.noise_metrics import noise_report  # noqa: E402
 from src.inversion_lora.reconstruct import (  # noqa: E402
+    batch_latents,
+    crop_to_window,
     generate_eval_latents,
     load_real_latents,
     real_audio_fixtures,
@@ -31,6 +34,7 @@ def main(
     num_samples: int = 2,
     batch_size: int = 2,
     duration_s: float = 10.24,
+    real_max_duration_s: float | None = None,
     seed: int = 42,
 ) -> None:
     """Run the reconstruction eval end to end on a handful of samples.
@@ -44,7 +48,8 @@ def main(
         num_inference_steps: DDIM grid length; the real eval uses 200.
         num_samples: Generated and real samples to score.
         batch_size: Samples per forward pass.
-        duration_s: Real-audio crop length.
+        duration_s: Generated-audio length, and the real crop length when the window is fixed.
+        real_max_duration_s: Cap for the natural-length real window; `None` keeps the fixed crop.
         seed: Seed for fixtures.
     """
     load_dotenv(AUDIO_ROOT / ".env", override=True)
@@ -61,20 +66,32 @@ def main(
     audio_paths, audio_prompts = real_audio_fixtures(
         os.environ["MEDLEY_PROMPTS_CSV"], os.environ["MEDLEYDB_AUDIO_DIR"], num_samples, seed
     )
-    real, names = load_real_latents(ldm, audio_paths, seed=seed, duration_s=duration_s)
-    logger.info("real {} from {}", tuple(real.shape), names)
-    assert real.shape[1:] == generated.shape[1:], (real.shape, generated.shape)
+    real, names = load_real_latents(
+        ldm,
+        audio_paths,
+        seed=seed,
+        duration_s=duration_s,
+        max_duration_s=real_max_duration_s,
+    )
+    logger.info("real {} from {}", [tuple(latent.shape) for latent in real], names)
+
+    window = latent_height(ldm.model, duration_s) // ldm.model.vae_scale_factor
 
     for kind, latents, prompt_list, reference in (
-        ("generated", generated, prompts, initial_noise),
-        ("real", real, audio_prompts, torch.randn(real.shape)),
+        ("generated", list(generated.split(1)), prompts, initial_noise),
+        ("real", real, audio_prompts, None),
     ):  # generated audio has its true initial noise; real audio can only get a stand-in draw
         scores, inverted = reconstruction_metrics(
-            ldm, latents, prompt_list, batch_size=batch_size, progress=logger.info
+            ldm, batch_latents(latents, batch_size), prompt_list, progress=logger.info
         )
         logger.info("{}: {}", kind, scores)
+        inverted_window = crop_to_window(inverted, window)
         report = noise_report(
-            inverted, reference, prefix=kind, reference_is_ground_truth=kind == "generated", seed=seed
+            inverted_window,
+            reference if reference is not None else torch.randn(inverted_window.shape),
+            prefix=kind,
+            reference_is_ground_truth=kind == "generated",
+            seed=seed,
         )
         logger.info("{}: {}", kind, report)
 

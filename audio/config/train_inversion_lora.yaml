@@ -95,6 +95,17 @@ max_val_batches: 50
 # 50/50 costs a quarter as much and leaves far more headroom to measure (plain DDIM sits near
 # 36 dB at 50 steps vs 48 dB at 200), but the adapter is then extrapolating: it learned to
 # correct a 5-timestep shift and sees a 20-timestep one, and the editing benchmark uses 200.
+# Real-audio window. null takes a fixed recon_duration_s crop at a random offset, so every
+# latent shares a shape. A number instead takes each track at its own length capped there, from
+# the start -- what create_truncated_audio feeds the editing pipeline, so the reconstruction is
+# scored at the geometry the edits run on. The MedleyDB pool is 35 mixes spanning 13.1-302.8 s
+# (median 49.4), so at a 60 s cap the eval sees 13.1-60 s windows, mean 43.6 s; only 14 tracks
+# reach 60 s, which is why a fixed 60 s crop is not available. A natural window leaves no offset
+# to vary, so distinct crops are capped at one per track: keep recon_num_real at or below the
+# pool size, since duplicate crops would drive corr_topk and kl_per_dim to their degenerate
+# values. The distributional metrics are computed on the leading recon_duration_s of every
+# latent, which is the only window all of them share.
+recon_real_max_duration_s: null
 recon_num_inference_steps: 50
 recon_every_steps: 2500
 recon_num_generated: 256

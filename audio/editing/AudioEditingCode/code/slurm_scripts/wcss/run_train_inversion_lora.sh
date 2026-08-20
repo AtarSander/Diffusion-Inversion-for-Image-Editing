@@ -88,8 +88,13 @@ CONFIGS=(
   # touched saw the timestep directly. Stops at 6000 steps -- q4 reconstruction peaked near 7500
   # and the scored index-26 checkpoint was step 6000, so this is the matched comparison -- and
   # saves every 1000 with reconstruction on the same grid, so every checkpoint is picked on
-  # reconstruction rather than on loss. Six recon evals at ~14 min is ~1.4 h of the 24 h limit.
-  "full|32|16|5e-4|q4_fullte_r32_a16_lr5e-4|train_max_timestep=250 num_loss_bands=5 max_train_steps=6000 save_every_steps=1000 recon_every_steps=1000"
+  # reconstruction rather than on loss. The real-audio half of that reconstruction runs at each
+  # track's own length capped at 60 s -- the editing pipeline's geometry, 5.9x the 10.24 s the
+  # adapter trains on -- over all 35 distinct MedleyDB mixes, since a natural window leaves no
+  # offset to vary and more draws would be duplicates. Six evals at ~14 min is ~1.4 h of the
+  # 24 h limit: the real set costs less than the old 256 fixed crops did despite the longer
+  # windows, because 35 of them replace 256.
+  "full|32|16|5e-4|q4_fullte_r32_a16_lr5e-4|train_max_timestep=250 num_loss_bands=5 max_train_steps=6000 save_every_steps=1000 recon_every_steps=1000 recon_real_max_duration_s=60.0 recon_num_real=35"
 )
 
 # Fail before the 12 GB model load rather than after it: wandb only reports a bad credential

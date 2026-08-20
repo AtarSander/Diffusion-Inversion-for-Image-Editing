@@ -116,15 +116,71 @@ def mel_metrics(mel_ref: torch.Tensor, mel_rec: torch.Tensor) -> dict[str, float
     return {key: float(np.mean(values)) for key, values in scores.items()}
 
 
+def batch_latents(latents: list[torch.Tensor], batch_size: int) -> list[torch.Tensor]:
+    """Stack consecutive equal-shaped latents into batches of at most `batch_size`.
+
+    Real-audio fixtures keep each track's own length, so they are a list of differently shaped
+    latents rather than one tensor. Only same-shaped neighbours can share a forward pass, so a
+    run of distinct shapes degrades to batch 1 -- which costs nothing at these lengths, because
+    a single 60 s latent already saturates the GPU (measured: per-sample forward time is flat in
+    batch size at 60 s, while at 10.24 s batch 8 is 2.9x more efficient per sample).
+
+    Args:
+        latents: Latents `[n_i, C, H_i, W]`, in the order they should be scored.
+        batch_size: Most examples per batch.
+
+    Returns:
+        Batches `[n, C, H, W]`, preserving order and total example count.
+    """
+    assert latents, "no latents to batch"
+    assert batch_size > 0, batch_size
+
+    batches: list[torch.Tensor] = []
+    group: list[torch.Tensor] = []
+    for latent in latents:
+        assert latent.ndim == 4, f"expected [n, C, H, W], got {tuple(latent.shape)}"
+        full = sum(item.shape[0] for item in group) + latent.shape[0] > batch_size
+        if group and (latent.shape[1:] != group[0].shape[1:] or full):
+            batches.append(torch.cat(group, dim=0))
+            group = []
+        group.append(latent)
+    batches.append(torch.cat(group, dim=0))
+
+    assert sum(b.shape[0] for b in batches) == sum(t.shape[0] for t in latents)
+    return batches
+
+
+def crop_to_window(latents: list[torch.Tensor], height: int) -> torch.Tensor:
+    """Cut every latent to the same leading `height` frames and stack them.
+
+    The distributional noise checks estimate per-dimension statistics across the batch, so they
+    need one shape for the whole set, which variable-length crops do not have. Cutting to a fixed
+    window rather than to the shortest fixture also keeps those numbers comparable across runs
+    whose crops differ.
+
+    Args:
+        latents: Latents `[n_i, C, H_i, W]`, each at least `height` frames tall.
+        height: Latent frames to keep.
+
+    Returns:
+        Stacked latents `[N, C, height, W]`.
+    """
+    assert latents, "no latents to crop"
+    for latent in latents:
+        assert latent.shape[2] >= height, (
+            f"latent of height {latent.shape[2]} is shorter than the {height}-frame noise window"
+        )
+    return torch.cat([latent[:, :, :height, :] for latent in latents], dim=0)
+
+
 @torch.no_grad()
 def reconstruction_metrics(
     ldm,
-    x0: torch.Tensor,
+    batches: list[torch.Tensor],
     prompts: list[str],
-    batch_size: int,
     set_lora_enabled: Callable[[bool], None] | None = None,
     progress: Callable[[str], None] | None = None,
-) -> tuple[dict[str, float], torch.Tensor]:
+) -> tuple[dict[str, float], list[torch.Tensor]]:
     """Invert then denoise each latent and score how well the round trip returns it.
 
     Inversion runs with the adapter in its current state; the reverse pass always runs with the
@@ -133,25 +189,28 @@ def reconstruction_metrics(
 
     Args:
         ldm: `AudioLDM2Wrapper`.
-        x0: Clean latents to round-trip, `[N, C, H, W]`.
-        prompts: One caption per latent.
-        batch_size: Latents per forward pass.
+        batches: Clean latents to round-trip, grouped by `batch_latents`.
+        prompts: One caption per latent, flat across all batches.
         set_lora_enabled: Toggle for the adapter. `None` measures plain DDIM inversion.
         progress: Optional callback for a one-line status per batch.
 
     Returns:
-        `latent_mse` plus the mel metrics averaged over all N examples, and the inverted latents
-        `[N, C, H, W]` on the CPU so the caller can run the distributional noise checks on them.
+        `latent_mse` plus the mel metrics averaged over every example, and the inverted latents
+        per batch on the CPU, which the caller feeds to the distributional noise checks. They are
+        returned unstacked because the batches need not share a shape.
     """
-    assert x0.shape[0] == len(prompts), (x0.shape, len(prompts))
+    total = sum(batch.shape[0] for batch in batches)
+    assert total == len(prompts), (total, len(prompts))
     latent_mse: list[float] = []
     mel_scores: list[dict[str, float]] = []
     weights: list[int] = []
     inverted: list[torch.Tensor] = []
 
-    for start in range(0, x0.shape[0], batch_size):
-        reference = x0[start : start + batch_size].to(ldm.device)
-        cond = encode_prompts(ldm, prompts[start : start + batch_size])
+    scored = 0
+    for batch in batches:
+        reference = batch.to(ldm.device)
+        cond = encode_prompts(ldm, prompts[scored : scored + batch.shape[0]])
+        scored += batch.shape[0]
 
         if set_lora_enabled is not None:
             set_lora_enabled(True)
@@ -171,15 +230,15 @@ def reconstruction_metrics(
         inverted.append(x_t.detach().cpu())
         if progress is not None:
             progress(
-                f"reconstruction {start + reference.shape[0]}/{x0.shape[0]}: "
+                f"reconstruction {scored}/{total} at latent {tuple(reference.shape[2:])}: "
                 f"latent_mse={latent_mse[-1]:.5f} mel_psnr={mel_scores[-1]['mel_psnr']:.2f}"
             )
 
-    total = sum(weights)
+    assert scored == total, (scored, total)
     out = {"latent_mse": sum(m * w for m, w in zip(latent_mse, weights)) / total}
     for key in mel_scores[0]:
         out[key] = sum(s[key] * w for s, w in zip(mel_scores, weights)) / total
-    return out, torch.cat(inverted, dim=0)
+    return out, inverted
 
 
 @torch.no_grad()
@@ -287,24 +346,37 @@ def real_audio_fixtures(
 
 
 def load_real_latents(
-    ldm, audio_paths: list[Path], seed: int, duration_s: float
-) -> tuple[torch.Tensor, list[str]]:
-    """Encode fixed random crops of real audio into latents.
+    ldm,
+    audio_paths: list[Path],
+    seed: int,
+    duration_s: float,
+    max_duration_s: float | None = None,
+) -> tuple[list[torch.Tensor], list[str]]:
+    """Encode crops of real audio into latents, one per file.
+
+    Two windows are available. The default takes a fixed `duration_s` crop at a random offset,
+    which gives every latent the same shape. Setting `max_duration_s` instead takes each track at
+    its own length, capped there and measured from the start -- exactly what
+    `create_truncated_audio` feeds the editing pipeline, so the reconstruction is scored at the
+    geometry the edits actually run on. Crops then differ in shape, which is why this returns a
+    list rather than a stacked tensor.
 
     Args:
         ldm: `AudioLDM2Wrapper`.
         audio_paths: One file per requested crop; repeats are expected when the pool is small.
-        seed: Seed for the crop offsets, so the same excerpts are scored at every eval.
-        duration_s: Crop length in seconds.
+        seed: Seed for the crop offsets, so the same excerpts are scored at every eval. Unused in
+            the natural-length window, which has no offset to choose.
+        duration_s: Crop length in seconds, for the fixed window.
+        max_duration_s: Cap for the natural-length window; `None` selects the fixed window.
 
     Returns:
-        Latents `[N, C, H, W]` on the CPU, and the crop identifiers for logging.
+        Latents `[1, C, H_i, W]` on the CPU, one per path, and the crop identifiers for logging.
     """
     from utils import load_audio
 
     fn_stft = ldm.get_fn_STFT()
     # TacotronSTFT runs at 16 kHz with hop 160, so the mel grid is exactly 100 frames a second.
-    frames = int(duration_s * MEL_FRAMES_PER_SECOND)
+    scale = ldm.model.vae_scale_factor
     rng = np.random.default_rng(seed)
     latents: list[torch.Tensor] = []
     names: list[str] = []
@@ -314,9 +386,21 @@ def load_real_latents(
             str(path), fn_stft, device=ldm.device, stft=True, model_sr=ldm.get_sr()
         )
         assert mel.ndim == 4, f"expected [1, 1, T, F] mel, got {tuple(mel.shape)}"
-        assert mel.shape[2] > frames, f"{path} is shorter than {duration_s}s"
-        offset = int(rng.integers(0, mel.shape[2] - frames))
+        if max_duration_s is None:
+            frames = int(duration_s * MEL_FRAMES_PER_SECOND)
+            assert mel.shape[2] > frames, f"{path} is shorter than {duration_s}s"
+            offset = int(rng.integers(0, mel.shape[2] - frames))
+        else:
+            # The VAE downsamples the mel by vae_scale_factor, so a natural length has to be
+            # trimmed to a multiple of it; the fixed window is already one by construction.
+            frames = min(mel.shape[2], int(max_duration_s * MEL_FRAMES_PER_SECOND))
+            frames -= frames % scale
+            offset = 0
+        assert frames > 0, f"{path} yielded no usable frames"
         latents.append(ldm.vae_encode(mel[:, :, offset : offset + frames, :]).cpu())
-        names.append(f"{path.stem}@{offset / MEL_FRAMES_PER_SECOND:.1f}s")
+        names.append(
+            f"{path.stem}@{offset / MEL_FRAMES_PER_SECOND:.1f}s"
+            f"+{frames / MEL_FRAMES_PER_SECOND:.2f}s"
+        )
 
-    return torch.cat(latents, dim=0), names
+    return latents, names

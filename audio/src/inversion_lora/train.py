@@ -32,8 +32,12 @@ from src.inversion_lora.dataset import (  # noqa: E402
     split_sample_ids,
     transitions_below_timestep,
 )
+from src.inversion_lora.generate_trajectories import latent_height  # noqa: E402
 from src.inversion_lora.noise_metrics import noise_report  # noqa: E402
 from src.inversion_lora.reconstruct import (  # noqa: E402
+    MEL_FRAMES_PER_SECOND,
+    batch_latents,
+    crop_to_window,
     generate_eval_latents,
     held_out_prompts,
     load_real_latents,
@@ -243,6 +247,15 @@ class AudioLDM2InversionTrainer:
             encoder_attention_mask=t5_mask,
         )[0].sample
 
+    def log_first_batch(self, batch: dict[str, Any]) -> None:
+        """Print the first training batch's shapes, so a run can be judged from its first screen."""
+        logger.info(
+            "First batch: x_clean={} t={} t5={}",
+            tuple(batch["x_clean"].shape),
+            batch["timestep"].tolist(),
+            tuple(batch["t5_prompt_embeds"].shape),
+        )
+
     def forward_loss(self, batch: dict[str, Any]) -> torch.Tensor:
         """No-CFG loss: MSE between the student's epsilon and the cached teacher epsilon."""
         return self.per_example_loss(batch).mean()
@@ -387,26 +400,37 @@ class AudioLDM2InversionTrainer:
                     batch_size=int(self.cfg.recon_batch_size),
                     duration_s=float(self.cfg.recon_duration_s),
                 )
+                real_max = self.cfg.recon_real_max_duration_s
                 real, real_names = load_real_latents(
                     self.ldm,
                     audio_paths,
                     seed=int(self.cfg.seed),
                     duration_s=float(self.cfg.recon_duration_s),
+                    max_duration_s=None if real_max is None else float(real_max),
                 )
         finally:
             self.set_lora_enabled(True)
 
-        assert generated.shape[1:] == real.shape[1:], (generated.shape, real.shape)
+        # The real set no longer has to share the generated set's shape: a natural-length window
+        # gives every track its own, which is the point of it.
+        seconds = [
+            latent.shape[2] * self.ldm.model.vae_scale_factor / MEL_FRAMES_PER_SECOND
+            for latent in real
+        ]
         logger.info(
-            "Reconstruction fixtures: {} generated {} real, latent {}; first real crop {}",
+            "Reconstruction fixtures: {} generated at latent {}, {} real spanning {:.2f}-{:.2f}s "
+            "({:.2f}s total); first real crop {}",
             generated.shape[0],
-            real.shape[0],
             tuple(generated.shape[1:]),
+            len(real),
+            min(seconds),
+            max(seconds),
+            sum(seconds),
             real_names[0],
         )
 
         self.eval_fixtures = {
-            "generated": generated,
+            "generated": list(generated.split(1)),
             "generated_noise": initial_noise,
             "generated_prompts": prompts,
             "real": real,
@@ -430,28 +454,36 @@ class AudioLDM2InversionTrainer:
         fixtures = self.eval_fixtures
         metrics: dict[str, float] = {}
 
+        # The distributional checks need one shape across the whole set, which natural-length
+        # crops do not have. Every latent is cut to the generated set's window, which is the
+        # shortest fixture geometry in play and keeps these numbers comparable across runs.
+        window = latent_height(
+            self.ldm.model, float(self.cfg.recon_duration_s)
+        ) // self.ldm.model.vae_scale_factor
+
         with self.scheduler_steps(int(self.cfg.recon_num_inference_steps)):
             for kind in ("generated", "real"):
                 scores, inverted = reconstruction_metrics(
                     self.ldm,
-                    fixtures[kind],
+                    batch_latents(fixtures[kind], int(self.cfg.recon_batch_size)),
                     fixtures[f"{kind}_prompts"],
-                    batch_size=int(self.cfg.recon_batch_size),
                     set_lora_enabled=set_lora_enabled,
                     progress=lambda message: logger.debug(message),
                 )
                 metrics.update(
                     {f"{prefix}/{kind}/{key}": value for key, value in scores.items()}
                 )
+                inverted_window = crop_to_window(inverted, window)
                 # Generated samples have a true initial noise to compare against; real audio has
                 # none, so a fresh standard normal draw is the only available reference.
                 gaussian = torch.randn(
-                    inverted.shape, generator=torch.Generator().manual_seed(int(self.cfg.seed))
+                    inverted_window.shape,
+                    generator=torch.Generator().manual_seed(int(self.cfg.seed)),
                 )
                 reference = fixtures["generated_noise"] if kind == "generated" else gaussian
                 metrics.update(
                     noise_report(
-                        inverted,
+                        inverted_window,
                         reference,
                         prefix=f"{prefix}/{kind}/noise",
                         reference_is_ground_truth=kind == "generated",
@@ -463,7 +495,7 @@ class AudioLDM2InversionTrainer:
                 # metrics discriminate, rather than reading at the floor for everything.
                 metrics.update(
                     noise_report(
-                        fixtures[kind],
+                        crop_to_window(fixtures[kind], window),
                         gaussian,
                         prefix=f"{prefix}/{kind}/latent",
                         reference_is_ground_truth=False,
@@ -576,12 +608,7 @@ class AudioLDM2InversionTrainer:
         while self.global_step < max_train_steps:
             for batch in train_loader:
                 if not logged_first:
-                    logger.info(
-                        "First batch: x_clean={} t={} t5={}",
-                        tuple(batch["x_clean"].shape),
-                        batch["timestep"].tolist(),
-                        tuple(batch["t5_prompt_embeds"].shape),
-                    )
+                    self.log_first_batch(batch)
                     logged_first = True
 
                 per_example = self.per_example_loss(batch)
