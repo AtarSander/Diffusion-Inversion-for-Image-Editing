@@ -31,12 +31,31 @@ num_loss_bands: 4
 # plateaued at 85% of the shift gap regardless of rank or learning rate, so the remaining lever
 # is the form of the adapter rather than its size. Module counts in the AudioLDM2 UNet:
 # to_q/to_k/to_v 256 each, to_out.0 256, ff.net.0.proj 128, ff.net.2 128, proj_in/proj_out 64
-# each, conv1/conv2 22 each, conv_shortcut 15.
+# each, conv1/conv2 22 each, conv_shortcut 15, time_emb_proj 22, time_embedding.linear_1/_2 1
+# each. The timestep-embedding modules are where the schedule enters the network, and the shift
+# gap the adapter has to close is strongly t-dependent (~300x larger at t <= 250), so they are
+# the highest-leverage 24 modules for this objective.
 lora_preset: attn
 lora_target_presets:
   attn: [to_q, to_k, to_v, to_out.0]
   attn_ff: [to_q, to_k, to_v, to_out.0, ff.net.0.proj, ff.net.2]
-  full: [to_q, to_k, to_v, to_out.0, ff.net.0.proj, ff.net.2, proj_in, proj_out, conv1, conv2, conv_shortcut]
+  full:
+    [
+      to_q,
+      to_k,
+      to_v,
+      to_out.0,
+      ff.net.0.proj,
+      ff.net.2,
+      proj_in,
+      proj_out,
+      conv1,
+      conv2,
+      conv_shortcut,
+      time_embedding.linear_1,
+      time_embedding.linear_2,
+      time_emb_proj,
+    ]
 
 lora:
   r: 8

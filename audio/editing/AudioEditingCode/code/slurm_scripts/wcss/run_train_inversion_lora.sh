@@ -17,6 +17,7 @@
 #   bash editing/AudioEditingCode/code/slurm_scripts/wcss/submit_train.sh --array=6-11  # lr sweep
 #   bash editing/AudioEditingCode/code/slurm_scripts/wcss/submit_train.sh --array=12-23 # rerun + conv/ff
 #   bash editing/AudioEditingCode/code/slurm_scripts/wcss/submit_train.sh --array=24-26 # t<=250 only
+#   bash editing/AudioEditingCode/code/slurm_scripts/wcss/submit_train.sh --array=27    # full+time_emb
 #   bash editing/AudioEditingCode/code/slurm_scripts/wcss/submit_train.sh
 #
 # Prerequisites:
@@ -81,6 +82,13 @@ CONFIGS=(
   "attn|8|4|5e-4|q4_attn_r8_a4_lr5e-4|train_max_timestep=250 num_loss_bands=5"
   "attn|32|16|5e-4|q4_attn_r32_a16_lr5e-4|train_max_timestep=250 num_loss_bands=5"
   "full|32|16|5e-4|q4_full_r32_a16_lr5e-4|train_max_timestep=250 num_loss_bands=5"
+  # 27: index 26 re-run now that the full preset also adapts the timestep-embedding modules
+  # (time_embedding.linear_1/_2 and the 22 per-ResNet time_emb_proj, 1467 -> 1491 modules). The
+  # shift gap the adapter has to close is strongly t-dependent, and until now nothing the adapter
+  # touched saw the timestep directly. Stops at 6000 steps -- q4 reconstruction peaked near 7500
+  # and the scored index-26 checkpoint was step 6000, so this is the matched comparison -- and
+  # saves every 1000 so a checkpoint can be picked on reconstruction rather than on loss.
+  "full|32|16|5e-4|q4_fullte_r32_a16_lr5e-4|train_max_timestep=250 num_loss_bands=5 max_train_steps=6000 save_every_steps=1000"
 )
 
 # Fail before the 12 GB model load rather than after it: wandb only reports a bad credential
