@@ -92,8 +92,11 @@ def ddim_denoise(ldm, x_t: torch.Tensor, cond: Conditioning) -> torch.Tensor:
 def mel_metrics(mel_ref: torch.Tensor, mel_rec: torch.Tensor) -> dict[str, float]:
     """Per-example mel MSE, SSIM and PSNR, averaged over the batch.
 
-    SSIM and PSNR come from scikit-image with the same `data_range` convention the editing
-    benchmark uses in `src/metrics/alignment.py`, so the numbers mean the same thing here.
+    Both come from scikit-image over an empirical `data_range` -- about 12.6 on VAE-decoded
+    log-mels. That matches how `src/metrics/alignment.py` scores SSIM, but *not* how it scores
+    PSNR: there `psnr()` is called without `data_range`, so scikit-image falls back to the float
+    dtype range of 1 or 2, which is worth ~16 dB at equal MSE. Mel PSNR from this eval is
+    therefore not comparable with mel PSNR from the editing benchmark; compare within one path.
 
     Args:
         mel_ref: Reference mel `[B, 1, T, F]`.
