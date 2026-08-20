@@ -35,6 +35,14 @@ source .venv/bin/activate
 export PYTHONPATH="$PWD:$PWD/editing/AudioEditingCode/code:${PYTHONPATH:-}"
 export TOKENIZERS_PARALLELISM=false
 
+# SCRIPT selects the model: the AudioLDM2 trainer by default, or
+#   SCRIPT=src/inversion_lora/train_stable_audio.py
+# for Stable Audio Open, which carries its own default config. RUN_PREFIX namespaces the
+# run so a Stable Audio run cannot write into an AudioLDM2 checkpoint directory of the
+# same name, since the two share LORAINV_CHECKPOINT_ROOT and the CONFIGS table below.
+SCRIPT="${SCRIPT:-src/inversion_lora/train.py}"
+RUN_PREFIX="${RUN_PREFIX:-}"
+
 # rank|alpha|learning_rate|run_name
 # Rank and learning rate are the two that decide whether the adapter has the capacity to close
 # the shift gap at all; alpha tracks rank so the effective scale alpha/r stays comparable.
@@ -114,11 +122,12 @@ fi
 # EXTRA is optional: space-separated Hydra overrides for configs that need more than the four
 # fields above, so the entries that do not need any stay untouched.
 IFS='|' read -r PRESET RANK ALPHA LR RUN_NAME EXTRA <<< "${CONFIGS[$TASK_ID]}"
+RUN_NAME="$RUN_PREFIX$RUN_NAME"
 echo "task=$TASK_ID preset=$PRESET rank=$RANK alpha=$ALPHA lr=$LR run=$RUN_NAME node=$(hostname)"
 echo "extra overrides: ${EXTRA:-none}"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 
-python src/inversion_lora/train.py \
+python "$SCRIPT" \
   device=cuda:0 \
   lora_preset="$PRESET" \
   lora.r="$RANK" \

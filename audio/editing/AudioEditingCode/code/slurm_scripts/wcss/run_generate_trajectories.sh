@@ -31,6 +31,11 @@ export TOKENIZERS_PARALLELISM=false
 TOTAL_SAMPLES="${TOTAL_SAMPLES:-1500}"
 N_SHARDS="${N_SHARDS:-8}"
 CONFIG_NAME="${CONFIG_NAME:-generate_trajectories_gonogo}"
+# SCRIPT selects the model: the AudioLDM2 generator by default, or
+#   SCRIPT=src/inversion_lora/generate_trajectories_stable_audio.py
+#   CONFIG_NAME=generate_trajectories_stable_audio
+# for Stable Audio Open. The sharding is identical either way.
+SCRIPT="${SCRIPT:-src/inversion_lora/generate_trajectories.py}"
 
 TASK_ID="${SLURM_ARRAY_TASK_ID:?This script must run as a SLURM array job}"
 PER_SHARD=$(( (TOTAL_SAMPLES + N_SHARDS - 1) / N_SHARDS ))
@@ -46,7 +51,7 @@ fi
 echo "task=$TASK_ID start_index=$START num_samples=$COUNT node=$(hostname)"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 
-python src/inversion_lora/generate_trajectories.py \
+python "$SCRIPT" \
   --config-name "$CONFIG_NAME" \
   device=cuda:0 \
   start_index="$START" \
