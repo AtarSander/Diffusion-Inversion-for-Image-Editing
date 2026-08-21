@@ -8,13 +8,14 @@
 #SBATCH --mem=100G
 #SBATCH --time=08:00:00
 #SBATCH --gres=gpu:hopper:1
-#SBATCH --array=0-47
+#SBATCH --array=0-63
 #SBATCH --output=outputs/logs/slurm/lorasweep-%A_%a.out
 #SBATCH --error=outputs/logs/slurm/lorasweep-%A_%a.err
 #
 # Submit from audio/:
 #   bash editing/AudioEditingCode/code/slurm_scripts/wcss/submit_lora_sweep.sh
 #   bash .../submit_lora_sweep.sh --array=0-7    # one checkpoint only
+#   bash .../submit_lora_sweep.sh --array=48-63 # the timestep-embedding pair only
 #
 # The no-LoRA twin of every config is already scored by run_hparam_sweep.sh, so each of these
 # runs has a paired reference at identical settings over the same 115 rows.

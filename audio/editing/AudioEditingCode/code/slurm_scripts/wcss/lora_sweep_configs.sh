@@ -13,6 +13,16 @@ LORA_CHECKPOINTS=(
   "attn_r32_a16_lr2e-4/checkpoint_step_4000_ema.pt"
   "full_r8_a4_lr5e-4/checkpoint_step_2000.pt"
   "full_r8_a4_lr5e-4/checkpoint_step_2000_ema.pt"
+  # Appended, never inserted: the array index is the line number, so 0-47 must keep meaning what
+  # it meant while the earlier sweep ran. These two are the timestep-embedding preset (index 27),
+  # the first adapter to break the 85-88% plateau -- 92.7% of the shift gap closed. The two steps
+  # differ because raw and EMA weights peak at different points: raw is best at 1000 on both
+  # val/loss (3.543e-6) and reconstruction (+0.62 dB, its only positive step), while the EMA at
+  # 1000 is its worst point (9.692e-6, the average has not caught up) and bottoms at 3000
+  # (3.408e-6). Pairing both arms at one step would have spent 8 runs on a checkpoint already
+  # known to be bad.
+  "q4_fullte_r32_a16_lr5e-4/checkpoint_step_1000.pt"
+  "q4_fullte_r32_a16_lr5e-4/checkpoint_step_3000_ema.pt"
 )
 
 # tstart is the axis that traces the front; cfg_tar 6 and 12 bracket the region where DDIM's
