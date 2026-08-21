@@ -93,10 +93,17 @@ def mel_metrics(mel_ref: torch.Tensor, mel_rec: torch.Tensor) -> dict[str, float
     """Per-example mel MSE, SSIM and PSNR, averaged over the batch.
 
     Both come from scikit-image over an empirical `data_range` -- about 12.6 on VAE-decoded
-    log-mels. That matches how `src/metrics/alignment.py` scores SSIM, but *not* how it scores
-    PSNR: there `psnr()` is called without `data_range`, so scikit-image falls back to the float
-    dtype range of 1 or 2, which is worth ~16 dB at equal MSE. Mel PSNR from this eval is
-    therefore not comparable with mel PSNR from the editing benchmark; compare within one path.
+    log-mels -- which matches how `src/metrics/alignment.py` scores SSIM but not how it scores
+    PSNR. Mel PSNR here is NOT comparable with mel PSNR from the editing benchmark, for two
+    independent reasons, so only ever compare within one path:
+
+    1. What is compared. Here both sides are VAE decodes of a latent, so decoder error cancels
+       and no vocoder runs. The benchmark pairs two *wav files*, so its number also carries VAE
+       encode+decode, the 16 kHz HiFi-GAN vocoder and an STFT re-analysis.
+    2. How the mel is scaled. `audioldm_eval` re-analyses each wav as
+       `clip((log10(mel) + 100) / 100, 0, 1)` and then calls `psnr()` with no `data_range`, so
+       scikit-image pins it to 1.0 via the float dtype range. That divides the error by 100 as
+       well as the range by ~12.6, so no fixed dB offset relates the two numbers.
 
     Args:
         mel_ref: Reference mel `[B, 1, T, F]`.
