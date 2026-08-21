@@ -100,10 +100,16 @@ def mel_metrics(mel_ref: torch.Tensor, mel_rec: torch.Tensor) -> dict[str, float
     1. What is compared. Here both sides are VAE decodes of a latent, so decoder error cancels
        and no vocoder runs. The benchmark pairs two *wav files*, so its number also carries VAE
        encode+decode, the 16 kHz HiFi-GAN vocoder and an STFT re-analysis.
-    2. How the mel is scaled. `audioldm_eval` re-analyses each wav as
-       `clip((log10(mel) + 100) / 100, 0, 1)` and then calls `psnr()` with no `data_range`, so
-       scikit-image pins it to 1.0 via the float dtype range. That divides the error by 100 as
-       well as the range by ~12.6, so no fixed dB offset relates the two numbers.
+    2. How the mel is scaled. `audioldm_eval` re-analyses each wav (first channel only, 16 kHz,
+       DC removed) into `clip((20 * log10(mel) + 80) / 100, 0, 1)`, mapping -80..+20 dB onto
+       [0, 1] and clipping outside it. Its `psnr()` call passes no `data_range`, which is right
+       for that representation -- scikit-image's float fallback of 1.0 *is* its full scale, the
+       same convention as 255 for uint8. The empirical per-file range used here is the less
+       standard of the two. Either way the scalings differ, so no fixed dB offset relates the
+       numbers.
+
+    The benchmark also truncates both mels to the shorter clip from frame 0, so it assumes the
+    output is sample-aligned with the input.
 
     Args:
         mel_ref: Reference mel `[B, 1, T, F]`.
