@@ -43,6 +43,9 @@ class P2PEditor:
         self.ldm_stable.scheduler.set_timesteps(self.num_ddim_steps)
         self.lora_loaded = False
         self.lora_adapter_name = "inversion"
+        self.lora_mode = "single"
+        self.lora_branch_adapter_names = None
+        self.lora_scale = 1.0
 
     def load_lora(self, checkpoint_path, rank=16, lora_alpha=8, lora_dropout=0.0,
                   adapter_name="inversion", scale=1.0):
@@ -73,8 +76,28 @@ class P2PEditor:
             self.ldm_stable.unet.set_adapters([adapter_name], weights=[float(scale)])
         self.lora_loaded = True
         self.lora_adapter_name = adapter_name
+        self.lora_mode = "single"
+        self.lora_branch_adapter_names = None
+        self.lora_scale = float(scale)
         self.set_lora_enabled(False)
         print(f"[INFO] loaded inversion LoRA from {checkpoint_path}")
+
+    def load_branch_pair_lora(
+        self, checkpoint_path, rank=16, lora_alpha=8, lora_dropout=0.0, scale=1.0
+    ):
+        if self.lora_loaded:
+            raise RuntimeError("An inversion LoRA checkpoint is already loaded.")
+        from utils.lora_adapters import load_branch_pair_lora
+
+        resolved_path, adapter_names = load_branch_pair_lora(
+            self.ldm_stable.unet, checkpoint_path, rank=rank,
+            lora_alpha=lora_alpha, lora_dropout=lora_dropout, scale=scale,
+        )
+        self.lora_loaded = True
+        self.lora_mode = "branch_pair"
+        self.lora_branch_adapter_names = adapter_names
+        self.lora_scale = float(scale)
+        print(f"[INFO] loaded branch-pair inversion LoRAs from {resolved_path}")
 
     def set_lora_enabled(self, enabled):
         if not self.lora_loaded:
@@ -578,7 +601,9 @@ class P2PEditor:
             try:
                 with self.autocast():
                     _, x_stars = direct_inversion.ddim_with_guidance_scale_inversion(
-                        image_gt, inversion_guidance_scale
+                        image_gt, inversion_guidance_scale,
+                        lora_branch_adapter_names=self.lora_branch_adapter_names,
+                        lora_adapter_scale=self.lora_scale,
                     )
             finally:
                 self.set_lora_enabled(False)

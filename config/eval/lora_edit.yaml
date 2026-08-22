@@ -12,6 +12,8 @@ rerun_exist_images: false
 
 lora:
   checkpoint_path: checkpoints/r32/checkpoint_step_125000.pt
+  # single: legacy one-adapter checkpoints; branch_pair: conditional + unconditional adapters
+  mode: single
   scale: 1.0
 
 guidance:

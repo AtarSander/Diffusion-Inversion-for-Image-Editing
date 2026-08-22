@@ -1,0 +1,3 @@
+# Separate conditional and empty-prompt branch losses using two LoRA adapters.
+mode: branch_pair
+guidance_scale: 2.5

@@ -94,6 +94,7 @@ if __name__ == "__main__":
     parser.add_argument('--lora_alpha', type=int, default=8)
     parser.add_argument('--lora_dropout', type=float, default=0.0)
     parser.add_argument('--lora_scale', type=float, default=1.0)
+    parser.add_argument('--lora_mode', choices=["single", "branch_pair"], default="single")
     parser.add_argument('--inversion_guidance_scale', type=float, default=1.0)
     args = parser.parse_args()
     
@@ -106,14 +107,23 @@ if __name__ == "__main__":
     use_lora = any(method in lora_methods for method in edit_method_list)
     if use_lora and args.lora_checkpoint is None:
         raise ValueError("--lora_checkpoint is required when using a LoRA edit method")
+    if args.lora_mode == "branch_pair" and "lora+p2p" in edit_method_list:
+        raise ValueError(
+            "Branch-pair LoRAs are supported only by lora+directinversion+p2p."
+        )
     model_key = args.model_key or ("runwayml/stable-diffusion-v1-5" if use_lora else "CompVis/stable-diffusion-v1-4")
 
     p2p_editor=P2PEditor(edit_method_list, torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'),
                          num_ddim_steps=50, model_key=model_key)
     if use_lora:
-        p2p_editor.load_lora(checkpoint_path=args.lora_checkpoint, rank=args.lora_rank,
-                             lora_alpha=args.lora_alpha, lora_dropout=args.lora_dropout,
-                             scale=args.lora_scale)
+        load_method = (
+            p2p_editor.load_branch_pair_lora
+            if args.lora_mode == "branch_pair"
+            else p2p_editor.load_lora
+        )
+        load_method(checkpoint_path=args.lora_checkpoint, rank=args.lora_rank,
+                    lora_alpha=args.lora_alpha, lora_dropout=args.lora_dropout,
+                    scale=args.lora_scale)
     
     with open(f"{data_path}/mapping_file.json", "r") as f:
         editing_instruction = json.load(f)

@@ -72,6 +72,9 @@ class MasaCtrlEditor:
             model_key, scheduler=self.scheduler, torch_dtype=dtype).to(device)
         self.model.scheduler.set_timesteps(self.num_ddim_steps)
         self.lora_loaded = False
+        self.lora_mode = "single"
+        self.lora_branch_adapter_names = None
+        self.lora_scale = 1.0
 
     def load_lora(self, checkpoint_path, rank=16, lora_alpha=8, lora_dropout=0.0,
                   adapter_name="inversion", scale=1.0):
@@ -94,8 +97,28 @@ class MasaCtrlEditor:
         if scale is not None and hasattr(self.model.unet, "set_adapters"):
             self.model.unet.set_adapters([adapter_name], weights=[float(scale)])
         self.lora_loaded = True
+        self.lora_mode = "single"
+        self.lora_branch_adapter_names = None
+        self.lora_scale = float(scale)
         self.set_lora_enabled(False)
         print(f"[INFO] loaded inversion LoRA from {checkpoint_path}")
+
+    def load_branch_pair_lora(
+        self, checkpoint_path, rank=16, lora_alpha=8, lora_dropout=0.0, scale=1.0
+    ):
+        if self.lora_loaded:
+            raise RuntimeError("An inversion LoRA checkpoint is already loaded.")
+        from utils.lora_adapters import load_branch_pair_lora
+
+        resolved_path, adapter_names = load_branch_pair_lora(
+            self.model.unet, checkpoint_path, rank=rank,
+            lora_alpha=lora_alpha, lora_dropout=lora_dropout, scale=scale,
+        )
+        self.lora_loaded = True
+        self.lora_mode = "branch_pair"
+        self.lora_branch_adapter_names = adapter_names
+        self.lora_scale = float(scale)
+        print(f"[INFO] loaded branch-pair inversion LoRAs from {resolved_path}")
 
     def set_lora_enabled(self, enabled):
         if not self.lora_loaded:
@@ -174,7 +197,9 @@ class MasaCtrlEditor:
             try:
                 with self.autocast():
                     _, x_stars = direct_inversion.ddim_with_guidance_scale_inversion(
-                        image_gt, inversion_guidance_scale
+                        image_gt, inversion_guidance_scale,
+                        lora_branch_adapter_names=self.lora_branch_adapter_names,
+                        lora_adapter_scale=self.lora_scale,
                     )
             finally:
                 self.set_lora_enabled(False)
@@ -329,6 +354,7 @@ if __name__ == "__main__":
     parser.add_argument('--lora_alpha', type=int, default=8)
     parser.add_argument('--lora_dropout', type=float, default=0.0)
     parser.add_argument('--lora_scale', type=float, default=1.0)
+    parser.add_argument('--lora_mode', choices=["single", "branch_pair"], default="single")
     parser.add_argument('--inversion_guidance_scale', type=float, default=1.0)
     args = parser.parse_args()
     
@@ -341,13 +367,22 @@ if __name__ == "__main__":
     use_lora = any(method in lora_methods for method in edit_method_list)
     if use_lora and args.lora_checkpoint is None:
         raise ValueError("--lora_checkpoint is required when using a LoRA edit method")
+    if args.lora_mode == "branch_pair" and "lora+masactrl" in edit_method_list:
+        raise ValueError(
+            "Branch-pair LoRAs are supported only by lora+directinversion+masactrl."
+        )
     model_key = args.model_key or ("runwayml/stable-diffusion-v1-5" if use_lora else "CompVis/stable-diffusion-v1-4")
 
     masactrl_editor=MasaCtrlEditor(edit_method_list, torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'), model_key=model_key)
     if use_lora:
-        masactrl_editor.load_lora(checkpoint_path=args.lora_checkpoint, rank=args.lora_rank,
-                                  lora_alpha=args.lora_alpha, lora_dropout=args.lora_dropout,
-                                  scale=args.lora_scale)
+        load_method = (
+            masactrl_editor.load_branch_pair_lora
+            if args.lora_mode == "branch_pair"
+            else masactrl_editor.load_lora
+        )
+        load_method(checkpoint_path=args.lora_checkpoint, rank=args.lora_rank,
+                    lora_alpha=args.lora_alpha, lora_dropout=args.lora_dropout,
+                    scale=args.lora_scale)
 
     
     with open(f"{data_path}/mapping_file.json", "r") as f:

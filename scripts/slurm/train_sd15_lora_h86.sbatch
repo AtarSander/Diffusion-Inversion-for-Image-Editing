@@ -34,20 +34,17 @@ for override in "${HYDRA_OVERRIDES[@]}"; do
 done
 
 REPO_DIR=${SLURM_SUBMIT_DIR:?SLURM_SUBMIT_DIR is required}
+STORAGE_ROOT="$(dirname "$(readlink -f "$REPO_DIR/checkpoints")")"
+[[ -d "$STORAGE_ROOT" ]] || { echo "Cannot resolve project storage from $REPO_DIR/checkpoints" >&2; exit 2; }
 RUN_NAME=sd15-inversion-lora-r${RANK}-${TRAIN_VARIANT}-e1
 CHECKPOINT_DIR=$REPO_DIR/checkpoints/sd15_inversion_lora_r${RANK}_${TRAIN_VARIANT}_e1
-RUNTIME_CACHE_ROOT=${SCRATCH:?SCRATCH is required}/projects_cache/Diffusion-Inversion-for-Image-Editing/cache/h86/sd15_lora
 JOB_TMP_DIR=${SLURM_TMPDIR:-/tmp}/sd15-lora-r${RANK}-${TRAIN_VARIANT}-${SLURM_JOB_ID}
 VENV_DIR=$JOB_TMP_DIR/venv
 
 module load python/3.11.15
 module load uv/0.11.2
 export PYTHONUNBUFFERED=1 TOKENIZERS_PARALLELISM=false HYDRA_FULL_ERROR=1
-export HF_HOME=$RUNTIME_CACHE_ROOT/huggingface
-export WANDB_CACHE_DIR=$RUNTIME_CACHE_ROOT/wandb-cache
-export WANDB_DIR=$RUNTIME_CACHE_ROOT/wandb
-export MPLCONFIGDIR=$RUNTIME_CACHE_ROOT/matplotlib
-export UV_CACHE_DIR=$RUNTIME_CACHE_ROOT/uv
+source "$REPO_DIR/scripts/slurm/job_local_cache.sh"
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 export MKL_NUM_THREADS=$SLURM_CPUS_PER_TASK
 export OPENBLAS_NUM_THREADS=$SLURM_CPUS_PER_TASK
@@ -55,7 +52,7 @@ export NUMEXPR_NUM_THREADS=$SLURM_CPUS_PER_TASK
 
 cleanup() { [[ -n "${VIRTUAL_ENV:-}" ]] && deactivate || true; rm -rf -- "$JOB_TMP_DIR"; }
 trap cleanup EXIT
-mkdir -p "$JOB_TMP_DIR" "$UV_CACHE_DIR" "$HF_HOME" "$WANDB_CACHE_DIR" "$WANDB_DIR" "$MPLCONFIGDIR" "$CHECKPOINT_DIR"
+mkdir -p "$JOB_TMP_DIR" "$CHECKPOINT_DIR"
 
 cd "$REPO_DIR"
 

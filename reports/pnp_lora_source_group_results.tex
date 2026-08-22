@@ -1,0 +1,65 @@
+\documentclass[11pt]{article}
+\usepackage[margin=0.7in]{geometry}
+\usepackage{booktabs}
+\usepackage{longtable}
+\title{PIE-Bench Source-Group Metrics}
+\date{}
+\begin{document}
+\maketitle
+\fontsize{5.5pt}{6.3pt}\selectfont
+\setlength{\tabcolsep}{1pt}
+\renewcommand{\arraystretch}{0.88}
+\setlength{\LTleft}{0pt}
+\setlength{\LTright}{0pt}
+\setlength{\LTpre}{0pt}
+\setlength{\LTpost}{0pt}
+\begin{longtable}{@{}lllrrrrrrrr@{}}
+\caption{Mean $\pm$ population standard deviation for the complete FP32 LoRA + Direct Inversion evaluations, split by PIE-Bench source group. Natural denotes the 280 photographic images in \texttt{2\_natural}; Artificial denotes the 280 human-made artwork/painting images in \texttt{1\_artificial}. Structure distance and LPIPS are scaled by $10^3$, MSE by $10^4$, and SSIM by $10^2$. Image-level metrics use all $N$ images; unedited-region metrics use the valid counts documented below. Bold marks the better source type within each natural/artificial pair for each metric.}\label{tab:pnp-lora-source-groups}\\
+\toprule
+Editor & Training & Source & Structure$\downarrow$ & PSNR$\uparrow$ & LPIPS$\downarrow$ & MSE$\downarrow$ & SSIM$\uparrow$ & CLIP src$\uparrow$ & CLIP tgt$\uparrow$ & CLIP edit$\uparrow$ \\
+\midrule
+\endfirsthead
+\toprule
+Editor & Training & Source & Structure$\downarrow$ & PSNR$\uparrow$ & LPIPS$\downarrow$ & MSE$\downarrow$ & SSIM$\uparrow$ & CLIP src$\uparrow$ & CLIP tgt$\uparrow$ & CLIP edit$\uparrow$ \\
+\midrule
+\endhead
+P2P & Uniform, r16 & Natural & $\mathbf{13.89 \pm 12.23}$ & $\mathbf{26.28 \pm 4.63}$ & $\mathbf{69.86 \pm 49.21}$ & $\mathbf{37.96 \pm 38.33}$ & $\mathbf{84.51 \pm 10.96}$ & $25.73 \pm 3.10$ & $24.59 \pm 3.81$ & $22.00 \pm 4.89$ \\
+P2P & Uniform, r16 & Artificial & $14.73 \pm 11.80$ & $24.82 \pm 5.22$ & $82.74 \pm 53.65$ & $54.64 \pm 50.28$ & $81.55 \pm 13.09$ & $\mathbf{26.60 \pm 3.31}$ & $\mathbf{25.99 \pm 3.84}$ & $\mathbf{22.48 \pm 5.13}$ \\
+\midrule
+PnP & Uniform, r16 & Natural & $\mathbf{22.85 \pm 19.65}$ & $\mathbf{22.64 \pm 3.34}$ & $\mathbf{106.61 \pm 58.46}$ & $\mathbf{69.64 \pm 44.71}$ & $\mathbf{81.28 \pm 11.36}$ & $25.73 \pm 3.10$ & $25.20 \pm 3.54$ & $22.60 \pm 4.75$ \\
+PnP & Uniform, r16 & Artificial & $26.29 \pm 21.89$ & $21.32 \pm 4.05$ & $119.01 \pm 64.91$ & $99.81 \pm 66.82$ & $77.66 \pm 13.21$ & $\mathbf{26.60 \pm 3.31}$ & $\mathbf{26.58 \pm 3.77}$ & $\mathbf{22.89 \pm 5.24}$ \\
+\midrule
+MasaCtrl & Uniform, r16 & Natural & $\mathbf{27.54 \pm 20.13}$ & $\mathbf{22.10 \pm 4.01}$ & $\mathbf{98.53 \pm 56.72}$ & $\mathbf{87.94 \pm 71.47}$ & $\mathbf{81.43 \pm 11.14}$ & $25.73 \pm 3.10$ & $24.23 \pm 3.53$ & $21.34 \pm 4.74$ \\
+MasaCtrl & Uniform, r16 & Artificial & $29.31 \pm 22.55$ & $21.21 \pm 4.74$ & $103.85 \pm 61.96$ & $116.09 \pm 98.73$ & $78.69 \pm 13.55$ & $\mathbf{26.60 \pm 3.31}$ & $\mathbf{25.31 \pm 3.52}$ & $\mathbf{21.60 \pm 4.92}$ \\
+\midrule
+Pix2Pix-Zero & Uniform, r16 & Natural & $59.42 \pm 57.60$ & $\mathbf{21.01 \pm 5.17}$ & $160.04 \pm 126.33$ & $144.01 \pm 166.42$ & $\mathbf{76.56 \pm 15.09}$ & $25.73 \pm 3.10$ & $23.04 \pm 4.21$ & $\mathbf{20.84 \pm 4.66}$ \\
+Pix2Pix-Zero & Uniform, r16 & Artificial & $\mathbf{48.60 \pm 44.24}$ & $20.99 \pm 5.33$ & $\mathbf{143.40 \pm 115.56}$ & $\mathbf{140.69 \pm 149.53}$ & $75.99 \pm 16.09$ & $\mathbf{26.60 \pm 3.31}$ & $\mathbf{23.61 \pm 4.51}$ & $20.59 \pm 4.80$ \\
+\midrule
+P2P & Final-tail, r8 & Natural & $\mathbf{13.86 \pm 12.09}$ & $\mathbf{26.32 \pm 4.55}$ & $\mathbf{67.71 \pm 44.58}$ & $\mathbf{36.99 \pm 36.80}$ & $\mathbf{84.65 \pm 10.65}$ & $25.73 \pm 3.10$ & $24.68 \pm 3.81$ & $21.99 \pm 4.88$ \\
+P2P & Final-tail, r8 & Artificial & $14.88 \pm 11.68$ & $24.72 \pm 5.26$ & $83.60 \pm 54.77$ & $56.23 \pm 52.29$ & $81.49 \pm 13.08$ & $\mathbf{26.60 \pm 3.31}$ & $\mathbf{26.05 \pm 3.66}$ & $\mathbf{22.48 \pm 5.06}$ \\
+\midrule
+PnP & Final-tail, r8 & Natural & $\mathbf{23.06 \pm 20.36}$ & $\mathbf{22.66 \pm 3.35}$ & $\mathbf{106.73 \pm 58.34}$ & $\mathbf{69.37 \pm 44.49}$ & $\mathbf{81.28 \pm 11.32}$ & $25.73 \pm 3.10$ & $25.27 \pm 3.54$ & $22.65 \pm 4.76$ \\
+PnP & Final-tail, r8 & Artificial & $26.42 \pm 22.24$ & $21.32 \pm 4.02$ & $119.65 \pm 64.70$ & $99.56 \pm 66.24$ & $77.61 \pm 13.16$ & $\mathbf{26.60 \pm 3.31}$ & $\mathbf{26.63 \pm 3.80}$ & $\mathbf{23.01 \pm 5.26}$ \\
+\midrule
+MasaCtrl & Final-tail, r8 & Natural & $\mathbf{27.33 \pm 19.96}$ & $\mathbf{22.12 \pm 3.97}$ & $\mathbf{97.98 \pm 56.68}$ & $\mathbf{87.23 \pm 71.13}$ & $\mathbf{81.47 \pm 11.18}$ & $25.73 \pm 3.10$ & $24.15 \pm 3.55$ & $21.31 \pm 4.65$ \\
+MasaCtrl & Final-tail, r8 & Artificial & $29.54 \pm 23.11$ & $21.21 \pm 4.75$ & $104.01 \pm 61.37$ & $116.35 \pm 99.17$ & $78.69 \pm 13.48$ & $\mathbf{26.60 \pm 3.31}$ & $\mathbf{25.46 \pm 3.48}$ & $\mathbf{21.59 \pm 4.86}$ \\
+\midrule
+Pix2Pix-Zero & Final-tail, r8 & Natural & $58.99 \pm 57.01$ & $\mathbf{21.16 \pm 5.17}$ & $157.46 \pm 126.62$ & $\mathbf{139.37 \pm 159.90}$ & $\mathbf{76.79 \pm 15.22}$ & $25.73 \pm 3.10$ & $23.16 \pm 4.28$ & $\mathbf{20.88 \pm 4.66}$ \\
+Pix2Pix-Zero & Final-tail, r8 & Artificial & $\mathbf{48.56 \pm 45.15}$ & $21.07 \pm 5.40$ & $\mathbf{140.85 \pm 112.27}$ & $139.68 \pm 153.13$ & $76.29 \pm 15.71$ & $\mathbf{26.60 \pm 3.31}$ & $\mathbf{23.87 \pm 4.25}$ & $20.76 \pm 4.86$ \\
+\midrule
+P2P & Final-tail, r32 & Natural & $\mathbf{13.91 \pm 11.88}$ & $\mathbf{26.30 \pm 4.65}$ & $\mathbf{69.71 \pm 49.65}$ & $\mathbf{37.47 \pm 36.07}$ & $\mathbf{84.44 \pm 10.96}$ & $25.73 \pm 3.10$ & $24.67 \pm 3.90$ & $21.91 \pm 5.02$ \\
+P2P & Final-tail, r32 & Artificial & $14.99 \pm 11.96$ & $24.70 \pm 5.39$ & $86.45 \pm 59.13$ & $58.27 \pm 57.95$ & $81.24 \pm 13.36$ & $\mathbf{26.60 \pm 3.31}$ & $\mathbf{25.97 \pm 3.76}$ & $\mathbf{22.48 \pm 5.03}$ \\
+\midrule
+PnP & Final-tail, r32 & Natural & $\mathbf{23.02 \pm 20.35}$ & $\mathbf{22.63 \pm 3.34}$ & $\mathbf{106.97 \pm 58.66}$ & $\mathbf{69.73 \pm 44.76}$ & $\mathbf{81.27 \pm 11.34}$ & $25.73 \pm 3.10$ & $25.28 \pm 3.56$ & $22.64 \pm 4.77$ \\
+PnP & Final-tail, r32 & Artificial & $26.24 \pm 22.02$ & $21.29 \pm 4.01$ & $120.27 \pm 65.02$ & $99.99 \pm 66.31$ & $77.60 \pm 13.17$ & $\mathbf{26.60 \pm 3.31}$ & $\mathbf{26.58 \pm 3.68}$ & $\mathbf{23.00 \pm 5.17}$ \\
+\midrule
+MasaCtrl & Final-tail, r32 & Natural & $\mathbf{27.30 \pm 19.59}$ & $\mathbf{22.12 \pm 3.98}$ & $\mathbf{97.85 \pm 56.53}$ & $\mathbf{87.44 \pm 71.59}$ & $\mathbf{81.45 \pm 11.20}$ & $25.73 \pm 3.10$ & $24.20 \pm 3.49$ & $21.33 \pm 4.77$ \\
+MasaCtrl & Final-tail, r32 & Artificial & $29.14 \pm 21.80$ & $21.15 \pm 4.70$ & $104.38 \pm 60.80$ & $116.96 \pm 99.74$ & $78.64 \pm 13.48$ & $\mathbf{26.60 \pm 3.31}$ & $\mathbf{25.35 \pm 3.48}$ & $\mathbf{21.63 \pm 4.95}$ \\
+\midrule
+Pix2Pix-Zero & Final-tail, r32 & Natural & $59.92 \pm 58.13$ & $20.93 \pm 5.24$ & $161.11 \pm 129.50$ & $149.39 \pm 175.89$ & $\mathbf{76.39 \pm 15.28}$ & $25.73 \pm 3.10$ & $22.91 \pm 4.30$ & $\mathbf{20.84 \pm 4.84}$ \\
+Pix2Pix-Zero & Final-tail, r32 & Artificial & $\mathbf{48.81 \pm 47.92}$ & $\mathbf{21.10 \pm 5.42}$ & $\mathbf{140.89 \pm 113.28}$ & $\mathbf{141.71 \pm 161.20}$ & $76.27 \pm 16.27$ & $\mathbf{26.60 \pm 3.31}$ & $\mathbf{23.63 \pm 4.38}$ & $20.65 \pm 4.95$ \\
+\bottomrule
+\end{longtable}
+\vspace{2pt}
+\noindent\textit{Valid unedited-region counts:} $n=220$ for Natural and $n=215$ for Artificial.
+\end{document}

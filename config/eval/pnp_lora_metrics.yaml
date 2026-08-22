@@ -11,6 +11,7 @@ matplotlib_cache: ${cache_root}/matplotlib
 torch_home: ${cache_root}/torch
 
 method_name: lora+pnp
+source_group: all  # all, real (2_natural), generated (1_artificial), or unknown (0_random_140)
 result_path: ${metrics_root}/${method_name}.csv
 summary_path: ${metrics_root}/${method_name}_summary.json
 device: cuda

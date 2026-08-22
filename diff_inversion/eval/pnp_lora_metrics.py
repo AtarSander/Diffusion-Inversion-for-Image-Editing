@@ -79,12 +79,50 @@ def main(cfg: DictConfig) -> None:
     if not generated_images_dir.exists():
         raise FileNotFoundError(f"Generated image directory does not exist: {generated_images_dir}")
 
+    cache_root = _resolve_path(cfg.get("cache_root", repo_dir / "cache" / "metrics"))
+    cache_root.mkdir(parents=True, exist_ok=True)
+
     with mapping_path.open(encoding="utf-8") as f:
         mapping = json.load(f)
+    source_group = str(cfg.get("source_group", "all")).strip().lower()
+    source_group_dirs = {
+        "real": "2_natural",
+        "generated": "1_artificial",
+        "unknown": "0_random_140",
+    }
+    if source_group not in {"all", "real", "generated", "unknown"}:
+        raise ValueError(
+            f"Unsupported source_group={source_group!r}; expected all, real, generated, or unknown"
+        )
+
+    mapping_for_metrics = mapping
+    mapping_path_for_metrics = mapping_path
+    if source_group != "all":
+        source_dir = source_group_dirs[source_group]
+        mapping_for_metrics = {
+            key: item
+            for key, item in mapping.items()
+            if (
+                str(item["image_path"]).split("/")[0] == source_dir
+                if source_group == "unknown"
+                else len(str(item["image_path"]).split("/")) > 1
+                and str(item["image_path"]).split("/")[1] == source_dir
+            )
+        }
+        mapping_path_for_metrics = cache_root / f"mapping_{source_group}.json"
+        mapping_path_for_metrics.write_text(
+            json.dumps(mapping_for_metrics, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        logger.info(
+            "Filtered source_group={} to {} mapping records",
+            source_group,
+            len(mapping_for_metrics),
+        )
     categories = set(_as_str_list(cfg.edit_category_list))
     missing = [
         item["image_path"]
-        for item in mapping.values()
+        for item in mapping_for_metrics.values()
         if str(item["editing_type_id"]) in categories
         and not (generated_images_dir / item["image_path"]).is_file()
     ]
@@ -101,7 +139,7 @@ def main(cfg: DictConfig) -> None:
         "-m",
         "evaluation.evaluate",
         "--annotation_mapping_file",
-        str(mapping_path),
+        str(mapping_path_for_metrics),
         "--src_image_folder",
         str(source_images_dir),
         "--tgt_image_folder",
@@ -116,8 +154,8 @@ def main(cfg: DictConfig) -> None:
         *_as_str_list(cfg.edit_category_list),
     ]
 
-    cache_root = _resolve_path(cfg.get("cache_root", repo_dir / ".cache" / "metrics"))
     cache_directories = {
+        "XDG_CACHE_HOME": _resolve_path(cfg.get("xdg_cache", cache_root / "xdg")),
         "HF_HOME": _resolve_path(cfg.get("hf_home", cache_root / "huggingface")),
         "MPLCONFIGDIR": _resolve_path(cfg.get("matplotlib_cache", cache_root / "matplotlib")),
         "TORCH_HOME": _resolve_path(cfg.get("torch_home", cache_root / "torch")),

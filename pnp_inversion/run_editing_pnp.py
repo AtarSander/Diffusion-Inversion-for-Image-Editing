@@ -69,6 +69,9 @@ class Preprocess(nn.Module):
         self.scheduler = DDIMScheduler.from_pretrained(model_key, subfolder="scheduler")
         self.lora_loaded = False
         self.lora_adapter_name = "inversion"
+        self.lora_mode = "single"
+        self.lora_branch_adapter_names = None
+        self.lora_scale = 1.0
         print(f'[INFO] loaded stable diffusion!')
 
     def load_lora(
@@ -108,8 +111,28 @@ class Preprocess(nn.Module):
 
         self.lora_loaded = True
         self.lora_adapter_name = adapter_name
+        self.lora_mode = "single"
+        self.lora_branch_adapter_names = None
+        self.lora_scale = float(scale)
         self.set_lora_enabled(False)
         print(f"[INFO] loaded inversion LoRA from {checkpoint_path}")
+
+    def load_branch_pair_lora(
+        self, checkpoint_path, rank=16, lora_alpha=8, lora_dropout=0.0, scale=1.0
+    ):
+        if self.lora_loaded:
+            raise RuntimeError("An inversion LoRA checkpoint is already loaded.")
+        from utils.lora_adapters import load_branch_pair_lora
+
+        resolved_path, adapter_names = load_branch_pair_lora(
+            self.unet, checkpoint_path, rank=rank, lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout, scale=scale,
+        )
+        self.lora_loaded = True
+        self.lora_mode = "branch_pair"
+        self.lora_branch_adapter_names = adapter_names
+        self.lora_scale = float(scale)
+        print(f"[INFO] loaded branch-pair inversion LoRAs from {resolved_path}")
 
     def set_lora_enabled(self, enabled):
         if not self.lora_loaded:
@@ -154,7 +177,10 @@ class Preprocess(nn.Module):
         return latents
 
     @torch.no_grad()
-    def ddim_inversion(self, cond, latent, uncond=None, guidance_scale=1.0):
+    def ddim_inversion(
+        self, cond, latent, uncond=None, guidance_scale=1.0,
+        lora_branch_adapter_names=None, lora_adapter_scale=1.0,
+    ):
         latent_list=[latent]
         timesteps = list(reversed(self.scheduler.timesteps))
         with torch.autocast(device_type='cuda', dtype=torch.float32):
@@ -172,7 +198,23 @@ class Preprocess(nn.Module):
                 sigma = (1 - alpha_prod_t) ** 0.5
                 sigma_prev = (1 - alpha_prod_t_prev) ** 0.5
 
-                if uncond is None or guidance_scale == 1.0:
+                if lora_branch_adapter_names is not None:
+                    if uncond is None:
+                        raise ValueError("Branch-pair CFG inversion requires an empty-prompt embedding.")
+                    from utils.lora_adapters import set_active_lora_adapter
+
+                    uncond_adapter_name, cond_adapter_name = lora_branch_adapter_names
+                    uncond_batch = uncond.repeat(latent.shape[0], 1, 1)
+                    set_active_lora_adapter(self.unet, uncond_adapter_name, lora_adapter_scale)
+                    eps_uncond = self.unet(
+                        latent, t, encoder_hidden_states=uncond_batch
+                    ).sample
+                    set_active_lora_adapter(self.unet, cond_adapter_name, lora_adapter_scale)
+                    eps_cond = self.unet(
+                        latent, t, encoder_hidden_states=cond_batch
+                    ).sample
+                    eps = eps_uncond + guidance_scale * (eps_cond - eps_uncond)
+                elif uncond is None or guidance_scale == 1.0:
                     eps = self.unet(latent, t, encoder_hidden_states=cond_batch).sample
                 else:
                     uncond_batch = uncond.repeat(latent.shape[0], 1, 1)
@@ -228,7 +270,9 @@ class Preprocess(nn.Module):
         self.set_lora_enabled(use_lora_inversion)
         try:
             inverted_x = self.ddim_inversion(
-                cond, latent, uncond=uncond, guidance_scale=inversion_guidance_scale
+                cond, latent, uncond=uncond, guidance_scale=inversion_guidance_scale,
+                lora_branch_adapter_names=self.lora_branch_adapter_names,
+                lora_adapter_scale=self.lora_scale,
             )
         finally:
             self.set_lora_enabled(False)
@@ -640,6 +684,7 @@ if __name__ == "__main__":
     parser.add_argument('--lora_alpha', type=int, default=8)
     parser.add_argument('--lora_dropout', type=float, default=0.0)
     parser.add_argument('--lora_scale', type=float, default=1.0)
+    parser.add_argument('--lora_mode', choices=["single", "branch_pair"], default="single")
     parser.add_argument('--inversion_guidance_scale', type=float, default=1.0)
     args = parser.parse_args()
     
@@ -650,10 +695,19 @@ if __name__ == "__main__":
     edit_method_list=args.edit_method_list
 
     lora_methods = {"lora+pnp", "lora+directinversion+pnp"}
+    if args.lora_mode == "branch_pair" and "lora+pnp" in edit_method_list:
+        raise ValueError(
+            "Branch-pair LoRAs are supported only by lora+directinversion+pnp."
+        )
     if any(method in lora_methods for method in edit_method_list):
         if args.lora_checkpoint is None:
             raise ValueError("--lora_checkpoint is required when using a LoRA edit method")
-        model.load_lora(
+        load_method = (
+            model.load_branch_pair_lora
+            if args.lora_mode == "branch_pair"
+            else model.load_lora
+        )
+        load_method(
             checkpoint_path=args.lora_checkpoint,
             rank=args.lora_rank,
             lora_alpha=args.lora_alpha,

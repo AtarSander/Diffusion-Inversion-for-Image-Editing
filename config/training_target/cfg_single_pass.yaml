@@ -1,0 +1,3 @@
+# Single conditional prediction trained directly against the CFG-combined target.
+mode: cfg_single_pass
+guidance_scale: 2.5

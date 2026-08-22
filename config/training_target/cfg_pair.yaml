@@ -1,0 +1,3 @@
+# CFG-combined loss with separate conditional and empty-prompt LoRA adapters.
+mode: cfg_pair
+guidance_scale: 2.5

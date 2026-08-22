@@ -80,6 +80,19 @@ def load_lora_inversion(checkpoint_path, rank=16, lora_alpha=8, lora_dropout=0.0
     print(f"[INFO] loaded inversion LoRA from {checkpoint_path}")
 
 
+def load_branch_pair_lora_inversion(
+        checkpoint_path, rank=16, lora_alpha=8, lora_dropout=0.0, scale=1.0):
+    global lora_branch_adapter_names, lora_adapter_scale
+    from utils.lora_adapters import load_branch_pair_lora
+
+    resolved_path, lora_branch_adapter_names = load_branch_pair_lora(
+        pipe.unet, checkpoint_path, rank=rank, lora_alpha=lora_alpha,
+        lora_dropout=lora_dropout, scale=scale,
+    )
+    lora_adapter_scale = float(scale)
+    print(f"[INFO] loaded branch-pair inversion LoRAs from {resolved_path}")
+
+
 def set_lora_enabled(enabled):
     for module in pipe.unet.modules():
         if module is pipe.unet:
@@ -90,6 +103,8 @@ def set_lora_enabled(enabled):
 
 pipe = None
 edit_pipe = None
+lora_branch_adapter_names = None
+lora_adapter_scale = 1.0
 
 
 
@@ -251,6 +266,8 @@ def edit_image_lora_directinversion_pix2pix_zero(
             guidance_scale=inversion_guidance_scale,
             num_inversion_steps=NUM_DDIM_STEPS,
             img=image_gt,
+            lora_branch_adapter_names=lora_branch_adapter_names,
+            lora_adapter_scale=lora_adapter_scale,
         )
     finally:
         set_lora_enabled(False)
@@ -314,6 +331,7 @@ if __name__ == "__main__":
     parser.add_argument('--lora_alpha', type=int, default=8)
     parser.add_argument('--lora_dropout', type=float, default=0.0)
     parser.add_argument('--lora_scale', type=float, default=1.0)
+    parser.add_argument('--lora_mode', choices=["single", "branch_pair"], default="single")
     parser.add_argument('--inversion_guidance_scale', type=float, default=1.0)
     args = parser.parse_args()
     
@@ -329,12 +347,21 @@ if __name__ == "__main__":
     use_lora = any(method in lora_methods for method in edit_method_list)
     if use_lora and args.lora_checkpoint is None:
         raise ValueError("--lora_checkpoint is required when using a LoRA edit method")
+    if args.lora_mode == "branch_pair" and "lora+pix2pix-zero" in edit_method_list:
+        raise ValueError(
+            "Branch-pair LoRAs are supported only by lora+directinversion+pix2pix-zero."
+        )
     model_key = "runwayml/stable-diffusion-v1-5" if use_lora else "CompVis/stable-diffusion-v1-4"
     pipe, edit_pipe = load_pipelines(model_key)
     if use_lora:
-        load_lora_inversion(checkpoint_path=args.lora_checkpoint, rank=args.lora_rank,
-                            lora_alpha=args.lora_alpha, lora_dropout=args.lora_dropout,
-                            scale=args.lora_scale)
+        load_method = (
+            load_branch_pair_lora_inversion
+            if args.lora_mode == "branch_pair"
+            else load_lora_inversion
+        )
+        load_method(checkpoint_path=args.lora_checkpoint, rank=args.lora_rank,
+                    lora_alpha=args.lora_alpha, lora_dropout=args.lora_dropout,
+                    scale=args.lora_scale)
 
     with open(f"{data_path}/mapping_file.json", "r") as f:
         editing_instruction = json.load(f)
@@ -385,6 +412,7 @@ if __name__ == "__main__":
                         prompt_src=original_prompt,
                         prompt_tar=editing_prompt,
                         guidance_scale=7.5,
+                        inversion_guidance_scale=args.inversion_guidance_scale,
                     )
                 else:
                     raise NotImplementedError(f"No edit method named {edit_method}")

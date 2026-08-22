@@ -5,7 +5,7 @@
 PROJECT_NAME = diffusion_inversion_for_image_editing
 PYTHON_VERSION = 3.11
 UV = uv
-UV_CACHE_DIR = $(CURDIR)/.uv-cache
+UV_CACHE_DIR ?= $(CURDIR)/cache/uv
 PYTHON_INTERPRETER = $(UV) run python
 TRAJ_OUTPUT_DIR ?= data/processed/sdxl_trajectories
 TRAJ_NUM_SAMPLES ?= 4

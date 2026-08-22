@@ -26,7 +26,9 @@ case "$RANK" in
 esac
 
 REPO_DIR=${SLURM_SUBMIT_DIR:?SLURM_SUBMIT_DIR is required}
-BASE=$REPO_DIR
+STORAGE_ROOT="$(dirname "$(readlink -f "$REPO_DIR/checkpoints")")"
+[[ -d "$STORAGE_ROOT" ]] || { echo "Cannot resolve project storage from $REPO_DIR/checkpoints" >&2; exit 2; }
+BASE=$STORAGE_ROOT
 CHECKPOINT=$BASE/checkpoints/r$RANK/checkpoint_step_${CHECKPOINT_STEP}.pt
 OUTPUT_TAG=r$RANK
 if [[ "$INVERSION_GUIDANCE" != "1" && "$INVERSION_GUIDANCE" != "1.0" ]]; then
@@ -62,10 +64,10 @@ VENV_DIR=$JOB_TMP_DIR/venv
 module load python/3.11.15
 module load uv/0.11.2
 export TOKENIZERS_PARALLELISM=false PYTHONUNBUFFERED=1 HYDRA_FULL_ERROR=1
-export UV_CACHE_DIR=$REPO_DIR/.uv-cache
+source "$REPO_DIR/scripts/slurm/job_local_cache.sh"
 cleanup() { [[ -n "${VIRTUAL_ENV:-}" ]] && deactivate || true; rm -rf -- "$JOB_TMP_DIR"; }
 trap cleanup EXIT
-mkdir -p "$JOB_TMP_DIR" "$UV_CACHE_DIR"
+mkdir -p "$JOB_TMP_DIR"
 cd "$REPO_DIR"
 uv venv --python "$(command -v python3)" "$VENV_DIR"
 source "$VENV_DIR/bin/activate"
@@ -76,5 +78,5 @@ python3 -m "$MODULE" --config-name "$CONFIG" \
   lora="r$RANK" \
   lora.checkpoint_path="$CHECKPOINT" \
   output_path="$BASE/evaluation/$OUTPUT_TAG" \
-  cache_root="$BASE/cache/h86/$OUTPUT_TAG" \
+  cache_root="$JOB_CACHE_ROOT/editing" \
   guidance.inversion_scale="$INVERSION_GUIDANCE"

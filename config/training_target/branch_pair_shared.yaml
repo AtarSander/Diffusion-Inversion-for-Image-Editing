@@ -1,0 +1,3 @@
+# Separate conditional and empty-prompt branch losses using one shared LoRA.
+mode: branch_pair_shared
+guidance_scale: 2.5

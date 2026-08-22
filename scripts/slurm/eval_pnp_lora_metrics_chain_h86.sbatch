@@ -30,7 +30,6 @@ STORAGE_ROOT="$(dirname "$(readlink -f "$REPO_DIR/checkpoints")")"
 [[ -d "$STORAGE_ROOT" ]] || { echo "Cannot resolve project storage from $REPO_DIR/checkpoints" >&2; exit 2; }
 SCRATCH_ROOT="$STORAGE_ROOT"
 EVAL_ROOT="$SCRATCH_ROOT/evaluation/pnp_checkpoints/$RUN_TAG"
-CACHE_ROOT="$SCRATCH_ROOT/cache/pnp_checkpoints/$RUN_TAG"
 JOB_TMP_DIR=${SLURM_TMPDIR:-/tmp}/pnp-lora-chain-${SLURM_JOB_ID}
 VENV_DIR=$JOB_TMP_DIR/venv
 
@@ -39,10 +38,10 @@ VENV_DIR=$JOB_TMP_DIR/venv
 module load python/3.11.15
 module load uv/0.11.2
 export TOKENIZERS_PARALLELISM=false PYTHONUNBUFFERED=1 HYDRA_FULL_ERROR=1
-export UV_CACHE_DIR=$SCRATCH_ROOT/cache/uv
+source "$REPO_DIR/scripts/slurm/job_local_cache.sh"
 cleanup() { [[ -n "${VIRTUAL_ENV:-}" ]] && deactivate || true; rm -rf -- "$JOB_TMP_DIR"; }
 trap cleanup EXIT
-mkdir -p "$JOB_TMP_DIR" "$UV_CACHE_DIR" "$EVAL_ROOT" "$CACHE_ROOT"
+mkdir -p "$JOB_TMP_DIR" "$EVAL_ROOT"
 
 cd "$REPO_DIR"
 uv venv --python "$(command -v python3)" "$VENV_DIR"
@@ -50,9 +49,9 @@ source "$VENV_DIR/bin/activate"
 uv sync --active --frozen --no-dev
 
 if [[ "$METRICS_ONLY" != true && "$METRICS_ONLY" != 1 ]]; then
-python3 -m diff_inversion.eval.pnp_lora --config-name eval/pnp_lora lora="r$RANK" lora.checkpoint_path="$CHECKPOINT" output_path="$EVAL_ROOT" cache_root="$CACHE_ROOT/editing" guidance.inversion_scale="$INVERSION_GUIDANCE"
+python3 -m diff_inversion.eval.pnp_lora --config-name eval/pnp_lora lora="r$RANK" lora.checkpoint_path="$CHECKPOINT" output_path="$EVAL_ROOT" cache_root="$JOB_CACHE_ROOT/editing" guidance.inversion_scale="$INVERSION_GUIDANCE"
 fi
 
 for method in "lora+pnp" "lora+directinversion+pnp"; do
-  python3 -m diff_inversion.eval.pnp_lora_metrics --config-name eval/pnp_lora_metrics "method_name=$method" generated_root="$EVAL_ROOT" metrics_root="$EVAL_ROOT/metrics" log_root="$EVAL_ROOT/logs" cache_root="$CACHE_ROOT/metrics"
+  python3 -m diff_inversion.eval.pnp_lora_metrics --config-name eval/pnp_lora_metrics "method_name=$method" generated_root="$EVAL_ROOT" metrics_root="$EVAL_ROOT/metrics" log_root="$EVAL_ROOT/logs" cache_root="$JOB_CACHE_ROOT/metrics"
 done

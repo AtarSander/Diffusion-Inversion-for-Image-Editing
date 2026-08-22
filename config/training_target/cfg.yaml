@@ -1,0 +1,3 @@
+# CFG-combined loss with one LoRA shared by conditional and empty-prompt branches.
+mode: cfg
+guidance_scale: 2.5

@@ -14,7 +14,9 @@
 #SBATCH --mail-user=szymczyk.alek1@gmail.com
 set -euo pipefail
 REPO_DIR=${SLURM_SUBMIT_DIR:?SLURM_SUBMIT_DIR is required}
-RESULT_DIR=$REPO_DIR/logs/batch_size_stress
+STORAGE_ROOT="$(dirname "$(readlink -f "$REPO_DIR/checkpoints")")"
+[[ -d "$STORAGE_ROOT" ]] || { echo "Cannot resolve project storage from $REPO_DIR/checkpoints" >&2; exit 2; }
+RESULT_DIR=$STORAGE_ROOT/logs/batch_size_stress
 MODEL_DTYPE=${MODEL_DTYPE:-bfloat16}
 RESULT_LABEL=${RESULT_LABEL:-${MODEL_DTYPE}}
 RESULT_LOG="$RESULT_DIR/sd15_lora_${RESULT_LABEL}_h86_${SLURM_JOB_ID}.log"
@@ -23,11 +25,10 @@ VENV_DIR="$JOB_TMP_DIR/venv"
 module load python/3.11.15
 module load uv/0.11.2
 export TOKENIZERS_PARALLELISM=false PYTHONUNBUFFERED=1
-export HF_HOME=$REPO_DIR/cache/h86/batch_size_stress/huggingface
-export UV_CACHE_DIR=$REPO_DIR/.uv-cache
+source "$REPO_DIR/scripts/slurm/job_local_cache.sh"
 cleanup() { [[ -n "${VIRTUAL_ENV:-}" ]] && deactivate || true; rm -rf -- "$JOB_TMP_DIR"; }
 trap cleanup EXIT
-mkdir -p "$RESULT_DIR" "$JOB_TMP_DIR" "$UV_CACHE_DIR" "$HF_HOME"
+mkdir -p "$RESULT_DIR" "$JOB_TMP_DIR"
 cd "$REPO_DIR"
 uv venv --python "$(command -v python3)" "$VENV_DIR"
 source "$VENV_DIR/bin/activate"

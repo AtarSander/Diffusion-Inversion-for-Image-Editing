@@ -1,5 +1,5 @@
-root_dir: data/processed/sd15_trajectories_stacked_fp32/all
-val_root_dir: data/processed/sd15_trajectories_stacked_fp32/all
+root_dir: data/processed/sd15_trajectories_stacked_fp32_cfg2_5/all
+val_root_dir: data/processed/sd15_trajectories_stacked_fp32_cfg2_5/all
 latents_file_name: trajectory.pt
 conditioning_file_name: conditioning.pt
 targets_dir_name: targets
@@ -9,4 +9,3 @@ require_training_cache: true
 batch_size: 128
 num_workers: 4
 pin_memory: true
-

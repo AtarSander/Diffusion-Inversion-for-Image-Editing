@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 import hydra
 from hydra.utils import to_absolute_path
@@ -37,7 +37,7 @@ def main(cfg: DictConfig) -> None:
     cache_root = (
         _resolve_path(cache_root_config)
         if cache_root_config
-        else repo_dir / ".cache" / "editing-eval"
+        else repo_dir / "cache" / "editing-eval"
     )
 
     if not pnp_dir.exists():
@@ -70,6 +70,8 @@ def main(cfg: DictConfig) -> None:
         str(cfg.lora.lora_dropout),
         "--lora_scale",
         str(cfg.lora.scale),
+        "--lora_mode",
+        str(OmegaConf.select(cfg, "lora.mode", default="single")),
         "--inversion_guidance_scale",
         str(OmegaConf.select(cfg, "guidance.inversion_scale", default=1.0)),
     ]

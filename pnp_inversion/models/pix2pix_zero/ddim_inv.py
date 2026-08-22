@@ -57,6 +57,8 @@ class DDIMInversion(BasePipeline):
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
         img=None, # the input image as a PIL image
         torch_dtype=None,
+        lora_branch_adapter_names=None,
+        lora_adapter_scale: float = 1.0,
 
         # inversion regularization parameters
         lambda_ac: float = 20.0,
@@ -72,7 +74,9 @@ class DDIMInversion(BasePipeline):
         # self.scheduler = MyDDIMScheduler.from_config(self.scheduler.config)
 
         device = self._execution_device
-        do_classifier_free_guidance = guidance_scale > 1.0
+        do_classifier_free_guidance = (
+            guidance_scale > 1.0 or lora_branch_adapter_names is not None
+        )
         self.scheduler.set_timesteps(num_inversion_steps, device=device)
         timesteps = self.scheduler.timesteps
 
@@ -102,18 +106,49 @@ class DDIMInversion(BasePipeline):
         with self.progress_bar(total=num_inversion_steps) as progress_bar:
             # noted: we edit the code here to solve the problem of zero-shot can only do 48 steps of inversion
             for i, t in enumerate(timesteps.flip(0)):
-                # expand the latents if we are doing classifier free guidance
-                latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
-                latent_model_input = self.scheduler.scale_model_input(latent_model_input, t).to(dtype=self.unet.dtype)
+                if lora_branch_adapter_names is not None:
+                    from utils.lora_adapters import set_active_lora_adapter
 
-                # predict the noise residual
-                with torch.no_grad():
-                    noise_pred = self.unet(latent_model_input,t,encoder_hidden_states=prompt_embeds,cross_attention_kwargs=cross_attention_kwargs,).sample
-
-                # perform guidance
-                if do_classifier_free_guidance:
-                    noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                    noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
+                    uncond_adapter_name, cond_adapter_name = lora_branch_adapter_names
+                    uncond_embeds, cond_embeds = prompt_embeds.chunk(2)
+                    latent_model_input = self.scheduler.scale_model_input(latents, t).to(
+                        dtype=self.unet.dtype
+                    )
+                    with torch.no_grad():
+                        set_active_lora_adapter(
+                            self.unet, uncond_adapter_name, lora_adapter_scale
+                        )
+                        noise_pred_uncond = self.unet(
+                            latent_model_input, t, encoder_hidden_states=uncond_embeds,
+                            cross_attention_kwargs=cross_attention_kwargs,
+                        ).sample
+                        set_active_lora_adapter(
+                            self.unet, cond_adapter_name, lora_adapter_scale
+                        )
+                        noise_pred_text = self.unet(
+                            latent_model_input, t, encoder_hidden_states=cond_embeds,
+                            cross_attention_kwargs=cross_attention_kwargs,
+                        ).sample
+                    noise_pred = noise_pred_uncond + guidance_scale * (
+                        noise_pred_text - noise_pred_uncond
+                    )
+                else:
+                    latent_model_input = (
+                        torch.cat([latents] * 2) if do_classifier_free_guidance else latents
+                    )
+                    latent_model_input = self.scheduler.scale_model_input(
+                        latent_model_input, t
+                    ).to(dtype=self.unet.dtype)
+                    with torch.no_grad():
+                        noise_pred = self.unet(
+                            latent_model_input, t, encoder_hidden_states=prompt_embeds,
+                            cross_attention_kwargs=cross_attention_kwargs,
+                        ).sample
+                    if do_classifier_free_guidance:
+                        noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+                        noise_pred = noise_pred_uncond + guidance_scale * (
+                            noise_pred_text - noise_pred_uncond
+                        )
 
                 # regularization of the noise prediction
                 e_t = noise_pred

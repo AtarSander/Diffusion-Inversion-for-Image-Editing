@@ -1,0 +1,3 @@
+# Conditional LoRA regression; identical to the original training objective.
+mode: conditional
+guidance_scale: null

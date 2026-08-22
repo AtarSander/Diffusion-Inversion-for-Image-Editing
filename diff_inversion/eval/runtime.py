@@ -10,6 +10,7 @@ def build_subprocess_environment(cache_root: Path) -> dict[str, str]:
     """Build a deterministic subprocess environment rooted in Hydra storage."""
     env = os.environ.copy()
     cache_directories = {
+        "XDG_CACHE_HOME": "xdg",
         "HF_HOME": "huggingface",
         "TORCH_HOME": "torch",
         "MPLCONFIGDIR": "matplotlib",

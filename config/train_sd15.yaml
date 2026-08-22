@@ -5,5 +5,6 @@ defaults:
   - wandb: online
   - lr_scheduler: cosine_sd15
   - sampling: uniform
+  - training_target: conditional
   - train: sd15
   - _self_

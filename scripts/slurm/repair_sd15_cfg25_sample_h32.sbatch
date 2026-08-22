@@ -24,11 +24,10 @@ VENV_DIR=$JOB_TMP_DIR/venv
 module load python/3.11.15
 module load uv/0.11.2
 export PYTHONUNBUFFERED=1 TOKENIZERS_PARALLELISM=false HYDRA_FULL_ERROR=1
-export HF_HOME=$STORAGE_ROOT/cache/h32/sd15_trajectories_fp32_cfg2_5/huggingface
-export UV_CACHE_DIR=$STORAGE_ROOT/cache/uv
+source "$REPO_DIR/scripts/slurm/job_local_cache.sh"
 cleanup() { [[ -n "${VIRTUAL_ENV:-}" ]] && deactivate || true; rm -rf -- "$JOB_TMP_DIR"; }
 trap cleanup EXIT
-mkdir -p "$JOB_TMP_DIR" "$UV_CACHE_DIR" "$HF_HOME"
+mkdir -p "$JOB_TMP_DIR"
 
 cd "$REPO_DIR"
 uv venv --python "$(command -v python3)" "$VENV_DIR"

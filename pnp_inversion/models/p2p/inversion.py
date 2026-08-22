@@ -332,7 +332,13 @@ class DirectInversion:
         return all_latent
     
     @torch.no_grad()
-    def ddim_with_guidance_scale_loop(self, latent,guidance_scale):
+    def ddim_with_guidance_scale_loop(
+        self,
+        latent,
+        guidance_scale,
+        lora_branch_adapter_names=None,
+        lora_adapter_scale=1.0,
+    ):
         uncond_embeddings, cond_embeddings = self.context.chunk(2)
         uncond_embeddings=uncond_embeddings[[0]]
         cond_embeddings=cond_embeddings[[0]]
@@ -340,7 +346,18 @@ class DirectInversion:
         latent = latent.clone().detach()
         for i in range(self.num_ddim_steps):
             t = self.model.scheduler.timesteps[len(self.model.scheduler.timesteps) - i - 1]
+            if lora_branch_adapter_names is not None:
+                from utils.lora_adapters import set_active_lora_adapter
+
+                uncond_adapter_name, cond_adapter_name = lora_branch_adapter_names
+                set_active_lora_adapter(
+                    self.model.unet, uncond_adapter_name, lora_adapter_scale
+                )
             uncond_noise_pred = self.get_noise_pred_single(latent, t, uncond_embeddings)
+            if lora_branch_adapter_names is not None:
+                set_active_lora_adapter(
+                    self.model.unet, cond_adapter_name, lora_adapter_scale
+                )
             cond_noise_pred = self.get_noise_pred_single(latent, t, cond_embeddings)
             noise_pred = uncond_noise_pred + guidance_scale * (cond_noise_pred - uncond_noise_pred)
             latent = self.next_step(noise_pred, t, latent)
@@ -366,10 +383,21 @@ class DirectInversion:
         return image_rec, ddim_latents
     
     @torch.no_grad()
-    def ddim_with_guidance_scale_inversion(self, image,guidance_scale):
+    def ddim_with_guidance_scale_inversion(
+        self,
+        image,
+        guidance_scale,
+        lora_branch_adapter_names=None,
+        lora_adapter_scale=1.0,
+    ):
         latent = image2latent(self.model.vae, image)
         image_rec = latent2image(self.model.vae, latent)[0]
-        ddim_latents = self.ddim_with_guidance_scale_loop(latent,guidance_scale)
+        ddim_latents = self.ddim_with_guidance_scale_loop(
+            latent,
+            guidance_scale,
+            lora_branch_adapter_names=lora_branch_adapter_names,
+            lora_adapter_scale=lora_adapter_scale,
+        )
         return image_rec, ddim_latents
 
     def offset_calculate(self, latents, num_inner_steps, epsilon, guidance_scale):
