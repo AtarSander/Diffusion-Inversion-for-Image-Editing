@@ -80,10 +80,13 @@ fi
 # ARM=lora scores the inversion-LoRA arm instead, from its own grid file. Same derivation rule:
 # the eval never retypes a run directory the edit job produced.
 if [ "${ARM:-}" = "lora" ]; then
-  source "editing/AudioEditingCode/code/slurm_scripts/wcss/lora_sweep_configs.sh" || exit 1
+  # Same two hooks as the edit job, so eval reads the identical grid: SWEEP_CONFIGS picks the file
+  # and LORA_EDITS_SUBDIR the model's directory under the edits root (Stable Audio writes to
+  # medleymd/stable_audio).
+  source "${SWEEP_CONFIGS:-editing/AudioEditingCode/code/slurm_scripts/wcss/lora_sweep_configs.sh}" || exit 1
   RUNS=()
   while IFS='|' read -r ckpt tstart cfg; do
-    RUNS+=("$EDITS_ROOT/audioldm2_ddim/$(lora_sweep_run_name "$ckpt" "$tstart" "$cfg")/audios")
+    RUNS+=("$EDITS_ROOT/${LORA_EDITS_SUBDIR:-audioldm2_ddim}/$(lora_sweep_run_name "$ckpt" "$tstart" "$cfg")/audios")
   done < <(lora_sweep_configs)
   # The grid file owns the split, so a submission cannot pair the LoRA runs with the wrong
   # prompt CSV by forgetting SPLIT.

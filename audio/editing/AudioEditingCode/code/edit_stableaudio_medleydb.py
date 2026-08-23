@@ -8,9 +8,15 @@ import numpy as np
 
 from run_paths import resolve_run_dir
 from utils import set_reproducability
-import pandas as pd
 
-from env import PATH_AUDIOS_MEDLEY, PATH_PROMPTS_MEDLEY, PATH_EDIT_OUTPUTS
+import sys as _sys
+from pathlib import Path as _Path
+_AUDIO_ROOT = _Path(__file__).resolve().parents[3]
+if str(_AUDIO_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_AUDIO_ROOT))
+from editing.dataset_medley import prepare_dataset  # noqa: E402
+
+from env import PATH_AUDIOS_MEDLEY, PATH_EDIT_OUTPUTS, medley_split_paths
 
 PATH_DIR_OUTPUT = Path(PATH_EDIT_OUTPUTS+"/medleymd").resolve()
 
@@ -47,25 +53,6 @@ STABLE_AUDIO_HOOKS = {
 dt_str = datetime.now().strftime("%Y%m%d%H%M%S")
 
 
-def prepare_dataset(path_audios: Path, path_prompts: Path):
-    df_prompts = pd.read_csv(path_prompts, index_col=0, header=0)
-    df_instruments = []
-    for idx, row in df_prompts.iterrows():
-        filename = row["filename"]
-        dirname = filename.split("_MIX")[0]
-        path_to_audio = (path_audios / dirname / filename).resolve()
-        df_instruments.append(
-            {
-                "path_yt": path_to_audio,
-                "original_prompt": row["source_captions"],
-                "editing_prompt": row["target_captions"],
-                "edit_class": row["edit"],
-            }
-        )
-    df_instruments = pd.DataFrame(df_instruments)
-    return df_instruments
-
-
 def main(
     dataset_name: str = "medleymd",
     mode: str = "ddpm",
@@ -79,6 +66,10 @@ def main(
     with_hooks: bool = False,
     n_parts: int | None = None,
     part_id: int = 0,
+    lora_path: str | None = None,
+    unique_tracks: bool = False,
+    reconstruct: bool = False,
+    split: str = "full",
 ):
     """
     Main function to edit audio files using Stable Audio methods.
@@ -98,6 +89,16 @@ def main(
         seed: Random seed (default: 42)
         run_name: Custom run name (default: None - auto-generated)
         layers_to_hook: Layer(s) to hook for cross-attention replacement - can be a string for single layer or list for multiple layers (default: None)
+        lora_path: Trained inversion-LoRA checkpoint, applied to the DDIM inversion pass only
+            (default: None)
+        unique_tracks: Score one row per distinct MedleyDB track (35) instead of every row
+        reconstruct: Denoise with the *source* caption instead of the target one, turning the
+            edit into a reconstruction of the input. Combined with cfg_tar=1.0 this measures how
+            exactly inversion round-trips real audio (default: False)
+        split: Benchmark split to edit, i.e. which prompt CSV to read (default: "full", all 696
+            rows; "hparam" is the 115-row subset used for the sweeps). Outputs are named by the
+            row's index in the full set whichever split is used, so the eval has to be given the
+            same split.
 
     Returns:
         None
@@ -110,7 +111,12 @@ def main(
     assert mode in ["ddpm", "ddim", "sdedit"], "Invalid mode, must be one of ['ddpm', 'ddim', 'sdedit']"
 
     # Prepare dataset
-    df_instruments = prepare_dataset(path_audios=Path(PATH_AUDIOS_MEDLEY), path_prompts=Path(PATH_PROMPTS_MEDLEY))
+    prompts_csv, _ = medley_split_paths(split)
+    df_instruments = prepare_dataset(
+        path_audios=Path(PATH_AUDIOS_MEDLEY),
+        path_prompts=Path(prompts_csv),
+        unique_tracks=unique_tracks,
+    )
 
     # Generate run name if not provided
     if run_name is None:
@@ -129,7 +135,7 @@ def main(
     set_reproducability(seed, extreme=False)
 
     print(f"Processing {len(df_instruments)} audio files...")
-    print(f"Mode: {mode}")
+    print(f"Mode: {mode}{' (reconstruction: denoising with the source caption)' if reconstruct else ''}")
     print(f"Output directory: {path_dir_outs}")
 
     all_rows = list(df_instruments.iterrows())
@@ -144,7 +150,7 @@ def main(
         for idx, row in all_rows:
             path_to_audio = str(row["path_yt"])
             source_prompt = row["original_prompt"]
-            target_prompt = row["editing_prompt"]
+            target_prompt = row["original_prompt"] if reconstruct else row["editing_prompt"]
             edit_class = row["edit_class"]
 
             layers_to_hook = None
@@ -169,6 +175,7 @@ def main(
                 verbose=False,  # Disable individual verbose to avoid spam
                 save_edit_wav_path=output_wav_path,
                 layers_to_hook=layers_to_hook,
+                lora_path=lora_path,
             )
             pbar.update(1)
 

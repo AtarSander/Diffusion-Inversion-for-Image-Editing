@@ -29,7 +29,14 @@ module load Python/3.10.4-GCCcore-11.3.0
 source .venv/bin/activate
 
 # SLURM spools only the batch script, so the helper is sourced from the submit directory.
-source "editing/AudioEditingCode/code/slurm_scripts/wcss/lora_sweep_configs.sh" || exit 1
+# SWEEP_CONFIGS selects the grid: the AudioLDM2 sweep by default, or one of the Stable Audio files
+#   SWEEP_CONFIGS=.../sao_lora_sweep_configs.sh SCRIPT=edit_stableaudio_medleydb.py
+#   SWEEP_CONFIGS=.../sao_recon_configs.sh      SCRIPT=edit_stableaudio_medleydb.py
+# The grid file owns the steps, cfg_src, split and any extra flags, so a submission cannot pair a
+# checkpoint with the wrong operating point.
+SWEEP_CONFIGS="${SWEEP_CONFIGS:-editing/AudioEditingCode/code/slurm_scripts/wcss/lora_sweep_configs.sh}"
+SCRIPT="${SCRIPT:-edit_audioldm_medleydb.py}"
+source "$SWEEP_CONFIGS" || exit 1
 mapfile -t CONFIGS < <(lora_sweep_configs)
 
 TASK_ID="${SLURM_ARRAY_TASK_ID:?This script must run as a SLURM array job}"
@@ -39,23 +46,29 @@ if [ "$TASK_ID" -ge "${#CONFIGS[@]}" ]; then
 fi
 
 IFS='|' read -r CKPT TSTART CFG_TAR <<< "${CONFIGS[$TASK_ID]}"
-LORA_PATH="${LORAINV_CHECKPOINT_ROOT:?not set or empty in .env}/$CKPT"
 RUN_NAME="$(lora_sweep_run_name "$CKPT" "$TSTART" "$CFG_TAR")"
 : "${RUN_NAME:?run name resolved empty; edits would land in the parent directory}"
 
-if [ ! -f "$LORA_PATH" ] || [ ! -f "${LORA_PATH%.pt}.json" ]; then
-  echo "ERROR: missing checkpoint or sidecar for $LORA_PATH" >&2
-  exit 3
+# An empty checkpoint field is the paired no-LoRA arm: same grid, frozen teacher. The Stable Audio
+# grids need it because their no-LoRA twins do not exist yet.
+LORA_ARGS=()
+if [ -n "$CKPT" ]; then
+  LORA_PATH="${LORAINV_CHECKPOINT_ROOT:?not set or empty in .env}/$CKPT"
+  if [ ! -f "$LORA_PATH" ] || [ ! -f "${LORA_PATH%.pt}.json" ]; then
+    echo "ERROR: missing checkpoint or sidecar for $LORA_PATH" >&2
+    exit 3
+  fi
+  LORA_ARGS=(--lora_path "$LORA_PATH")
 fi
 
-echo "task=$TASK_ID ckpt=$CKPT tstart=$TSTART cfg_tar=$CFG_TAR run=$RUN_NAME node=$(hostname)"
+echo "task=$TASK_ID ckpt=${CKPT:-none} tstart=$TSTART cfg_tar=$CFG_TAR run=$RUN_NAME node=$(hostname)"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 
 cd editing/AudioEditingCode/code
 
 ok=0
 for attempt in 1 2 3; do
-  python edit_audioldm_medleydb.py \
+  python "$SCRIPT" \
     --mode ddim \
     --num_diffusion_steps "$LORA_STEPS" \
     --cfg_src "$LORA_CFG_SRC" \
@@ -63,7 +76,7 @@ for attempt in 1 2 3; do
     --tstart "$TSTART" \
     --seed 42 \
     --split "$LORA_SPLIT" \
-    --lora_path "$LORA_PATH" \
+    "${LORA_ARGS[@]}" ${LORA_EXTRA_ARGS[@]+"${LORA_EXTRA_ARGS[@]}"} \
     --run_name "$RUN_NAME" ${SKIP_EXISTING:+--skip_existing True} && { ok=1; break; }
   echo "attempt $attempt failed for $RUN_NAME; retrying in 120s..." >&2
   sleep 120

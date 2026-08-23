@@ -9,6 +9,13 @@ import matplotlib.pyplot as plt
 import torch
 import torchaudio
 from ddm_inversion.ddim_inversion import ddim_inversion, text2image_ldm_stable
+
+import sys as _sys
+from pathlib import Path as _Path
+_AUDIO_ROOT = _Path(__file__).resolve().parents[3]
+if str(_AUDIO_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_AUDIO_ROOT))
+from src.inversion_lora.apply_lora import attach_inversion_lora  # noqa: E402
 from ddm_inversion.inversion_utils import inversion_forward_process, inversion_reverse_process
 from sdedit_utils import sdedit_denoise, sdedit_forward_noise
 from torch import inference_mode
@@ -122,6 +129,7 @@ def run_stable_audio_edit(
     save_edit_wav_path: Optional[str] = None,
     eta: float = 1.0,
     layers_to_hook: list[str] | None = None,
+    lora_path: str | None = None,
 ):
     assert mode in ["ddpm", "ddim", "sdedit"], "Invalid mode, must be one of ['ddpm', 'ddim', 'sdedit']"
     assert (
@@ -177,6 +185,17 @@ def run_stable_audio_edit(
         )
     else:
         ldm_stable_inverse = ldm_stable
+
+    if lora_path is not None:
+        if mode != "ddim":
+            raise ValueError(f"lora_path is only meaningful for DDIM inversion, got mode={mode!r}")
+        # The shifted-denoiser objective trains the adapter to predict the teacher's output at the
+        # noisier latent, which is the substitution DDIM *inversion* makes, so it belongs on the
+        # inversion pass alone. Stable Audio's ddim mode already loads a second pipeline for
+        # inversion, so attaching it there leaves the reverse pass on the frozen teacher without
+        # toggling per pass. Enabled once, which merges it into the base weights: an unfused
+        # adapter costs a side branch on every module for the same delta.
+        attach_inversion_lora(ldm_stable_inverse.model.transformer, lora_path)(True)
 
     # Load audio (stable-audio doesn't use STFT)
     x0, sr, duration = load_audio(
