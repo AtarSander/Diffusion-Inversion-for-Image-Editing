@@ -8,6 +8,49 @@ Most recent first. Keep this file current — it is the handover doc between ses
 
 ---
 
+## 2026-08-23 — RESULT: the objective generalises to Stable Audio Open (91.9%)
+
+The port ran. Dataset: 1500 trajectories, 100 steps, 47.55 s window, `beta` grid (slurm 5746332,
+8 shards, **7.6 s per trajectory on an H100**, ~24 min wall, ~79 GB — the 9.5 h estimate was from
+an A5000 and was 25x pessimistic). Training: `sao_r8_a4_lr5e-5`, `attn` preset r8 a4 lr 5e-5,
+batch 4 x accum 8 (slurm 5746491).
+
+**LoRA-disabled baseline 2.249e-4 over the 30k-transition validation split.**
+
+| step | val/loss | gap closed | val/loss_ema |
+| --- | --- | --- | --- |
+| 1000 | 3.074e-5 | 86.3% | 8.815e-5 |
+| 5000 | 2.219e-5 | 90.1% | 2.232e-5 |
+| 9000 | 2.168e-5 | 90.4% | 1.968e-5 |
+| 13000 | 1.930e-5 | 91.4% | 1.877e-5 |
+| 18000 | 1.832e-5 | **91.9%** | 1.800e-5 |
+| 19000 | 1.835e-5 | 91.8% | **1.791e-5 (92.0%)** |
+
+So the shifted-denoiser objective is not an AudioLDM2 artefact: a second architecture (1.06B DiT,
+v-prediction, DPMSolver) closes the same share of its shift gap. Two differences worth keeping:
+
+- **SAO reaches 92% with the plain `attn` preset.** AudioLDM2 plateaued at 85-88% across every
+  rank and lr and only broke it with `full` + the timestep-embedding modules (92.7%). Whatever made
+  the AudioLDM2 gap hard to fit — plausibly its ~300x t-dependence, against SAO's 4.3x — is absent
+  here.
+- **It converges by ~5000 steps** (90.1%); the remaining 14k bought 1.8 points.
+
+The job was **cancelled at the 24 h walltime at step 19,722/20,000**, not crashed. Step 18000 raw +
+EMA + training state are on disk and the last 1000 steps moved val loss 0.03%, so it was not
+resubmitted. Throughput note for next time: 4.35 s/step is 8 *sequential* micro-batches of 4;
+`batch_size=16 gradient_accumulation_steps=2` keeps the effective batch and should halve wall-clock.
+
+### Where this leaves the question
+
+The objective generalises; **nothing here says editing improves**, and per the AudioLDM2 result
+(below) inversion fidelity is not what limits editing on MedleyMD. Before spending anything on the
+SAO downstream path, note the probe finding it inherits: the SAO `ddim` edit path runs the DiT on a
+linear-beta grid with timesteps 999..10 where the model was trained on 0.99..0.19
+(`output/sao_probe/REPORT.md`). Any SAO editing comparison rests on that, LoRA or no LoRA, so it is
+the thing to settle first — not another adapter variant.
+
+---
+
 ## 2026-08-20 — Port started: Stable Audio Open, objective only
 
 Scope agreed this session: trajectories + training loop + val loss on **Stable Audio Open**. No
