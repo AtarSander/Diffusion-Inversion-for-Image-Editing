@@ -101,7 +101,13 @@ fi
 TASK_ID="${SLURM_ARRAY_TASK_ID:?This script must run as a SLURM array job}"
 if [ "$TASK_ID" -ge "${#RUNS[@]}" ]; then
   echo "ERROR: task $TASK_ID but only ${#RUNS[@]} runs are defined." >&2
-  echo "  Scoring a LoRA run (index 7) needs LORA_PATH=<checkpoint.pt> in the environment." >&2
+  echo "  The run list depends on the environment, and none of these selectors was set:" >&2
+  echo "    ARM=lora        the inversion-LoRA sweep grid (lora_sweep_configs.sh)" >&2
+  echo "    SPLIT=hparam    the three-method hyperparameter sweep (hparam_sweep_configs.sh)" >&2
+  echo "    RUN_DIRS=a:b:c  explicit run directories" >&2
+  echo "    LORA_PATH=<ckpt.pt>  appends one LoRA run to the baseline list, at index 7" >&2
+  echo "  submit_eval.sh forwards all of these, so pass it on the submission, e.g." >&2
+  echo "    ARM=lora bash .../submit_eval.sh --array=48-63" >&2
   exit 2
 fi
 RUN_DIR="${RUNS[$TASK_ID]}"
