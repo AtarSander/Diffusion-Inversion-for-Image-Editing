@@ -8,6 +8,37 @@ Most recent first. Keep this file current — it is the handover doc between ses
 
 ---
 
+## 2026-08-24 (later) — RETRACTION: the Stable Audio objective is mis-specified
+
+Triggered by listening to the probe wavs: the `beta`-grid teacher sounds clearly worse than the
+native cosine one. Chasing that turned up a second, worse defect. Full numbers in
+`output/sao_pairing/REPORT.md`, reproduce with `src/inversion_lora/verify_inversion_pairing.py`.
+
+1. **The grids are offset by one step.** The reverse scheduler runs {999, 989, ..., 10}; the inverse
+   scheduler runs {0, 10, ..., 989}. Our training pair is `(trajectory[i+1], timesteps[i])`, so at
+   100/100 steps the adapter is queried one grid step off what it was trained on.
+2. **The target does not control the round trip.** Feeding the inverse solver the exact outputs the
+   reverse pass used -- what a perfect adapter predicts -- recovers the initial noise at 0.0153
+   relative L2, *worse* than the plain approximation's 0.0080. The two schedulers are not algebraic
+   inverses on the same grid, so the shift gap is not the error term. A perfectly trained adapter
+   would make inversion ~1.9x worse.
+3. **Free 2.2x**: querying the model at the reverse grid's timestep instead drops the error to
+   0.0037, with no adapter, one index change in `ddm_inversion/ddim_inversion.py`.
+
+So the section below claiming Stable Audio replicates the AudioLDM2 null result is **withdrawn as
+evidence about inversion fidelity**. The measurements stand as measurements -- +1.3 dB
+reconstruction, nothing on editing -- but the adapter was not optimising inversion fidelity, so they
+say nothing about whether inversion fidelity limits editing on this model. The AudioLDM2 result is
+untouched: there one DDIM grid serves both passes and `next_step` is its exact inverse.
+
+Two defects in the same teacher, and they are independent: the schedule mismatch (audible) and the
+grid offset (this). Both have to be fixed before any Stable Audio inversion claim means anything.
+The principled fix is one piece of work: a deterministic ODE sampler on Stable Audio's *native*
+cosine sigma grid plus its exact algebraic inverse, which makes the teacher sound right and the
+oracle error go to zero, at which point the existing training pairs are correct by construction.
+
+---
+
 ## 2026-08-24 — RESULT: Stable Audio reproduces the AudioLDM2 null result exactly
 
 Both halves measured. Reconstruction ladder: 11 arms x 35 distinct MedleyDB tracks (slurm 5757136
