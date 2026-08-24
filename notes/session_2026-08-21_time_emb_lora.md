@@ -129,16 +129,38 @@ benchmark's /100 moves MSE too), and that `alignment.py`'s bare `psnr()` call wa
 **Also worth knowing:** the benchmark truncates both mels to the shorter clip from frame 0, so its
 numbers assume the output is sample-aligned with the input.
 
-## 6. Next steps
+## 6. Editing benchmark: the sixth negative (2026-08-24)
 
-1. **Running now / queued:** `checkpoint_step_1000.pt` and `checkpoint_step_3000_ema.pt` appended
-   to `lora_sweep_configs.sh` as sweep indices **48-63** (0-47 unchanged, since the array index is
-   the line number). Submit with
-   `bash editing/AudioEditingCode/code/slurm_scripts/wcss/submit_lora_sweep.sh --array=48-63`.
-   Each has a no-LoRA twin already scored at identical settings over the same 115 rows.
-2. **Not recommended:** chasing the pre-step-1000 peak with `recon_every_steps=250`. It would
-   sharpen the best-case number, but four prior measurements already bound its ceiling, and the
-   step-1000 point is only +0.62 dB.
+Sweep indices 48-63 ran as job `5746514` (16/16 edits, Aug 21) and scored as `5756175` (16/16,
+Aug 24). Paired against no-LoRA twins at identical tstart and cfg_tar over the same 115 rows:
+`audio/output/lora_curves/20260824_065600/`.
+
+| checkpoint | LPAPS | worst CI | mel PSNR | CLAP |
+|---|---|---|---|---|
+| `q4_fullte @1000` | **+0.0035** | ±0.0115 | -0.0223 | -0.0005 |
+| `q4_fullte @3000 EMA` | **+0.0059** | ±0.0160 | -0.0209 | -0.0014 |
+| scale: DDPM-inv | -0.1383 | | -0.1765 | +0.0019 |
+| scale: SDEdit | +0.7711 | | -0.9267 | +0.0106 |
+
+Negative LPAPS is better preservation, so both new checkpoints are on the **wrong side**, by an
+amount ~2.5% of DDPM-inv's shift and ~0.1% of the front's 2.9 LPAPS span. Every confidence
+interval is ~3x the mean delta and "settings better" is 5/8, i.e. a coin flip: the honest reading
+is indistinguishable from zero with a hint of slightly worse. On the figure all eight LoRA
+checkpoints sit on top of the black no-LoRA front while DDPM-inv and SDEdit trace visibly
+different curves.
+
+**The dose-response is now inverted, not just absent.** These two are the largest-magnitude
+deltas of all eight checkpoints on both LPAPS (+0.0035, +0.0059 against ±0.0025 for the rest) and
+mel PSNR (-0.022, -0.021 against ±0.013) — and both in the wrong direction. The adapter that fits
+the objective best is the one that hurts editing most.
+
+That is six independent measurements. **Inversion fidelity is closed as a lever.**
+
+## 7. Next steps
+
+1. **Not recommended:** chasing the pre-step-1000 peak with `recon_every_steps=250`. It would
+   sharpen the best-case number, but the ceiling is now bounded by six measurements, and the
+   step-1000 point was only +0.62 dB on reconstruction and negative on the benchmark.
 3. **The open direction remains target-side**, not inversion: guidance schedule and
    cross-attention control. Adapter capacity (rank), module coverage (attn / ff / conv), schedule
    restriction (q4) and now the timestep-embedding path have all been tried.
