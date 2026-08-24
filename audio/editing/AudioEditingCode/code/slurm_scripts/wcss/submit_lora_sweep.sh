@@ -23,17 +23,23 @@ set -a; source .env; set +a
 
 mkdir -p outputs/logs/slurm
 
-source "editing/AudioEditingCode/code/slurm_scripts/wcss/lora_sweep_configs.sh"
+# Must be the same grid the job will read, or this preview and its checkpoint check describe a
+# different sweep than the one that runs. SCRIPT is only echoed and forwarded: the job resolves it.
+SWEEP_CONFIGS="${SWEEP_CONFIGS:-editing/AudioEditingCode/code/slurm_scripts/wcss/lora_sweep_configs.sh}"
+source "$SWEEP_CONFIGS"
 mapfile -t CONFIGS < <(lora_sweep_configs)
 
 echo "account   : $HPC_PWR_ACCOUNT"
 echo "partition : $HPC_PWR_PARTITION"
+echo "grid file : $SWEEP_CONFIGS"
+echo "entrypoint: ${SCRIPT:-edit_audioldm_medleydb.py}"
 echo "split     : $LORA_SPLIT"
 echo "grid      : ${#LORA_CHECKPOINTS[@]} checkpoints x ${#LORA_TSTART[@]} tstart x ${#LORA_CFG_TAR[@]} cfg_tar = ${#CONFIGS[@]} runs"
 
 # Check every checkpoint here, on the login node, rather than failing 48 tasks one by one.
 missing=0
 for ckpt in "${LORA_CHECKPOINTS[@]}"; do
+  [ -n "$ckpt" ] || continue   # the paired no-LoRA arm
   path="$LORAINV_CHECKPOINT_ROOT/$ckpt"
   if [ ! -f "$path" ]; then
     echo "  MISSING checkpoint: $path" >&2
@@ -58,11 +64,13 @@ if [ -n "$REF_DIR" ]; then
   echo "reference : $(find "$REF_DIR" -name 'a*.wav' 2>/dev/null | wc -l) wavs in $REF_DIR"
 fi
 
-EXPORT_ARGS=()
+EXPORTS=("SWEEP_CONFIGS=$SWEEP_CONFIGS")
+[ -n "${SCRIPT:-}" ] && EXPORTS+=("SCRIPT=$SCRIPT")
 if [ -n "${SKIP_EXISTING:-}" ]; then
   echo "skip_existing: on (resuming)"
-  EXPORT_ARGS=(--export=ALL,SKIP_EXISTING="$SKIP_EXISTING")
+  EXPORTS+=("SKIP_EXISTING=$SKIP_EXISTING")
 fi
+EXPORT_ARGS=(--export="ALL,$(IFS=,; echo "${EXPORTS[*]}")")
 
 sbatch \
   "${EXPORT_ARGS[@]}" \
