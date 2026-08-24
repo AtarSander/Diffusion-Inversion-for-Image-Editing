@@ -1528,7 +1528,8 @@ def load_model(
             "ddpm",
             "sdedit",
             "ddim",
-        ], "Invalid edit method, must be one of ['ddpm', 'sdedit', 'ddim'] or None"
+            "odeinv",
+        ], "Invalid edit method, must be one of ['ddpm', 'sdedit', 'ddim', 'odeinv'] or None"
         disable_progress_bar()
         ldm_stable = StableAudWrapper(model_id=model_id, device=device, double_precision=double_precision, token=token)
         enable_progress_bar()

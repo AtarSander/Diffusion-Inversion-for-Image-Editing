@@ -36,6 +36,8 @@ source .venv/bin/activate
 # checkpoint with the wrong operating point.
 SWEEP_CONFIGS="${SWEEP_CONFIGS:-editing/AudioEditingCode/code/slurm_scripts/wcss/lora_sweep_configs.sh}"
 SCRIPT="${SCRIPT:-edit_audioldm_medleydb.py}"
+# The grid file may set LORA_MODE to run a different inversion method, e.g. Stable Audio's
+# corrected `odeinv` in place of the rejected `ddim`.
 source "$SWEEP_CONFIGS" || exit 1
 mapfile -t CONFIGS < <(lora_sweep_configs)
 
@@ -69,7 +71,7 @@ cd editing/AudioEditingCode/code
 ok=0
 for attempt in 1 2 3; do
   python "$SCRIPT" \
-    --mode ddim \
+    --mode "${LORA_MODE:-ddim}" \
     --num_diffusion_steps "$LORA_STEPS" \
     --cfg_src "$LORA_CFG_SRC" \
     --cfg_tar "$CFG_TAR" \

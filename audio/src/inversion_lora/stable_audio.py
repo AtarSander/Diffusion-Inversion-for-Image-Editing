@@ -411,3 +411,64 @@ class FirstOrderSolver:
             "Invert from `invertible_steps` instead."
         )
         return (x_t - b * data) / a
+
+
+def ode_invert(
+    solver: FirstOrderSolver,
+    x_clean: torch.Tensor,
+    predict,
+    steps: int,
+    progress: bool = False,
+) -> torch.Tensor:
+    """Invert `steps` reverse steps from the clean end, with the exact inverse update.
+
+    The clean latent is taken to sit at the last invertible grid point: the final reverse step ends
+    at sigma = 0, where it discards the sample, so it has no inverse and is skipped.
+
+    Args:
+        solver: Solver over the schedule's grid.
+        x_clean: The clean latent, `[1, C, L]`.
+        predict: `predict(x, index) -> data prediction`, called on the cleaner latent at the
+            timestep of `index` -- the matched pairing the cosine grid needs.
+        steps: How many reverse steps to undo, i.e. `tstart`.
+        progress: Show a progress bar.
+
+    Returns:
+        The noised latent, `steps` grid points up from the clean end.
+    """
+    start = solver.invertible_steps
+    assert 0 < steps <= start, f"steps must be in (0, {start}], got {steps}"
+    x = x_clean
+    for index in tqdm(
+        range(start - 1, start - steps - 1, -1), desc="inverting", leave=False, disable=not progress
+    ):
+        x = solver.inverse(x, predict(x, index + 1), index)
+    return x
+
+
+def ode_denoise(
+    solver: FirstOrderSolver,
+    x: torch.Tensor,
+    start_index: int,
+    predict,
+    progress: bool = False,
+) -> torch.Tensor:
+    """Denoise from `start_index` to the end of the grid with the first-order ODE update.
+
+    Args:
+        solver: Solver over the schedule's grid.
+        x: Latent at grid point `start_index`.
+        start_index: Where to start, as returned by `ode_invert`'s endpoint.
+        predict: `predict(x, index) -> data prediction` at the latent's own timestep.
+        progress: Show a progress bar.
+
+    Returns:
+        The fully denoised latent, including the final step to sigma = 0.
+    """
+    assert 0 <= start_index < len(solver.timesteps), start_index
+    for index in tqdm(
+        range(start_index, len(solver.timesteps)), desc="denoising", leave=False,
+        disable=not progress,
+    ):
+        x = solver.forward(x, predict(x, index), index)
+    return x

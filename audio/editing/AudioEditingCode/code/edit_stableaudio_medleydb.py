@@ -108,7 +108,9 @@ def main(
     if n_parts is not None:
         assert 0 <= part_id < n_parts, f"part_id must be a number between 0 and {(n_parts-1)=} if n_parts is provided"
 
-    assert mode in ["ddpm", "ddim", "sdedit"], "Invalid mode, must be one of ['ddpm', 'ddim', 'sdedit']"
+    assert mode in ["ddpm", "ddim", "sdedit", "odeinv"], (
+        "Invalid mode, must be one of ['ddpm', 'ddim', 'sdedit', 'odeinv']"
+    )
 
     # Prepare dataset
     prompts_csv, _ = medley_split_paths(split)

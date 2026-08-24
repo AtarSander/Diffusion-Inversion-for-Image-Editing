@@ -16,6 +16,11 @@ _AUDIO_ROOT = _Path(__file__).resolve().parents[3]
 if str(_AUDIO_ROOT) not in _sys.path:
     _sys.path.insert(0, str(_AUDIO_ROOT))
 from src.inversion_lora.apply_lora import attach_inversion_lora  # noqa: E402
+from src.inversion_lora.stable_audio import (  # noqa: E402
+    FirstOrderSolver,
+    ode_denoise,
+    ode_invert,
+)
 from ddm_inversion.inversion_utils import inversion_forward_process, inversion_reverse_process
 from sdedit_utils import sdedit_denoise, sdedit_forward_noise
 from torch import inference_mode
@@ -131,7 +136,9 @@ def run_stable_audio_edit(
     layers_to_hook: list[str] | None = None,
     lora_path: str | None = None,
 ):
-    assert mode in ["ddpm", "ddim", "sdedit"], "Invalid mode, must be one of ['ddpm', 'ddim', 'sdedit']"
+    assert mode in ["ddpm", "ddim", "sdedit", "odeinv"], (
+        "Invalid mode, must be one of ['ddpm', 'ddim', 'sdedit', 'odeinv']"
+    )
     assert (
         results_path is not None or save_edit_wav_path is not None
     ), "Either results_path or save_edit_wav_path must be provided"
@@ -271,6 +278,67 @@ def run_stable_audio_edit(
                             f"Conditional replaced: {hook_counter['conditional_replaced']}, "
                             f"Unconditional preserved: {hook_counter['unconditional_preserved']}"
                         )
+        elif mode == "odeinv":
+            # First-order ODE inversion on Stable Audio's *native* cosine sigma grid, with the exact
+            # algebraic inverse of the reverse step. This is the corrected replacement for `ddim`,
+            # which rebuilds the scheduler onto a linear-beta grid and queries the DiT ~1000x
+            # outside its trained timestep range -- data predictions ~100x too large, decoded audio
+            # clipping by 22x -- and whose inverse scheduler is not the inverse of its own reverse
+            # pass. See output/sao_schedules/REPORT.md and output/sao_pairing/REPORT.md.
+            if len(cfg_scale_src) > 1 or len(cfg_scale_tar) > 1:
+                raise ValueError("odeinv supports one cfg_scale_src and one cfg_scale_tar")
+            if len(source_prompt) > 1 or len(target_prompt) > 1:
+                raise ValueError("odeinv supports one source_prompt and one target_prompt")
+            if layers_to_hook:
+                raise NotImplementedError("cross-attention hooks are not wired for odeinv")
+
+            ldm_stable.setup_extra_inputs(
+                w0, init_timestep=ldm_stable.model.scheduler.timesteps[0], audio_end_in_s=duration
+            )
+            solver = FirstOrderSolver(ldm_stable.model.scheduler)
+            src_emb, _, src_mask = ldm_stable.encode_text(source_prompt)
+            tar_emb, _, tar_mask = ldm_stable.encode_text(target_prompt)
+            uncond_emb, _, uncond_mask = ldm_stable.encode_text([""], negative=True)
+
+            def data_prediction(x, index, embeds, mask):
+                """The teacher's data prediction at `x`, read at the timestep of `index`."""
+                timestep = torch.tensor(solver.timesteps[index], device=x.device)
+                raw = ldm_stable.unet_forward(
+                    solver.model_input(x, index),
+                    timestep=timestep,
+                    encoder_hidden_states=embeds,
+                    encoder_attention_mask=mask,
+                )[0].sample
+                return solver.data_prediction(x, raw, index)
+
+            def guided(embeds, mask, scale):
+                """A `predict(x, index)` that applies classifier-free guidance in data space.
+
+                The conversion from network output to data prediction is affine at fixed sigma, so
+                combining the two branches here is the same as combining the raw outputs first.
+                """
+
+                def predict(x, index):
+                    conditional = data_prediction(x, index, embeds, mask)
+                    if scale == 1.0:
+                        return conditional
+                    unconditional = data_prediction(x, index, uncond_emb, uncond_mask)
+                    return unconditional + scale * (conditional - unconditional)
+
+                return predict
+
+            steps = int(tstart[0])
+            wT = ode_invert(
+                solver, w0, guided(src_emb, src_mask, cfg_scale_src[0]), steps, progress=verbose
+            )
+            w0 = ode_denoise(
+                solver,
+                wT,
+                solver.invertible_steps - steps,
+                guided(tar_emb, tar_mask, cfg_scale_tar[0]),
+                progress=verbose,
+            )
+
         elif mode == "ddim":
             # DDIM inversion
             if len(cfg_scale_src) > 1:
