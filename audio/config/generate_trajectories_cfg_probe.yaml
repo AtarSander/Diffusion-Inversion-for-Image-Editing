@@ -1,0 +1,20 @@
+# Small paired trajectory sets for the guidance probe: same prompts and same initial noise at two
+# guidance scales, with both CFG branches stored, so the shift gap can be measured as a function
+# of w before committing to a full regeneration.
+# Run: uv run --python .venv/bin/python src/inversion_lora/generate_trajectories.py \
+#        --config-name generate_trajectories_cfg_probe device=cuda:0 guidance_scale=2.5
+
+defaults:
+  - generate_trajectories
+  - _self_
+
+# Both branches are needed for two reasons: at w != 1 the epsilon that advanced the latent is the
+# CFG combination, not the conditional epsilon that `target_eps` holds, so without the
+# unconditional branch the labels stop being exact for the step they describe; and keeping both
+# lets the loss form the combination at any w without regenerating.
+save_uncond_target: true
+guidance_scale: 2.5
+
+# Enough transitions to measure a mean gap per timestep band, not to train on: 8 x 200 = 1600.
+num_samples: 8
+output_dir: ${oc.env:LORAINV_DATA_ROOT}/audioldm2_trajectories_cfgprobe_g${guidance_scale}

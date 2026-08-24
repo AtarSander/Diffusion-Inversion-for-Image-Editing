@@ -1,13 +1,15 @@
-# ABOUTME: Profile the per-step DDIM inversion approximation error across the noise schedule, the
-# ABOUTME: exact quantity the inversion LoRA is trained to remove, from a cached trajectory set.
+# ABOUTME: Measure the DDIM shifted-denoiser gap as a function of classifier-free guidance, to see
+# ABOUTME: whether the error the inversion LoRA corrects grows with w before regenerating any data.
 
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import fire
 import numpy as np
 import torch
+from dotenv import load_dotenv
 from loguru import logger
 
 AUDIO_ROOT = Path(__file__).resolve().parents[2]
@@ -17,155 +19,181 @@ for _path in (AUDIO_ROOT, AUDIO_ROOT / "editing/AudioEditingCode/code"):
 
 from models import load_model  # noqa: E402
 
-NUM_QUARTILES = 4
+
+def combine(eps_uncond: torch.Tensor, eps_cond: torch.Tensor, w: float) -> torch.Tensor:
+    """Classifier-free guidance combination, the epsilon that actually advances the latent."""
+    return eps_uncond + w * (eps_cond - eps_uncond)
 
 
 @torch.no_grad()
-def gap_for_sample(ldm, sample_dir: Path, timesteps: np.ndarray, batch_size: int):
-    """Per-transition inversion error, signed mean and teacher magnitude for one trajectory.
+def sample_gaps(
+    ldm,
+    sample_dir: Path,
+    guidance_scale: float,
+    batch_size: int,
+    uncond: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+) -> dict[str, np.ndarray]:
+    """Per-transition squared error of the shift substitution, for one trajectory.
 
-    DDIM inversion needs eps(x_t, t) to reach x_t from x_{t-1}, but x_t is what it is solving
-    for, so it substitutes eps(x_{t-1}, t). This measures that substitution error directly.
+    The shifted-denoiser approximation evaluates epsilon at the *cleaner* latent while passing the
+    *noisier* timestep. The exact target is the epsilon that advanced the stored trajectory, which
+    at w != 1 is the CFG combination rather than the conditional branch alone. Both are reported:
+    `combined` is what a pair-branch loss would have to close, `cond_only` is what the current
+    loss closes, and the difference isolates the combination from the path.
 
     Args:
-        ldm: `AudioLDM2Wrapper` with the frozen teacher.
-        sample_dir: One `sample_*` directory.
-        timesteps: The DDIM grid, noisiest first.
-        batch_size: Transitions evaluated per forward pass.
+        ldm: `AudioLDM2Wrapper`.
+        sample_dir: One `sample_XXXXXX` directory holding both CFG branches.
+        guidance_scale: The w the trajectory was generated with.
+        batch_size: Transitions per forward pass.
+        uncond: Unconditional `(hidden, t5, mask)`, shared across samples.
 
     Returns:
-        Arrays of RMS error, signed mean error and teacher RMS, one entry per transition.
+        `timestep`, `combined` and `cond_only` arrays, one entry per transition.
     """
-    target = torch.load(sample_dir / "targets/target_eps.pt", map_location="cpu")
     trajectory = torch.load(sample_dir / "latents/trajectory.pt", map_location="cpu")
-    conditioning = torch.load(sample_dir / "conditioning.pt", map_location="cpu")
-    assert target.shape[0] == len(timesteps), (target.shape, len(timesteps))
+    eps_cond_target = torch.load(sample_dir / "targets/target_eps.pt", map_location="cpu")
+    uncond_path = sample_dir / "targets/uncond_eps.pt"
+    assert uncond_path.exists(), (
+        f"{sample_dir} has no uncond_eps.pt; regenerate with save_uncond_target=true, since at "
+        "w != 1 the conditional branch alone does not describe the step that was taken"
+    )
+    eps_uncond_target = torch.load(uncond_path, map_location="cpu")
+    timesteps = json.loads((sample_dir / "timesteps.json").read_text())
+    cond = torch.load(sample_dir / "conditioning.pt", map_location="cpu")
 
-    device = ldm.device
-    hidden = conditioning["generated_prompt_embeds"].unsqueeze(0).to(device)
-    t5 = conditioning["t5_prompt_embeds"].unsqueeze(0).to(device)
-    mask = conditioning["t5_attention_mask"].unsqueeze(0).to(device)
+    num = len(timesteps)
+    assert trajectory.shape[0] == num + 1, (trajectory.shape, num)
+    assert eps_cond_target.shape[0] == num == eps_uncond_target.shape[0]
 
-    rms, signed, magnitude = [], [], []
-    for start in range(0, len(timesteps), batch_size):
-        stop = min(start + batch_size, len(timesteps))
-        count = stop - start
-        # The student's input: the cleaner latent, paired with the noisier timestep.
-        x_clean = trajectory[start + 1 : stop + 1].to(device)
-        t = torch.tensor(timesteps[start:stop], dtype=torch.long, device=device)
-        model_input = ldm.model.scheduler.scale_model_input(x_clean, t[0])
-        shifted = ldm.unet_forward(
+    u_hidden, u_t5, u_mask = uncond
+    hidden = cond["generated_prompt_embeds"][None].to(ldm.device)
+    t5 = cond["t5_prompt_embeds"][None].to(ldm.device)
+    mask = cond["t5_attention_mask"][None].to(ldm.device)
+
+    combined, cond_only = [], []
+    for start in range(0, num, batch_size):
+        stop = min(start + batch_size, num)
+        n = stop - start
+        # The cleaner latent of transition i is trajectory[i + 1], carrying timestep[i].
+        x_clean = trajectory[start + 1 : stop + 1].to(ldm.device, dtype=ldm.model.unet.dtype)
+        t = torch.tensor(timesteps[start:stop], device=ldm.device)
+        model_input = ldm.model.scheduler.scale_model_input(x_clean, t)
+
+        eps_c = ldm.unet_forward(
             model_input,
             timestep=t,
-            encoder_hidden_states=hidden.expand(count, -1, -1),
-            class_labels=t5.expand(count, -1, -1),
-            encoder_attention_mask=mask.expand(count, -1),
-        )[0].sample.cpu()
+            encoder_hidden_states=hidden.expand(n, -1, -1),
+            class_labels=t5.expand(n, -1, -1),
+            encoder_attention_mask=mask.expand(n, -1),
+        )[0].sample
+        eps_u = ldm.unet_forward(
+            model_input,
+            timestep=t,
+            encoder_hidden_states=u_hidden.expand(n, -1, -1),
+            class_labels=u_t5.expand(n, -1, -1),
+            encoder_attention_mask=u_mask.expand(n, -1),
+        )[0].sample
 
-        gap = shifted - target[start:stop]
-        rms.append(gap.flatten(1).pow(2).mean(dim=1).sqrt().numpy())
-        signed.append(gap.flatten(1).mean(dim=1).numpy())
-        magnitude.append(target[start:stop].flatten(1).pow(2).mean(dim=1).sqrt().numpy())
+        target_c = eps_cond_target[start:stop].to(ldm.device, dtype=eps_c.dtype)
+        target_u = eps_uncond_target[start:stop].to(ldm.device, dtype=eps_c.dtype)
+        student = combine(eps_u, eps_c, guidance_scale)
+        target = combine(target_u, target_c, guidance_scale)
 
-    return np.concatenate(rms), np.concatenate(signed), np.concatenate(magnitude)
+        dims = tuple(range(1, student.ndim))
+        combined.append(((student - target) ** 2).mean(dim=dims).float().cpu().numpy())
+        cond_only.append(((eps_c - target_c) ** 2).mean(dim=dims).float().cpu().numpy())
+
+    return {
+        "timestep": np.array(timesteps),
+        "combined": np.concatenate(combined),
+        "cond_only": np.concatenate(cond_only),
+    }
+
+
+def band_report(gaps: dict[str, np.ndarray], num_bands: int = 4) -> dict[str, float]:
+    """Mean gap overall and per equal band of the schedule, noisiest band first."""
+    out = {
+        "combined": float(gaps["combined"].mean()),
+        "cond_only": float(gaps["cond_only"].mean()),
+    }
+    edges = np.linspace(0, 1000, num_bands + 1)
+    for i in range(num_bands, 0, -1):
+        low, high = edges[i - 1], edges[i]
+        mask = (gaps["timestep"] > low) & (gaps["timestep"] <= high)
+        name = f"q{int(high / 10):03d}_{int(low / 10):03d}"
+        out[f"combined_{name}"] = float(gaps["combined"][mask].mean()) if mask.any() else float("nan")
+    return out
 
 
 def main(
-    root_dir: str,
+    data_root: str,
+    guidance_scale: float,
     device: str = "cuda:0",
-    num_samples: int | None = None,
-    batch_size: int = 8,
+    model_id: str = "cvssp/audioldm2-large",
     num_inference_steps: int = 200,
-    output_json: str | None = None,
+    batch_size: int = 8,
+    limit_samples: int | None = None,
+    out_root: str = "output/shift_gap",
 ) -> None:
-    """Profile the inversion error by noise-schedule quartile over a trajectory set.
+    """Report the shift gap on a probe trajectory set generated at one guidance scale.
+
+    Run once per guidance scale on paired sets (same prompts, same seed) and compare `combined`
+    across them: that is the quantity a CFG-aware inversion LoRA would have to close, and whether
+    it grows with w decides if regenerating the full dataset is worth it.
 
     Args:
-        root_dir: Cached trajectory dataset.
-        device: Torch device.
-        num_samples: Trajectories to use; None uses all.
+        data_root: Probe dataset directory holding `sample_XXXXXX/`.
+        guidance_scale: The w the set was generated with.
+        device: CUDA device.
+        model_id: AudioLDM2 checkpoint.
+        num_inference_steps: DDIM grid the trajectories were generated on.
         batch_size: Transitions per forward pass.
-        num_inference_steps: DDIM grid length; must match the dataset.
-        output_json: Optional path to write the per-step profile to.
+        limit_samples: Score only the first N trajectories, for a smoke run.
+        out_root: Parent for the timestamped output directory.
     """
-    samples = sorted(Path(root_dir).glob("sample_*"))[:num_samples]
-    assert samples, f"no sample_* directories under {root_dir}"
-    timesteps = np.array(json.loads((samples[0] / "timesteps.json").read_text()))
+    load_dotenv(AUDIO_ROOT / ".env", override=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    samples = sorted(Path(data_root).glob("sample_*"))
+    assert samples, f"no sample_* directories under {data_root}"
+    if limit_samples is not None:
+        samples = samples[:limit_samples]
 
-    ldm = load_model("cvssp/audioldm2-large", device, num_inference_steps, edit_method="ddim")
-    logger.info("Profiling {} trajectories x {} transitions", len(samples), len(timesteps))
+    ldm = load_model(model_id, torch.device(device), num_inference_steps, edit_method="ddim")
+    uncond = tuple(t.to(device) for t in ldm.encode_text([""], negative=True))
 
-    rms, signed, magnitude = [], [], []
-    for index, sample_dir in enumerate(samples):
-        sample_rms, sample_signed, sample_magnitude = gap_for_sample(
-            ldm, sample_dir, timesteps, batch_size
-        )
-        rms.append(sample_rms)
-        signed.append(sample_signed)
-        magnitude.append(sample_magnitude)
-        if index == 0:
-            logger.info(
-                "First trajectory: gap RMS {:.5f} at t={}, {:.5f} at t={}",
-                sample_rms[0], timesteps[0], sample_rms[-1], timesteps[-1],
-            )
-        logger.info("{}/{} {}", index + 1, len(samples), sample_dir.name)
-
-    rms = np.stack(rms)
-    signed = np.stack(signed)
-    magnitude = np.stack(magnitude)
-
-    fraction = 1.0 - timesteps / 1000.0
-    quartile = np.clip((fraction * NUM_QUARTILES).astype(int), 0, NUM_QUARTILES - 1)
-
-    print(f"\n{len(samples)} trajectories, {len(timesteps)} steps, no CFG\n")
-    header = f"{'quartile':>13} {'t range':>12} {'sigma_eps':>10} {'e_RMS':>9} {'+/- sd':>9} {'e_MSE':>11} {'e_rel':>8} {'bias/e_RMS':>11}"
-    print(header)
-    rows = {}
-    for q in range(NUM_QUARTILES):
-        mask = quartile == q
-        label = "noisiest" if q == 0 else ("cleanest" if q == 3 else "")
-        e_rms = rms[:, mask].mean()
-        # Spread across trajectories of that quartile's mean error.
-        sd = rms[:, mask].mean(axis=1).std()
-        sigma = magnitude[:, mask].mean()
-        bias = np.abs(signed[:, mask]).mean()
-        rows[f"q{q + 1}"] = {
-            "t_max": int(timesteps[mask].max()), "t_min": int(timesteps[mask].min()),
-            "sigma_eps": float(sigma), "e_RMS": float(e_rms), "e_RMS_sd": float(sd),
-            "e_MSE": float((rms[:, mask] ** 2).mean()), "e_rel": float(e_rms / sigma),
-            "bias_ratio": float(bias / e_rms),
-        }
-        print(
-            f"  q{q + 1} {label:>9} {timesteps[mask].max():>5}..{timesteps[mask].min():<5} "
-            f"{sigma:>10.4f} {e_rms:>9.5f} {sd:>9.5f} {(rms[:, mask] ** 2).mean():>11.3e} "
-            f"{e_rms / sigma:>7.2%} {bias / e_rms:>11.4f}"
+    per_sample, pooled = [], {"timestep": [], "combined": [], "cond_only": []}
+    for i, sample_dir in enumerate(samples):
+        gaps = sample_gaps(ldm, sample_dir, guidance_scale, batch_size, uncond)
+        report = band_report(gaps)
+        per_sample.append({"sample": sample_dir.name, **report})
+        for key in pooled:
+            pooled[key].append(gaps[key])
+        logger.info(
+            "{}/{} {}: combined={:.3e} cond_only={:.3e}",
+            i + 1, len(samples), sample_dir.name, report["combined"], report["cond_only"],
         )
 
-    print(
-        f"\nq4/q1 ratios: e_RMS {rows['q4']['e_RMS'] / rows['q1']['e_RMS']:.0f}x   "
-        f"e_MSE {rows['q4']['e_MSE'] / rows['q1']['e_MSE']:.0f}x   "
-        f"e_rel {rows['q4']['e_rel'] / rows['q1']['e_rel']:.0f}x"
-    )
-    print(
-        "bias/e_RMS is the signed mean error over its RMS: ~0 means the error is symmetric "
-        "noise with no constant offset for the adapter to absorb."
-    )
+    overall = band_report({k: np.concatenate(v) for k, v in pooled.items()})
+    logger.success("w={} over {} trajectories: {}", guidance_scale, len(samples), overall)
 
-    if output_json:
-        Path(output_json).parent.mkdir(parents=True, exist_ok=True)
-        with open(output_json, "w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "num_trajectories": len(samples),
-                    "timesteps": timesteps.tolist(),
-                    "quartiles": rows,
-                    "per_step_e_RMS": rms.mean(axis=0).tolist(),
-                    "per_step_sigma_eps": magnitude.mean(axis=0).tolist(),
-                },
-                f,
-                indent=2,
-            )
-        logger.success("Wrote {}", output_json)
+    out_dir = AUDIO_ROOT / out_root / stamp
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / f"{stamp}_shift_gap_g{guidance_scale}.json").write_text(
+        json.dumps(
+            {
+                "timestamp": stamp,
+                "data_root": str(data_root),
+                "guidance_scale": guidance_scale,
+                "num_inference_steps": num_inference_steps,
+                "num_trajectories": len(samples),
+                "overall": overall,
+                "per_sample": per_sample,
+            },
+            indent=2,
+        )
+    )
+    logger.info("wrote {}", out_dir)
 
 
 if __name__ == "__main__":
