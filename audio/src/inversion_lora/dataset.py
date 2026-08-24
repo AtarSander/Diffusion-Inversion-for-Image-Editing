@@ -27,6 +27,7 @@ class AudioLDM2TrajectoryDataset(Dataset):
         mmap: bool = True,
         sample_ids: set[int] | None = None,
         conditioning_keys: tuple[str, ...] = CONDITIONING_KEYS,
+        timestep_dtype: torch.dtype = torch.long,
     ):
         """Index the dataset without loading any latents.
 
@@ -38,10 +39,13 @@ class AudioLDM2TrajectoryDataset(Dataset):
                 level so transitions from one trajectory never straddle a train/val boundary.
             conditioning_keys: Which tensors to read out of `conditioning.pt`. The default is
                 AudioLDM2's three streams; Stable Audio caches a single `text_audio` tensor.
+            timestep_dtype: Dtype for the timestep. Integers for AudioLDM2's 0..999 grid; Stable
+                Audio's cosine grid runs 0.99..0.19, which `long` would truncate to zero.
         """
         self.root_dir = Path(root_dir)
         self.mmap = mmap
         self.conditioning_keys = conditioning_keys
+        self.timestep_dtype = timestep_dtype
         self.samples: list[dict[str, Any]] = []
         self.cumulative_lengths: list[int] = []
 
@@ -118,7 +122,7 @@ class AudioLDM2TrajectoryDataset(Dataset):
         return {
             "x_clean": x_clean,
             "target_eps": eps,
-            "timestep": torch.tensor(sample["timesteps"][step_idx], dtype=torch.long),
+            "timestep": torch.tensor(sample["timesteps"][step_idx], dtype=self.timestep_dtype),
             **{key: conditioning[key] for key in self.conditioning_keys},
             "sample_idx": sample["sample_idx"],
             "step_idx": step_idx,

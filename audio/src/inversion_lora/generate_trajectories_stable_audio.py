@@ -153,6 +153,9 @@ def main(cfg: DictConfig) -> None:
     meta_base = {
         "model_id": str(cfg.model_id),
         "schedule": str(cfg.schedule),
+        "solver": "first_order_ode",
+        "pairing": "matched_timestep",
+        "target_space": "data_prediction",
         "num_inference_steps": int(cfg.num_inference_steps),
         "duration_s": teacher.duration_s,
         "store_dtype": str(cfg.store_dtype),
@@ -167,7 +170,15 @@ def main(cfg: DictConfig) -> None:
 
         seed = int(cfg.seed) + sample_idx
         text_audio = teacher.encode_prompt(record["prompt"])
-        trajectory, outputs, timesteps = teacher.reverse_trajectory(text_audio, seed=seed)
+        trajectory, data, grid = teacher.ode_trajectory(text_audio, seed=seed)
+
+        # The pair inversion actually needs on this grid: the student sees the cleaner latent at
+        # *its own* timestep and must predict the teacher's data prediction at the noisier one,
+        # which is what the reverse step consumed. On an EDM grid the matched timestep beats the
+        # shifted one 0.0179 to 0.0474 -- see output/sao_schedules/REPORT.md.
+        # The last transition ends at sigma = 0, where the reverse step discards the sample and has
+        # no inverse, so it is dropped: trajectory[:-1] pairs with data[:-1].
+        trajectory, outputs, timesteps = trajectory[:-1], data[:-1], grid[1:]
 
         if offset == 0:
             log_first_sample(teacher, record, trajectory, outputs, timesteps, text_audio)

@@ -8,12 +8,12 @@ device: cpu # set cuda:N explicitly; never auto-grab a shared GPU
 seed: 42
 
 model_id: stabilityai/stable-audio-open-1.0
-schedule: beta # must match the trajectory dataset's scheduler
+schedule: cosine # must match the trajectory dataset's scheduler
 num_inference_steps: 100 # must match the trajectory dataset's grid
 duration_s: null # must match the dataset's duration; null uses the model's maximum
 adapter_name: inversion
 
-data_root: ${oc.env:LORAINV_DATA_ROOT}/stable_audio_trajectories_fp32
+data_root: ${oc.env:LORAINV_DATA_ROOT}/stable_audio_cosine_ode_fp32
 val_fraction: 0.20 # split by trajectory, never by transition
 # 1500 trajectories x 100 transitions, 80% of which train: 120k transitions. At an effective
 # batch of 32 that is 3.75k steps per epoch, so max_train_steps=20000 is ~5.3 epochs.

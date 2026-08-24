@@ -5,10 +5,11 @@
 device: cpu # set to cuda:N explicitly; never auto-grab a shared GPU
 
 model_id: stabilityai/stable-audio-open-1.0
-# `beta` is the deterministic DPMSolverMultistep grid the editing code's `ddim` mode builds, and
-# the only invertible option: Stable Audio's native cosine scheduler is an SDE with an unseeded
-# Brownian noise sampler. See output/sao_probe/REPORT.md.
-schedule: beta
+# Stable Audio's own sigma grid. Its scheduler is an SDE, so trajectories come from the
+# first-order ODE solver rather than scheduler.step, which is deterministic and exactly invertible.
+# The `beta` grid the editing code's `ddim` mode builds is rejected: it queries the DiT ~1000x
+# outside its trained timestep range and its audio clips by 22x. See output/sao_schedules/REPORT.md.
+schedule: cosine
 num_inference_steps: 100 # matches the editing baselines (edit_stableaudio_medleydb.py)
 # Duration the timing conditioning declares; null uses the model's maximum (47.55 s), which is
 # also what the MedleyMD edits run at since every mix is longer than the window. The latent length
@@ -21,7 +22,7 @@ caption_column: caption
 
 # 1500 trajectories x 100 transitions x [64, 1024] fp32 is ~79 GB: 26.5 MB of latents plus
 # 26.2 MB of targets per trajectory. Point this at scratch/lustre, never at the repo.
-output_dir: ${oc.env:LORAINV_DATA_ROOT}/stable_audio_trajectories_fp32
+output_dir: ${oc.env:LORAINV_DATA_ROOT}/stable_audio_cosine_ode_fp32
 start_index: 0
 num_samples: 1500 # null => all captions from start_index
 seed: 42

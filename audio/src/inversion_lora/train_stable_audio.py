@@ -1,6 +1,7 @@
 # ABOUTME: Train a LoRA on Stable Audio Open so that DPMSolver inversion becomes near-exact, by
 # ABOUTME: distilling the frozen teacher's prediction at x_t into the student's at the cleaner x_t-1.
 
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -22,13 +23,22 @@ from src.inversion_lora.dataset import (  # noqa: E402
     split_sample_ids,
     transitions_below_timestep,
 )
-from src.inversion_lora.stable_audio import load_teacher  # noqa: E402
+from src.inversion_lora.stable_audio import FirstOrderSolver, load_teacher  # noqa: E402
 from src.inversion_lora.train import (  # noqa: E402
     AudioLDM2InversionTrainer,
     NullTracker,
+    band_labels,
 )
 
 STABLE_AUDIO_CONDITIONING_KEYS = ("text_audio",)
+# What the cached dataset must be, or the loss is not the inversion error. See
+# output/sao_schedules/REPORT.md for why each of the three is what it is.
+REQUIRED_META = {
+    "schedule": "cosine",
+    "solver": "first_order_ode",
+    "pairing": "matched_timestep",
+    "target_space": "data_prediction",
+}
 
 
 class StableAudioInversionTrainer(AudioLDM2InversionTrainer):
@@ -40,6 +50,23 @@ class StableAudioInversionTrainer(AudioLDM2InversionTrainer):
     denoiser takes per-example timesteps directly.
     """
 
+    def __init__(self, ldm, cfg: DictConfig, tracker: Any):
+        super().__init__(ldm, cfg, tracker)
+        self.solver = FirstOrderSolver(ldm.model.scheduler)
+        # The base class bands the schedule against num_train_timesteps=1000, which is meaningless
+        # on a grid whose timesteps run 0.99..0.19: every example would land in one band.
+        self.band_top = max(self.solver.timesteps)
+        self.band_labels = band_labels(
+            self.band_top, int(cfg.num_loss_bands), self.band_top
+        )
+        self._band_sums = torch.zeros(len(self.band_labels), dtype=torch.float64)
+        self._band_counts = torch.zeros(len(self.band_labels), dtype=torch.float64)
+        logger.info(
+            "solver grid: {} steps, t {:.4g}..{:.4g}, sigma {:.4g}..{:.4g}",
+            len(self.solver.timesteps), self.solver.timesteps[0], self.solver.timesteps[-1],
+            float(self.solver.sigmas[0]), float(self.solver.sigmas[-2]),
+        )
+
     def log_first_batch(self, batch: dict[str, Any]) -> None:
         """Print the first training batch's shapes, Stable Audio's single conditioning included."""
         logger.info(
@@ -50,19 +77,48 @@ class StableAudioInversionTrainer(AudioLDM2InversionTrainer):
         )
 
     def predict_noise(self, batch: dict[str, Any]) -> torch.Tensor:
-        """Run the student DiT on the cleaner latent with the cached conditioning."""
+        """The student's data prediction at the cleaner latent, at that latent's own timestep.
+
+        The target is the teacher's data prediction at the noisier latent, which is exactly what the
+        reverse step consumed, so closing this difference makes the exact inverse exact. Everything
+        is in data-prediction space rather than raw network output: that is the quantity the solver
+        consumes, and on an EDM grid the two differ by a sigma-dependent scale.
+        """
         x_clean = batch["x_clean"].to(device=self.device, dtype=self.unet.dtype)
-        timestep = batch["timestep"].to(device=self.device)
+        timestep = batch["timestep"].to(device=self.device, dtype=torch.float32)
         text_audio = batch["text_audio"].to(device=self.device, dtype=self.unet.dtype)
         assert x_clean.shape[0] == timestep.shape[0] == text_audio.shape[0], (
             x_clean.shape,
             timestep.shape,
             text_audio.shape,
         )
-        # DPMSolverMultistep does no input preconditioning, so scale_model_input is the identity
-        # here and the raw latent is what the teacher saw. It is not the identity for the native
-        # cosine scheduler; see output/sao_probe/REPORT.md.
-        return self.ldm.forward(x_clean, timestep, text_audio)
+        sigmas = self.solver.sigma_for(timestep).to(dtype=x_clean.dtype)
+        raw = self.ldm.forward(
+            self.solver.model_input_batch(x_clean, sigmas), timestep, text_audio
+        )
+        return self.solver.data_prediction_batch(x_clean, raw, sigmas)
+
+
+def check_dataset_convention(data_root: str) -> None:
+    """Refuse a cached dataset that was not generated the way the loss assumes.
+
+    A dataset from the beta grid, or with the shifted pairing, or holding raw network outputs, would
+    train silently against the wrong quantity -- which is exactly what happened once already.
+
+    Args:
+        data_root: Dataset directory holding `sample_*`.
+    """
+    samples = sorted(Path(data_root).glob("sample_*/meta.json"))
+    if not samples:
+        raise FileNotFoundError(f"no sample_*/meta.json under {data_root}")
+    meta = json.loads(samples[0].read_text())
+    wrong = {k: meta.get(k) for k, v in REQUIRED_META.items() if meta.get(k) != v}
+    if wrong:
+        raise ValueError(
+            f"{samples[0].parent} was generated under a different convention: {wrong}, expected "
+            f"{REQUIRED_META}. Regenerate with generate_trajectories_stable_audio.py."
+        )
+    logger.info("dataset convention: {}", {k: meta[k] for k in REQUIRED_META})
 
 
 def build_loaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader | None, set[int]]:
@@ -78,9 +134,13 @@ def build_loaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader | None, set[i
     Returns:
         `(train_loader, val_loader, val_ids)`; `val_loader` is None when nothing is held out.
     """
+    check_dataset_convention(cfg.data_root)
     train_ids, val_ids = split_sample_ids(cfg.data_root, float(cfg.val_fraction), int(cfg.seed))
     train_dataset = AudioLDM2TrajectoryDataset(
-        cfg.data_root, sample_ids=train_ids, conditioning_keys=STABLE_AUDIO_CONDITIONING_KEYS
+        cfg.data_root,
+        sample_ids=train_ids,
+        conditioning_keys=STABLE_AUDIO_CONDITIONING_KEYS,
+        timestep_dtype=torch.float32,
     )
     logger.info("train: {:,} transitions from {} trajectories", len(train_dataset), len(train_ids))
     if cfg.train_max_timestep:
@@ -96,7 +156,10 @@ def build_loaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader | None, set[i
     val_loader = None
     if val_ids:
         val_dataset = AudioLDM2TrajectoryDataset(
-            cfg.data_root, sample_ids=val_ids, conditioning_keys=STABLE_AUDIO_CONDITIONING_KEYS
+            cfg.data_root,
+            sample_ids=val_ids,
+            conditioning_keys=STABLE_AUDIO_CONDITIONING_KEYS,
+            timestep_dtype=torch.float32,
         )
         logger.info("val:   {:,} transitions from {} trajectories", len(val_dataset), len(val_ids))
         capped = int(cfg.max_val_batches) * int(cfg.batch_size)

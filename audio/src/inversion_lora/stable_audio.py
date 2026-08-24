@@ -10,17 +10,21 @@ from diffusers import (
     StableAudioPipeline,
 )
 from diffusers.models.embeddings import get_1d_rotary_pos_embed
+from loguru import logger
 from tqdm import tqdm
 
 MODEL_ID = "stabilityai/stable-audio-open-1.0"
 
-# Stable Audio's native scheduler is an SDE: it draws Brownian noise per step from an unseeded
-# sampler, so its trajectories are irreproducible and DDIM-style inversion is undefined on it.
-# `beta` is the deterministic replacement the editing code's `ddim` mode builds, and the teacher
-# the adapter is trained against. It runs the DiT on a linear-beta grid (sigma 157..0.05,
-# t 999..10) rather than the cosine grid the model was trained on (sigma 500..0.3, t 0.99..0.19);
-# see output/sao_probe/REPORT.md. `cosine` is kept so the probe can compare the two.
-SCHEDULES = ("beta", "cosine")
+# `cosine` is Stable Audio's own sigma grid (500..0.3, t 0.99..0.19) and the only one used. Its
+# scheduler is an SDE -- unseeded Brownian noise per step -- so trajectories come from
+# `FirstOrderSolver` instead of `scheduler.step`, which is deterministic and exactly invertible.
+#
+# `beta` is what the editing code's `ddim` mode builds by rebuilding the scheduler as
+# DPMSolverMultistepScheduler, which silently drops sigma_min/sigma_max and lands on a linear-beta
+# grid (sigma 157..0.05, t 999..10). REJECTED: the DiT is then queried ~1000x outside its trained
+# timestep range, its data predictions come out ~100x too large and the decoded audio clips by 22x
+# (output/sao_schedules/REPORT.md). It is kept only so that comparison stays reproducible.
+SCHEDULES = ("cosine", "beta")
 
 
 class StableAudioTeacher:
@@ -141,6 +145,46 @@ class StableAudioTeacher:
         return out
 
     @torch.no_grad()
+    def ode_trajectory(
+        self, text_audio: torch.Tensor, seed: int, progress: bool = True
+    ) -> tuple[torch.Tensor, torch.Tensor, list[float]]:
+        """Sample deterministically with the first-order ODE, keeping latents and data predictions.
+
+        This is the trajectory the inversion LoRA is trained on. Unlike `reverse_trajectory` it does
+        not call `scheduler.step`, so it is reproducible on the cosine grid (whose scheduler is an
+        SDE) and exactly invertible by `FirstOrderSolver.inverse`.
+
+        Args:
+            text_audio: Cross-attention states `[1, S, D]`.
+            seed: Seed for the initial latent.
+            progress: Show a per-step progress bar.
+
+        Returns:
+            `(trajectory, data, timesteps)`, where `data[i]` is the data prediction at
+            `(trajectory[i], timesteps[i])` and the reverse step from `trajectory[i]` to
+            `trajectory[i + 1]` consumed exactly that. All on the CPU.
+        """
+        solver = FirstOrderSolver(self.model.scheduler)
+        shape = (1, self.pipe.transformer.config.in_channels, self.latent_length)
+        x = torch.randn(
+            shape,
+            generator=torch.Generator(device=self.device).manual_seed(seed),
+            device=self.device,
+        ) * solver.sigmas[0]
+
+        trajectory, data = [x.cpu()], []
+        for index in tqdm(
+            range(len(solver.timesteps)), desc="sampling", leave=False, disable=not progress
+        ):
+            t = torch.tensor([solver.timesteps[index]], device=self.device)
+            raw = self.forward(solver.model_input(x, index), t, text_audio)
+            prediction = solver.data_prediction(x, raw, index)
+            data.append(prediction.cpu())
+            x = solver.forward(x, prediction, index)
+            trajectory.append(x.cpu())
+        return torch.cat(trajectory), torch.cat(data), list(solver.timesteps)
+
+    @torch.no_grad()
     def reverse_trajectory(
         self, text_audio: torch.Tensor, seed: int, progress: bool = True
     ) -> tuple[torch.Tensor, torch.Tensor, list[float]]:
@@ -196,7 +240,7 @@ def load_teacher(
     device: torch.device,
     num_inference_steps: int,
     duration_s: float | None = None,
-    schedule: str = "beta",
+    schedule: str = "cosine",
 ) -> StableAudioTeacher:
     """Load Stable Audio Open on a deterministic sampling grid.
 
@@ -211,6 +255,12 @@ def load_teacher(
         The teacher, in eval mode with its timesteps set.
     """
     assert schedule in SCHEDULES, f"schedule must be one of {SCHEDULES}, got {schedule!r}"
+    if schedule == "beta":
+        logger.warning(
+            "schedule=beta queries the DiT outside its trained timestep range: data predictions "
+            "~100x too large, decoded audio clipping by 22x. See output/sao_schedules/REPORT.md. "
+            "Use it only to reproduce that comparison."
+        )
     pipe = StableAudioPipeline.from_pretrained(model_id, torch_dtype=torch.float32).to(device)
     pipe.transformer.eval()
     pipe.vae.eval()
@@ -307,6 +357,39 @@ class FirstOrderSolver:
             f"only v_prediction is wired here, got {self.scheduler.config.prediction_type}"
         )
         return alpha_t * x - sigma_t * raw
+
+    def sigma_for(self, timesteps: torch.Tensor) -> torch.Tensor:
+        """Map a batch of grid timesteps back to their sigmas, shaped for broadcasting.
+
+        Args:
+            timesteps: Timesteps `[B]`, each of which must be on this grid.
+
+        Returns:
+            Sigmas `[B, 1, 1]`.
+        """
+        grid = torch.tensor(self.timesteps, dtype=torch.float64)
+        index = torch.searchsorted(grid.flip(0), timesteps.double().cpu().flip(0))
+        index = (len(grid) - 1 - index.flip(0)).clamp(0, len(grid) - 1)
+        chosen = grid[index]
+        assert torch.allclose(chosen, timesteps.double().cpu(), atol=1e-6), (
+            "timesteps are not on this solver's grid; the dataset and the solver disagree"
+        )
+        return self.sigmas[index].to(timesteps.device).reshape(-1, 1, 1)
+
+    def model_input_batch(self, x: torch.Tensor, sigmas: torch.Tensor) -> torch.Tensor:
+        """`model_input` for a batch with one sigma per element."""
+        if not self.preconditioned:
+            return x
+        return self.scheduler.precondition_inputs(x, sigmas)
+
+    def data_prediction_batch(
+        self, x: torch.Tensor, raw: torch.Tensor, sigmas: torch.Tensor
+    ) -> torch.Tensor:
+        """`data_prediction` for a batch with one sigma per element."""
+        if self.preconditioned:
+            return self.scheduler.precondition_outputs(x, raw, sigmas)
+        alpha_t = 1.0 / ((sigmas**2 + 1) ** 0.5)
+        return alpha_t * x - sigmas * alpha_t * raw
 
     def coefficients(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
         """The affine coefficients `(A, B)` of the reverse step from `index` to `index + 1`."""
