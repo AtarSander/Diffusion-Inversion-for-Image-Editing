@@ -193,16 +193,23 @@ def run_stable_audio_edit(
     else:
         ldm_stable_inverse = ldm_stable
 
+    set_lora_enabled = None
     if lora_path is not None:
-        if mode != "ddim":
-            raise ValueError(f"lora_path is only meaningful for DDIM inversion, got mode={mode!r}")
+        if mode not in ("ddim", "odeinv"):
+            raise ValueError(
+                f"lora_path is only meaningful for an inversion mode, got mode={mode!r}"
+            )
         # The shifted-denoiser objective trains the adapter to predict the teacher's output at the
         # noisier latent, which is the substitution DDIM *inversion* makes, so it belongs on the
         # inversion pass alone. Stable Audio's ddim mode already loads a second pipeline for
         # inversion, so attaching it there leaves the reverse pass on the frozen teacher without
         # toggling per pass. Enabled once, which merges it into the base weights: an unfused
         # adapter costs a side branch on every module for the same delta.
-        attach_inversion_lora(ldm_stable_inverse.model.transformer, lora_path)(True)
+        set_lora_enabled = attach_inversion_lora(ldm_stable_inverse.model.transformer, lora_path)
+        if mode == "ddim":
+            # ddim loads a second pipeline for inversion, so enabling it once confines the adapter
+            # to the inversion pass. odeinv runs both passes on one model and toggles per pass.
+            set_lora_enabled(True)
 
     # Load audio (stable-audio doesn't use STFT)
     x0, sr, duration = load_audio(
@@ -328,9 +335,18 @@ def run_stable_audio_edit(
                 return predict
 
             steps = int(tstart[0])
-            wT = ode_invert(
-                solver, w0, guided(src_emb, src_mask, cfg_scale_src[0]), steps, progress=verbose
-            )
+            # The adapter belongs on the inversion pass only: it is trained to predict the
+            # teacher's data prediction at the noisier latent, which is the substitution inversion
+            # makes. The reverse pass must run the frozen teacher.
+            if set_lora_enabled is not None:
+                set_lora_enabled(True)
+            try:
+                wT = ode_invert(
+                    solver, w0, guided(src_emb, src_mask, cfg_scale_src[0]), steps, progress=verbose
+                )
+            finally:
+                if set_lora_enabled is not None:
+                    set_lora_enabled(False)
             w0 = ode_denoise(
                 solver,
                 wT,
