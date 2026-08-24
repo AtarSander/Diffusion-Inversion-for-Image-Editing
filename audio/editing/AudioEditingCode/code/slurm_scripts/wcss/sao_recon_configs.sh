@@ -6,12 +6,18 @@
 # prompt under guidance. Every step_* checkpoint is scored so a dose-response curve exists: the
 # AudioLDM2 run improved reconstruction and still moved no editing metric, and the absence of any
 # dose-response was one of the four legs that result rests on.
+# Every save, not a subsample: an arm is 35 tracks and ~10 minutes, so the whole ladder is
+# cheaper than one editing cell, and the shape of the curve is the point.
 LORA_CHECKPOINTS=(
   ""  # the frozen teacher
   "sao_r8_a4_lr5e-5/checkpoint_step_2000.pt"
+  "sao_r8_a4_lr5e-5/checkpoint_step_4000.pt"
   "sao_r8_a4_lr5e-5/checkpoint_step_6000.pt"
+  "sao_r8_a4_lr5e-5/checkpoint_step_8000.pt"
   "sao_r8_a4_lr5e-5/checkpoint_step_10000.pt"
+  "sao_r8_a4_lr5e-5/checkpoint_step_12000.pt"
   "sao_r8_a4_lr5e-5/checkpoint_step_14000.pt"
+  "sao_r8_a4_lr5e-5/checkpoint_step_16000.pt"
   "sao_r8_a4_lr5e-5/checkpoint_step_18000.pt"
   "sao_r8_a4_lr5e-5/checkpoint_step_18000_ema.pt"
 )
