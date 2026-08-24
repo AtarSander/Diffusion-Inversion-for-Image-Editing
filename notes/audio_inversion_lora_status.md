@@ -8,6 +8,64 @@ Most recent first. Keep this file current — it is the handover doc between ses
 
 ---
 
+## 2026-08-24 — RESULT: Stable Audio reproduces the AudioLDM2 null result exactly
+
+Both halves measured. Reconstruction ladder: 11 arms x 35 distinct MedleyDB tracks (slurm 5757136
++ 5757198, eval 5757199). Editing grid: 24 runs x 115 hparam rows, 4 tstart x 2 cfg_tar x
+{no-LoRA, step 18000, its EMA} (slurm 5757137, eval 5757139). Report:
+`output/sao_lora/20260824_103855/`, regenerate with
+`python -m editing.compare_sao_lora --root <edits>/medleymd/stable_audio`.
+
+**Reconstruction improves, and saturates by step 2000.** Paired against the frozen teacher:
+
+| arm | d mel PSNR | p | d LPAPS | p |
+| --- | --- | --- | --- | --- |
+| 2000 | **+1.332** | <0.001 | -0.025 | <0.001 |
+| 6000 | +1.312 | <0.001 | -0.016 | 0.004 |
+| 10000 | +1.335 | <0.001 | -0.012 | 0.048 |
+| 14000 | +1.396 | <0.001 | -0.013 | 0.032 |
+| 18000 | +1.378 | <0.001 | -0.016 | 0.010 |
+| 18000_ema | +1.370 | <0.001 | -0.014 | 0.021 |
+
+22.62 -> 24.00 dB, and step 2000 is already worth 97% of what step 18000 buys. Compare AudioLDM2's
++1.57 dB. **No dose-response**: the adapter closed 86.3% of the shift gap at step 1000 and 91.9% at
+18000, and reconstruction does not distinguish them.
+
+**Editing does not move.** Largest effect anywhere on the grid is -0.024 LPAPS, against a front
+spanning 2.79 to 4.93 LPAPS across the eight cells -- about 1% of it. The pattern:
+
+- At tstart=25, small but real preservation gains (LPAPS -0.013/-0.024, mel PSNR +0.20/+0.26,
+  p<0.001) **paid for in alignment** (CLAP -0.002/-0.003, p<0.001). A trade along the front, not a
+  move off it.
+- At tstart>=50 everything collapses into noise or flips sign: LPAPS -0.005..+0.001 (p 0.05..0.85),
+  mel PSNR *negative* at every cell, CLAP still slightly negative.
+- Raw and EMA are indistinguishable everywhere (differences in the fourth decimal).
+
+Wiring check: the t100/cfg3.5 no-LoRA cell scores LPAPS 4.283 / CLAP 0.287 / mel PSNR 17.380 on
+115 rows against the 696-row baseline's 4.326 / 0.286 / 17.048.
+
+### What this settles
+
+The AudioLDM2 finding was not architectural. A second model -- 1.06B DiT, v-prediction, DPMSolver
+inversion, a 4.3x rather than ~300x t-dependent shift gap, reaching 92% of it with the plain attn
+preset -- reproduces the same three shapes: the objective is learnable, reconstruction improves by
+about the same +1.3-1.6 dB, no editing metric moves, and there is no dose-response linking the
+first to the second. Inversion fidelity is not what limits editing, on either model.
+
+Also confirmed on the adapter mechanics: injecting a mathematically zero LoRA shifts the DiT output
+5.2e-5 relative (cuBLAS rounding from wrapping the Linears), so "LoRA off" is not bit-identical to
+"no LoRA" -- 28x below a 2-step adapter's own effect, and far below anything that moves a metric.
+
+### Next
+
+Nothing further on inversion. The untouched lever remains the target-side dynamics -- guidance
+schedule, cross-attention control -- and for Stable Audio specifically, the schedule mismatch in
+`output/sao_probe/REPORT.md`: its ddim path runs the DiT at timesteps 999..10 where the model was
+trained on 0.99..0.19. That affects every SAO inversion baseline in the repo, LoRA or not, and is
+now the most suspicious unexamined thing in the Stable Audio results.
+
+---
+
 ## 2026-08-23 — RESULT: the objective generalises to Stable Audio Open (91.9%)
 
 The port ran. Dataset: 1500 trajectories, 100 steps, 47.55 s window, `beta` grid (slurm 5746332,
