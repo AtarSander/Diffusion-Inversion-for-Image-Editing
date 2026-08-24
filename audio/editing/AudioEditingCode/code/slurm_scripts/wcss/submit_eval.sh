@@ -86,7 +86,11 @@ if [ -n "${LORA_PATH:-}" ]; then
     exit 1
   fi
   echo "lora path : $LORA_PATH"
-  EXPORT_ARGS=(--export=ALL,LORA_PATH="$LORA_PATH")
+  # Added to the forwarded list rather than replacing it: overwriting dropped ARM and the grid
+  # selectors from the echoed line, so a Stable Audio submission with a stale LORA_PATH in the
+  # shell looked like it was scoring an AudioLDM2 run.
+  FORWARD+=("LORA_PATH=$LORA_PATH")
+  EXPORT_ARGS=(--export=ALL,"$(IFS=,; echo "${FORWARD[*]}")")
 fi
 
 sbatch \
