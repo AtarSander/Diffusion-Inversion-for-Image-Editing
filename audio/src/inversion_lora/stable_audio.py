@@ -235,3 +235,96 @@ def decode_to_audio(teacher: StableAudioTeacher, latents: torch.Tensor) -> torch
     audio = teacher.pipe.vae.decode(latents.to(teacher.device)).sample
     samples = int(teacher.duration_s * teacher.pipe.vae.config.sampling_rate)
     return audio[:, :, :samples].detach().cpu().float()
+
+
+class FirstOrderSolver:
+    """DPMSolver++ first order on a scheduler's sigma grid, with its exact algebraic inverse.
+
+    The reverse step is affine in the sample -- `x_t = A * x_s + B * D`, with `D` the data
+    prediction -- so recovering `x_s` from `x_t` is exact arithmetic given `D`. That is the property
+    diffusers' `DPMSolverMultistepInverseScheduler` does not have: it builds its own grid, offset by
+    one step from the reverse one, so no inverse step undoes any reverse step (see
+    output/sao_pairing/REPORT.md). Everything here is stateless and indexed by step, so the
+    inversion can walk the reverse grid backwards exactly.
+
+    First order rather than the schedulers' default second order because the shifted-denoiser
+    objective is only well posed per step: a multistep update mixes model outputs from several
+    steps, so no single substitution defines its error.
+    """
+
+    def __init__(self, scheduler):
+        """Read the grid, and detect whether the scheduler preconditions its inputs.
+
+        Args:
+            scheduler: A diffusers DPMSolver-family scheduler with `timesteps` already set.
+        """
+        self.scheduler = scheduler
+        self.sigmas = scheduler.sigmas.clone()
+        self.timesteps = [float(t) for t in scheduler.timesteps]
+        # EDM-style schedulers scale the input by 1/sqrt(sigma^2 + sigma_data^2) and read the model
+        # output through c_skip/c_out; VP ones feed the raw latent and convert v to x0 directly.
+        self.preconditioned = hasattr(scheduler, "precondition_inputs")
+        assert len(self.sigmas) == len(self.timesteps) + 1, (
+            f"{len(self.sigmas)} sigmas for {len(self.timesteps)} timesteps"
+        )
+
+    @property
+    def invertible_steps(self) -> int:
+        """How many steps from the noisy end can be inverted.
+
+        A schedule with `final_sigmas_type="zero"` ends with sigma_t = 0, where the reverse step is
+        `x_t = 0 * x_s + B * D`: it discards the sample and returns the data prediction, so that one
+        step destroys the information inversion needs. Both Stable Audio schedules do this, so the
+        round trip runs from the second-cleanest latent instead.
+        """
+        return len(self.timesteps) - 1 if float(self.sigmas[-1]) == 0.0 else len(self.timesteps)
+
+    def _alpha_sigma(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
+        return self.scheduler._sigma_to_alpha_sigma_t(self.sigmas[index])
+
+    def model_input(self, x: torch.Tensor, index: int) -> torch.Tensor:
+        """Scale the latent the way the scheduler's own `scale_model_input` would at `index`."""
+        if not self.preconditioned:
+            return x
+        return self.scheduler.precondition_inputs(x, self.sigmas[index])
+
+    def data_prediction(self, x: torch.Tensor, raw: torch.Tensor, index: int) -> torch.Tensor:
+        """Convert the network's output at step `index` into a prediction of the clean latent.
+
+        Args:
+            x: The *unscaled* latent the network was run on.
+            raw: The network's output.
+            index: Step index into the grid.
+
+        Returns:
+            The data prediction `D`.
+        """
+        sigma = self.sigmas[index]
+        if self.preconditioned:
+            return self.scheduler.precondition_outputs(x, raw, sigma)
+        alpha_t, sigma_t = self._alpha_sigma(index)
+        assert self.scheduler.config.prediction_type == "v_prediction", (
+            f"only v_prediction is wired here, got {self.scheduler.config.prediction_type}"
+        )
+        return alpha_t * x - sigma_t * raw
+
+    def coefficients(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
+        """The affine coefficients `(A, B)` of the reverse step from `index` to `index + 1`."""
+        alpha_t, sigma_t = self._alpha_sigma(index + 1)
+        alpha_s, sigma_s = self._alpha_sigma(index)
+        h = (torch.log(alpha_t) - torch.log(sigma_t)) - (torch.log(alpha_s) - torch.log(sigma_s))
+        return sigma_t / sigma_s, -(alpha_t * (torch.exp(-h) - 1.0))
+
+    def forward(self, x_s: torch.Tensor, data: torch.Tensor, index: int) -> torch.Tensor:
+        """One reverse step: noisier `x_s` at `index` to cleaner `x_t` at `index + 1`."""
+        a, b = self.coefficients(index)
+        return a * x_s + b * data
+
+    def inverse(self, x_t: torch.Tensor, data: torch.Tensor, index: int) -> torch.Tensor:
+        """Exact inverse of `forward`: recover the noisier latent at `index` from `x_t`."""
+        a, b = self.coefficients(index)
+        assert float(a) != 0.0, (
+            f"step {index} maps every sample to the same point (sigma_t = 0); it has no inverse. "
+            "Invert from `invertible_steps` instead."
+        )
+        return (x_t - b * data) / a

@@ -1,0 +1,92 @@
+{
+  "git_sha": "6feeb090c42c098a06ef457cbaae0e65cc4c765b",
+  "prompt": "A gentle acoustic guitar melody with soft percussion.",
+  "seed": 42,
+  "num_inference_steps": 100,
+  "schedules": {
+    "beta": {
+      "sigma_max": 157.4072723388672,
+      "sigma_min": 0.0468863807618618,
+      "timestep_range": [
+        999.0,
+        10.0
+      ],
+      "audio_rms": 4.051276206970215,
+      "audio_peak": 22.490081787109375,
+      "wav": "output/sao_schedules/beta_ode_100steps.wav",
+      "recovery": {
+        "oracle": 1.1253999900873168e-06,
+        "shifted_timestep": 0.010053523816168308,
+        "matched_timestep": 0.0350528322160244
+      },
+      "shift_gap": [
+        {
+          "quartile": "q1",
+          "e_RMS": 0.011374583467841148,
+          "data_RMS": 10.546483993530273,
+          "e_rel": 0.0010785190092564376
+        },
+        {
+          "quartile": "q2",
+          "e_RMS": 0.01840951479971409,
+          "data_RMS": 13.155317306518555,
+          "e_rel": 0.001399397245294269
+        },
+        {
+          "quartile": "q3",
+          "e_RMS": 0.1305312216281891,
+          "data_RMS": 62.326141357421875,
+          "e_rel": 0.002094325411220813
+        },
+        {
+          "quartile": "q4",
+          "e_RMS": 0.3621387779712677,
+          "data_RMS": 121.76041412353516,
+          "e_rel": 0.0029741914117001156
+        }
+      ]
+    },
+    "cosine": {
+      "sigma_max": 500.00006103515625,
+      "sigma_min": 0.29999998211860657,
+      "timestep_range": [
+        0.9987266659736633,
+        0.1855471283197403
+      ],
+      "audio_rms": 0.08536802232265472,
+      "audio_peak": 0.4543331265449524,
+      "wav": "output/sao_schedules/cosine_ode_100steps.wav",
+      "recovery": {
+        "oracle": 2.0457011942198733e-06,
+        "shifted_timestep": 0.04740731790661812,
+        "matched_timestep": 0.017889956012368202
+      },
+      "shift_gap": [
+        {
+          "quartile": "q1",
+          "e_RMS": 0.01166967861354351,
+          "data_RMS": 0.24282510578632355,
+          "e_rel": 0.04805795749889373
+        },
+        {
+          "quartile": "q2",
+          "e_RMS": 0.023792818188667297,
+          "data_RMS": 0.35236939787864685,
+          "e_rel": 0.06752237376998711
+        },
+        {
+          "quartile": "q3",
+          "e_RMS": 0.0726233422756195,
+          "data_RMS": 0.6364872455596924,
+          "e_rel": 0.1141002318306606
+        },
+        {
+          "quartile": "q4",
+          "e_RMS": 0.04180416464805603,
+          "data_RMS": 0.9349778294563293,
+          "e_rel": 0.044711396710191836
+        }
+      ]
+    }
+  }
+}
