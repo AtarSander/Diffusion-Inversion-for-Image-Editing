@@ -19,20 +19,44 @@ import matplotlib.pyplot as plt  # noqa: E402
 from editing.AudioEditingCode.code.env import PATH_EDIT_OUTPUTS  # noqa: E402
 from editing.run_metrics import PER_EXAMPLE_CSV, per_example  # noqa: E402
 
-BASE_RE = re.compile(
-    r"audioldm2_(?P<mode>ddpm|ddim|sdedit)_hparam"
-    r"(?:_cfgsrc(?P<cfg_src>[\d.]+))?_cfgtar(?P<cfg_tar>[\d.]+)"
-    r"_t(?P<tstart>\d+)_s(?P<steps>\d+)$"
-)
-
 # The other two methods come from the same sweep at the same settings. They are not adapters, so
 # they are carried as pseudo-checkpoints purely to put the LoRA differences on a scale where a
-# real method difference is visible.
+# real method difference is visible. Stable Audio has no hparam-grid runs for them -- its DDPM and
+# SDEdit baselines exist only at single full-split settings -- so there the no-LoRA front is the
+# only reference drawn.
 METHOD_LABELS = {"ddpm": "DDPM-inv", "sdedit": "SDEdit"}
-LORA_RE = re.compile(
-    r"audioldm2_ddimlora_hparam_(?P<checkpoint>.+?)"
-    r"_cfgtar(?P<cfg_tar>[\d.]+)_t(?P<tstart>\d+)_s(?P<steps>\d+)$"
-)
+
+# Per model: which subdirectories hold the runs, and how a run directory name parses. The no-LoRA
+# pattern must expose tstart and cfg_tar; `mode` is optional and defaults to ddim.
+MODELS = {
+    "audioldm2": {
+        "title": "AudioLDM2",
+        "subdirs": ["audioldm2_ddim", "audioldm2_ddpm", "audioldm2_sdedit"],
+        "glob": "audioldm2_*hparam*",
+        "base": re.compile(
+            r"audioldm2_(?P<mode>ddpm|ddim|sdedit)_hparam"
+            r"(?:_cfgsrc(?P<cfg_src>[\d.]+))?_cfgtar(?P<cfg_tar>[\d.]+)"
+            r"_t(?P<tstart>\d+)_s(?P<steps>\d+)$"
+        ),
+        "lora": re.compile(
+            r"audioldm2_ddimlora_hparam_(?P<checkpoint>.+?)"
+            r"_cfgtar(?P<cfg_tar>[\d.]+)_t(?P<tstart>\d+)_s(?P<steps>\d+)$"
+        ),
+    },
+    "stable_audio": {
+        "title": "Stable Audio Open",
+        "subdirs": ["stable_audio"],
+        "glob": "stableaudio_*hparam*",
+        "base": re.compile(
+            r"stableaudio_ddim_nolora_hparam_cfgtar(?P<cfg_tar>[\d.]+)"
+            r"_t(?P<tstart>\d+)_s(?P<steps>\d+)$"
+        ),
+        "lora": re.compile(
+            r"stableaudio_ddimlora_hparam_(?P<checkpoint>.+?)"
+            r"_cfgtar(?P<cfg_tar>[\d.]+)_t(?P<tstart>\d+)_s(?P<steps>\d+)$"
+        ),
+    },
+}
 
 # plot label -> column in the consolidated per-example table
 METRICS = {"lpaps": "lpaps", "clap": "clap", "muq": "muqt_sim_p0", "clap_dir": "clap_dir",
@@ -45,29 +69,29 @@ PAIRED = [("lpaps", "LPAPS", "lower"), ("psnr", "mel PSNR", "higher"),
 
 
 
-def collect(root: Path) -> pd.DataFrame:
+def collect(root: Path, model: str) -> pd.DataFrame:
     """Every scored hparam DDIM run, no-LoRA and LoRA alike, as one row per run.
 
     Args:
-        root: Directory holding `audioldm2_ddim/<run>/`.
+        root: Directory holding the model's run subdirectories.
+        model: Key of `MODELS`, which supplies the layout and the name patterns.
 
     Returns:
         Rows with checkpoint, tstart, cfg_tar and the mean/SEM of each metric.
     """
+    spec = MODELS[model]
     rows = []
     candidates = [
-        path
-        for mode in ("ddim", "ddpm", "sdedit")
-        for path in sorted((root / f"audioldm2_{mode}").glob(f"audioldm2_{mode}*hparam*"))
+        path for subdir in spec["subdirs"] for path in sorted((root / subdir).glob(spec["glob"]))
     ]
     for run_dir in candidates:
-        match = LORA_RE.match(run_dir.name) or BASE_RE.match(run_dir.name)
+        match = spec["lora"].match(run_dir.name) or spec["base"].match(run_dir.name)
         if match is None or not (run_dir / PER_EXAMPLE_CSV).exists():
             continue
         groups = match.groupdict()
         label = groups.get("checkpoint")
         if label is None:
-            mode = groups["mode"]
+            mode = groups.get("mode") or "ddim"
             label = "no LoRA" if mode == "ddim" else METHOD_LABELS[mode]
         row = {
             "checkpoint": label,
@@ -96,20 +120,35 @@ def short(checkpoint: str) -> str:
 
 
 def main(
+    model: str = "audioldm2",
     runs_root: str | None = None,
     out_root: str = "output/lora_curves",
-    cfg_tars: str = "6.0,12.0",
+    cfg_tars: str | None = None,
 ):
     """Plot the LoRA arm against its no-LoRA twins and write the paired statistics.
 
     Args:
-        runs_root: Directory holding `audioldm2_ddim/<run>/`; defaults to the configured outputs.
+        model: Which model's runs to read, `audioldm2` or `stable_audio`.
+        runs_root: Directory holding the run subdirectories; defaults to the configured outputs.
+            Stable Audio's runs sit one level deeper, under `medleymd/medleymd`.
         out_root: Where the timestamped output directory is created.
-        cfg_tars: Guidance values the LoRA arm covers, so the baseline is restricted to match.
+        cfg_tars: Guidance values to keep, so the baseline is restricted to what the LoRA arm
+            covers. None keeps every value present.
     """
-    root = Path(runs_root) if runs_root else Path(PATH_EDIT_OUTPUTS) / "medleymd"
-    frame = collect(root)
-    keep = [float(c) for c in str(cfg_tars).split(",")]
+    if model not in MODELS:
+        raise ValueError(f"model must be one of {sorted(MODELS)}, got {model!r}")
+    if runs_root:
+        root = Path(runs_root)
+    else:
+        root = Path(PATH_EDIT_OUTPUTS) / "medleymd"
+        if model == "stable_audio":
+            root = root / "medleymd"
+    frame = collect(root, model)
+    if frame.empty:
+        raise FileNotFoundError(f"no scored {model} hparam runs under {root}")
+    keep = sorted(frame["cfg_tar"].unique()) if cfg_tars is None else [
+        float(c) for c in str(cfg_tars).split(",")
+    ]
     frame = frame[frame["cfg_tar"].isin(keep)].copy()
     methods = [c for c in METHOD_LABELS.values() if c in set(frame["checkpoint"])]
     checkpoints = [
@@ -137,7 +176,7 @@ def main(
                     "linestyle": "--", "zorder": 3}
         return {"marker": "s", "markersize": 4, "linewidth": 1.0, "alpha": 0.75, "zorder": 2}
 
-    figure, axes = plt.subplots(1, 3, figsize=(16.5, 4.8))
+    figure, axes = plt.subplots(1, 3, figsize=(17.5, 5.4))
     for axis, (y, title) in zip(axes, Y_PANELS):
         for checkpoint, group in frame.groupby("checkpoint"):
             group = group.sort_values("lpaps")
@@ -145,6 +184,7 @@ def main(
                 group["lpaps"], group[y],
                 xerr=group["lpaps_sem"], yerr=group[f"{y}_sem"],
                 capsize=2, color=colours[checkpoint], label=short(checkpoint),
+                markeredgecolor="black", markeredgewidth=0.8,
                 **style(checkpoint),
             )
         # Optimal editing is the top-left corner: nothing changed that should not have, everything
@@ -152,10 +192,11 @@ def main(
         axis.plot(0.045, 0.955, marker="*", markersize=22, color="gold",
                   markeredgecolor="#7a6000", markeredgewidth=0.8, transform=axis.transAxes,
                   clip_on=False, zorder=6, label="_nolegend_")
-        axis.set_xlabel("LPAPS to source $\\downarrow$")
-        axis.set_ylabel(f"{title} $\\uparrow$")
-        axis.grid(alpha=0.25, linewidth=0.5)
-    axes[0].legend(fontsize=7, loc="lower right")
+        axis.set_xlabel("LPAPS to source $\\downarrow$", fontsize=15)
+        axis.set_ylabel(f"{title} $\\uparrow$", fontsize=15)
+        axis.tick_params(labelsize=14)
+        axis.grid(True, linestyle="--", alpha=0.2)
+    axes[0].legend(fontsize=14, loc="lower right", framealpha=0.9)
 
     # The paired differences are no longer plotted, but they are what the markdown reports: an
     # effect of ~0.002 LPAPS against a spread ten times larger is only resolvable pairwise.
@@ -180,19 +221,20 @@ def main(
                 })
 
     figure.suptitle(
-        f"Inversion LoRA on MedleyMD, DDIM grid (n={int(frame['n'].iloc[0])} edits per point)",
-        fontsize=12,
+        f"{MODELS[model]['title']}: inversion LoRA on MedleyMD, DDIM grid "
+        f"(n={int(frame['n'].iloc[0])} edits per point)",
+        fontsize=16,
     )
     figure.tight_layout()
-    plot_path = out_dir / "plots" / f"{stamp}_lora_tradeoff.png"
+    plot_path = out_dir / "plots" / f"{stamp}_{model}_lora_tradeoff.png"
     figure.savefig(plot_path, dpi=170, bbox_inches="tight")
     plt.close(figure)
 
     paired = pd.DataFrame(records)
-    paired.to_csv(out_dir / f"{stamp}_lora_paired.csv", index=False)
+    paired.to_csv(out_dir / f"{stamp}_{model}_lora_paired.csv", index=False)
 
     lines = [
-        f"# Inversion LoRA vs no LoRA -- MedleyMD hparam split, DDIM only",
+        f"# {MODELS[model]['title']}: inversion LoRA vs no LoRA -- MedleyMD hparam split, DDIM only",
         "",
         f"Generated {stamp} from `{root}` at commit "
         f"`{subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()}`.",
@@ -227,14 +269,14 @@ def main(
             f"{row['delta']:+.4f} | ±{row['ci95']:.4f} | {row['p']:.2e} | "
             f"{row['n_better']}/{row['n']} |"
         )
-    (out_dir / f"{stamp}_lora_paired.md").write_text("\n".join(lines) + "\n")
+    (out_dir / f"{stamp}_{model}_lora_paired.md").write_text("\n".join(lines) + "\n")
 
     with (out_dir / "run_meta.json").open("w") as handle:
-        json.dump({"timestamp": stamp, "runs_root": str(root), "cfg_tars": keep,
+        json.dump({"timestamp": stamp, "model": model, "runs_root": str(root), "cfg_tars": keep,
                    "checkpoints": checkpoints, "num_runs": len(frame),
                    "git_sha": subprocess.check_output(["git", "rev-parse", "HEAD"],
                                                       text=True).strip()}, handle, indent=2)
-    print(f"\nwrote {out_dir}\n  {plot_path}\n  {out_dir / f'{stamp}_lora_paired.md'}")
+    print(f"\nwrote {out_dir}\n  {plot_path}\n  {out_dir / f'{stamp}_{model}_lora_paired.md'}")
 
     print("\nmean paired delta per checkpoint (negative LPAPS = better preservation):")
     summary = paired.pivot_table(index="checkpoint", columns="metric", values="delta", aggfunc="mean")
