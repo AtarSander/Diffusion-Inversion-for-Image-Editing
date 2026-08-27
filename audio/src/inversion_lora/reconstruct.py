@@ -23,17 +23,18 @@ Conditioning = dict[str, torch.Tensor]
 MEL_FRAMES_PER_SECOND = 100
 
 
-def encode_prompts(ldm, prompts: list[str]) -> Conditioning:
+def encode_prompts(ldm, prompts: list[str], negative: bool = False) -> Conditioning:
     """Encode a batch of prompts into the three AudioLDM2 conditioning tensors.
 
     Args:
         ldm: `AudioLDM2Wrapper`.
         prompts: One caption per batch element.
+        negative: Encode as the unconditional stream, for the classifier-free guidance branch.
 
     Returns:
         `encoder_hidden_states`, `class_labels` and `encoder_attention_mask`, batched.
     """
-    hidden, t5_embeds, t5_mask = ldm.encode_text(prompts)
+    hidden, t5_embeds, t5_mask = ldm.encode_text(prompts, negative=negative)
     assert hidden.shape[0] == len(prompts), (hidden.shape, len(prompts))
     return {
         "encoder_hidden_states": hidden,
@@ -42,8 +43,42 @@ def encode_prompts(ldm, prompts: list[str]) -> Conditioning:
     }
 
 
+def guided_eps(
+    ldm,
+    model_input: torch.Tensor,
+    timestep,
+    cond: Conditioning,
+    uncond: Conditioning | None,
+    guidance_scale: float,
+) -> torch.Tensor:
+    """One epsilon evaluation, combining the CFG branches when `uncond` is supplied.
+
+    Args:
+        ldm: `AudioLDM2Wrapper`.
+        model_input: Scaled latent.
+        timestep: Timestep to condition on.
+        cond: Conditional stream, batched to match `model_input`.
+        uncond: Unconditional stream, or `None` for a single conditional forward.
+        guidance_scale: w in `eps_u + w (eps_c - eps_u)`; ignored when `uncond` is `None`.
+
+    Returns:
+        Epsilon of the same shape as `model_input`.
+    """
+    eps_cond = ldm.unet_forward(model_input, timestep=timestep, **cond)[0].sample
+    if uncond is None:
+        return eps_cond
+    eps_uncond = ldm.unet_forward(model_input, timestep=timestep, **uncond)[0].sample
+    return eps_uncond + guidance_scale * (eps_cond - eps_uncond)
+
+
 @torch.no_grad()
-def ddim_invert(ldm, x0: torch.Tensor, cond: Conditioning) -> torch.Tensor:
+def ddim_invert(
+    ldm,
+    x0: torch.Tensor,
+    cond: Conditioning,
+    uncond: Conditioning | None = None,
+    guidance_scale: float = 1.0,
+) -> torch.Tensor:
     """Invert a clean latent to the noise end of the DDIM schedule, conditionally, without CFG.
 
     Each step evaluates epsilon at the *current, cleaner* latent while passing the *noisier*
@@ -55,6 +90,10 @@ def ddim_invert(ldm, x0: torch.Tensor, cond: Conditioning) -> torch.Tensor:
         ldm: `AudioLDM2Wrapper` with the adapter in whatever state the caller wants measured.
         x0: Clean latent `[B, C, H, W]`.
         cond: Output of `encode_prompts`, batched to match `x0`.
+        uncond: Unconditional stream, when the inversion should run under guidance. An adapter
+            trained on trajectories generated at w must be measured at the same w, or the
+            reconstruction curve scores it outside the regime it was fitted to.
+        guidance_scale: w for the combination; 1.0 with `uncond=None` is the plain path.
 
     Returns:
         Latent at the noisiest timestep, `[B, C, H, W]`.
@@ -64,19 +103,30 @@ def ddim_invert(ldm, x0: torch.Tensor, cond: Conditioning) -> torch.Tensor:
     for i in range(len(timesteps)):
         t = timesteps[len(timesteps) - i - 1]
         model_input = ldm.model.scheduler.scale_model_input(latent, t)
-        eps = ldm.unet_forward(model_input, timestep=t, **cond)[0].sample
+        eps = guided_eps(ldm, model_input, t, cond, uncond, guidance_scale)
         latent = next_step(ldm, eps, t, latent)
     return latent
 
 
 @torch.no_grad()
-def ddim_denoise(ldm, x_t: torch.Tensor, cond: Conditioning) -> torch.Tensor:
-    """Denoise back to a clean latent along the same schedule, conditionally, without CFG.
+def ddim_denoise(
+    ldm,
+    x_t: torch.Tensor,
+    cond: Conditioning,
+    uncond: Conditioning | None = None,
+    guidance_scale: float = 1.0,
+) -> torch.Tensor:
+    """Denoise back to a clean latent along the same schedule.
+
+    The reverse pass runs at the same guidance as the inversion, so the two remain a true inverse
+    pair and the round-trip error measures inversion exactness rather than a guidance mismatch.
 
     Args:
         ldm: `AudioLDM2Wrapper`.
         x_t: Latent at the noisiest timestep, `[B, C, H, W]`.
         cond: Output of `encode_prompts`, batched to match `x_t`.
+        uncond: Unconditional stream, when the reverse pass should run under guidance.
+        guidance_scale: w for the combination; 1.0 with `uncond=None` is the plain path.
 
     Returns:
         Reconstructed clean latent `[B, C, H, W]`.
@@ -84,7 +134,7 @@ def ddim_denoise(ldm, x_t: torch.Tensor, cond: Conditioning) -> torch.Tensor:
     latent = x_t.clone().detach()
     for t in ldm.model.scheduler.timesteps:
         model_input = ldm.model.scheduler.scale_model_input(latent, t)
-        eps = ldm.unet_forward(model_input, timestep=t, **cond)[0].sample
+        eps = guided_eps(ldm, model_input, t, cond, uncond, guidance_scale)
         latent = ldm.model.scheduler.step(eps, t, latent, eta=0).prev_sample
     return latent
 
@@ -196,6 +246,7 @@ def reconstruction_metrics(
     prompts: list[str],
     set_lora_enabled: Callable[[bool], None] | None = None,
     progress: Callable[[str], None] | None = None,
+    guidance_scale: float = 1.0,
 ) -> tuple[dict[str, float], list[torch.Tensor]]:
     """Invert then denoise each latent and score how well the round trip returns it.
 
@@ -209,6 +260,7 @@ def reconstruction_metrics(
         prompts: One caption per latent, flat across all batches.
         set_lora_enabled: Toggle for the adapter. `None` measures plain DDIM inversion.
         progress: Optional callback for a one-line status per batch.
+        guidance_scale: Guidance for both passes, matching what the adapter was trained on.
 
     Returns:
         `latent_mse` plus the mel metrics averaged over every example, and the inverted latents
@@ -222,19 +274,31 @@ def reconstruction_metrics(
     weights: list[int] = []
     inverted: list[torch.Tensor] = []
 
+    uncond_single = (
+        encode_prompts(ldm, [""], negative=True) if guidance_scale != 1.0 else None
+    )
+
     scored = 0
     for batch in batches:
         reference = batch.to(ldm.device)
         cond = encode_prompts(ldm, prompts[scored : scored + batch.shape[0]])
+        uncond = (
+            None
+            if uncond_single is None
+            else {
+                key: value.expand(batch.shape[0], *([-1] * (value.ndim - 1)))
+                for key, value in uncond_single.items()
+            }
+        )
         scored += batch.shape[0]
 
         if set_lora_enabled is not None:
             set_lora_enabled(True)
-        x_t = ddim_invert(ldm, reference, cond)
+        x_t = ddim_invert(ldm, reference, cond, uncond, guidance_scale)
         if set_lora_enabled is not None:
             set_lora_enabled(False)
         try:
-            reconstruction = ddim_denoise(ldm, x_t, cond)
+            reconstruction = ddim_denoise(ldm, x_t, cond, uncond, guidance_scale)
         finally:
             if set_lora_enabled is not None:
                 set_lora_enabled(True)
@@ -259,7 +323,12 @@ def reconstruction_metrics(
 
 @torch.no_grad()
 def generate_eval_latents(
-    ldm, prompts: list[str], seed: int, batch_size: int, duration_s: float
+    ldm,
+    prompts: list[str],
+    seed: int,
+    batch_size: int,
+    duration_s: float,
+    guidance_scale: float = 1.0,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Sample clean latents from the frozen teacher, to be round-tripped later.
 
@@ -273,6 +342,8 @@ def generate_eval_latents(
         seed: Seed for the initial noise; fixed so every eval scores the same audio.
         batch_size: Latents per forward pass.
         duration_s: Audio duration; must match the real-audio crop so both sets share a shape.
+        guidance_scale: Guidance for the sampler, so the fixtures come from the same distribution
+            the adapter's training trajectories were drawn from.
 
     Returns:
         Clean latents and the initial noise that produced them, both `[N, C, H, W]` on CPU.
@@ -297,7 +368,15 @@ def generate_eval_latents(
         )
         initial_noise.append(latents.detach().cpu())
         cond = encode_prompts(ldm, chunk)
-        generated.append(ddim_denoise(ldm, latents, cond).cpu())
+        uncond = (
+            None
+            if guidance_scale == 1.0
+            else {
+                key: value.expand(len(chunk), *([-1] * (value.ndim - 1)))
+                for key, value in encode_prompts(ldm, [""], negative=True).items()
+            }
+        )
+        generated.append(ddim_denoise(ldm, latents, cond, uncond, guidance_scale).cpu())
     return torch.cat(generated, dim=0), torch.cat(initial_noise, dim=0)
 
 

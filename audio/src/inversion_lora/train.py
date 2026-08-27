@@ -161,6 +161,16 @@ class AudioLDM2InversionTrainer:
         self.global_step = 0
         self.baseline_reference = float("nan")
         self.num_train_timesteps = int(ldm.model.scheduler.config.num_train_timesteps)
+        # Guidance the trajectories were generated with. At 1.0 the CFG combination collapses to
+        # the conditional branch and the loss is the original single-forward one. Above 1.0 the
+        # step that produced the data was driven by the combination, so both branches must be
+        # evaluated and combined -- two forwards per step instead of one.
+        self.guidance_scale = float(cfg.get("guidance_scale", 1.0))
+        self.uncond = (
+            tuple(t.detach() for t in ldm.encode_text([""], negative=True))
+            if self.guidance_scale != 1.0
+            else None
+        )
         self.band_top = int(cfg.train_max_timestep or self.num_train_timesteps)
         self.band_labels = band_labels(
             self.band_top, int(cfg.num_loss_bands), self.num_train_timesteps
@@ -225,7 +235,11 @@ class AudioLDM2InversionTrainer:
                 component.eval()
 
     def predict_noise(self, batch: dict[str, Any]) -> torch.Tensor:
-        """Run the student UNet on the cleaner latent with the cached conditioning."""
+        """Run the student UNet on the cleaner latent, combining CFG branches when w != 1.
+
+        Returns the epsilon the deployed inversion would use: the conditional branch at w=1, and
+        `eps_u + w (eps_c - eps_u)` above it, which is what advanced the cached trajectory.
+        """
         x_clean = batch["x_clean"].to(device=self.device, dtype=self.unet.dtype)
         timestep = batch["timestep"].to(device=self.device)
         hidden = batch["generated_prompt_embeds"].to(device=self.device, dtype=self.unet.dtype)
@@ -239,13 +253,26 @@ class AudioLDM2InversionTrainer:
         )
 
         model_input = self.ldm.model.scheduler.scale_model_input(x_clean, timestep)
-        return self.ldm.unet_forward(
+        eps_cond = self.ldm.unet_forward(
             model_input,
             timestep=timestep,
             encoder_hidden_states=hidden,
             class_labels=t5_embeds,
             encoder_attention_mask=t5_mask,
         )[0].sample
+        if self.uncond is None:
+            return eps_cond
+
+        u_hidden, u_t5, u_mask = self.uncond
+        batch_size = x_clean.shape[0]
+        eps_uncond = self.ldm.unet_forward(
+            model_input,
+            timestep=timestep,
+            encoder_hidden_states=u_hidden.expand(batch_size, -1, -1),
+            class_labels=u_t5.expand(batch_size, -1, -1),
+            encoder_attention_mask=u_mask.expand(batch_size, -1),
+        )[0].sample
+        return eps_uncond + self.guidance_scale * (eps_cond - eps_uncond)
 
     def log_first_batch(self, batch: dict[str, Any]) -> None:
         """Print the first training batch's shapes, so a run can be judged from its first screen."""
@@ -260,10 +287,22 @@ class AudioLDM2InversionTrainer:
         """No-CFG loss: MSE between the student's epsilon and the cached teacher epsilon."""
         return self.per_example_loss(batch).mean()
 
+    def target_noise(self, batch: dict[str, Any]) -> torch.Tensor:
+        """The cached teacher epsilon that advanced the trajectory, combined when w != 1."""
+        target_eps = batch["target_eps"].to(device=self.device, dtype=self.unet.dtype)
+        if self.uncond is None:
+            return target_eps
+        assert "uncond_eps" in batch, (
+            f"guidance_scale={self.guidance_scale} needs the cached unconditional branch; "
+            "the dataset must be built with save_uncond_target=true and load_uncond=True"
+        )
+        uncond_eps = batch["uncond_eps"].to(device=self.device, dtype=self.unet.dtype)
+        return uncond_eps + self.guidance_scale * (target_eps - uncond_eps)
+
     def per_example_loss(self, batch: dict[str, Any]) -> torch.Tensor:
         """Same loss as `forward_loss` but kept per batch element, for the quartile breakdown."""
         student_eps = self.predict_noise(batch)
-        target_eps = batch["target_eps"].to(device=self.device, dtype=self.unet.dtype)
+        target_eps = self.target_noise(batch)
         assert student_eps.shape == target_eps.shape, (student_eps.shape, target_eps.shape)
         squared = (student_eps.float() - target_eps.float()) ** 2
         return squared.flatten(1).mean(dim=1)
@@ -399,6 +438,7 @@ class AudioLDM2InversionTrainer:
                     seed=int(self.cfg.seed),
                     batch_size=int(self.cfg.recon_batch_size),
                     duration_s=float(self.cfg.recon_duration_s),
+                    guidance_scale=self.guidance_scale,
                 )
                 real_max = self.cfg.recon_real_max_duration_s
                 real, real_names = load_real_latents(
@@ -469,6 +509,7 @@ class AudioLDM2InversionTrainer:
                     fixtures[f"{kind}_prompts"],
                     set_lora_enabled=set_lora_enabled,
                     progress=lambda message: logger.debug(message),
+                    guidance_scale=self.guidance_scale,
                 )
                 metrics.update(
                     {f"{prefix}/{kind}/{key}": value for key, value in scores.items()}
@@ -704,7 +745,8 @@ def main(cfg: DictConfig) -> None:
     torch.manual_seed(int(cfg.seed))
 
     train_ids, val_ids = split_sample_ids(cfg.data_root, float(cfg.val_fraction), int(cfg.seed))
-    train_dataset = AudioLDM2TrajectoryDataset(cfg.data_root, sample_ids=train_ids)
+    needs_uncond = float(cfg.get("guidance_scale", 1.0)) != 1.0
+    train_dataset = AudioLDM2TrajectoryDataset(cfg.data_root, sample_ids=train_ids, load_uncond=needs_uncond)
     logger.info(
         "train: {:,} transitions from {} trajectories", len(train_dataset), len(train_ids)
     )
@@ -719,7 +761,7 @@ def main(cfg: DictConfig) -> None:
         train_dataset = Subset(train_dataset, keep)
     val_loader = None
     if val_ids:
-        val_dataset = AudioLDM2TrajectoryDataset(cfg.data_root, sample_ids=val_ids)
+        val_dataset = AudioLDM2TrajectoryDataset(cfg.data_root, sample_ids=val_ids, load_uncond=needs_uncond)
         logger.info("val:   {:,} transitions from {} trajectories", len(val_dataset), len(val_ids))
 
         # Flat indices run trajectory-major, so truncating an unshuffled loader to

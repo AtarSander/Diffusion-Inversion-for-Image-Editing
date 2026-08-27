@@ -1,0 +1,30 @@
+# Trajectory set generated *under* classifier-free guidance, for the pair-branch inversion loss.
+#
+# Why: every earlier set used guidance_scale 1.0 while the benchmark inverts at cfg_src 3.0, and a
+# paired probe measured the shift gap as 2.98x larger at w=2.5 than at w=1.0 (3.16x in the
+# q025_000 band the q4 runs train on). See output/shift_gap/20260824_131925/. So every adapter so
+# far was fitted to a ~3x smaller problem than the one it is deployed on.
+#
+# Run (per GPU shard, N shards):
+#   CONFIG_NAME=generate_trajectories_cfg25 TOTAL_SAMPLES=1500 \
+#     bash editing/AudioEditingCode/code/slurm_scripts/wcss/submit_trajectories.sh
+#
+# Then gate it before training:
+#   uv run --python .venv/bin/python src/inversion_lora/verify_trajectories.py \
+#     --root_dir <output_dir> --check_step 16
+
+defaults:
+  - generate_trajectories
+  - _self_
+
+output_dir: ${oc.env:LORAINV_DATA_ROOT}/audioldm2_trajectories_cfg25_fp32
+num_samples: 1500 # same count as the gonogo set, so the only change is the guidance
+num_inference_steps: 200
+
+guidance_scale: 2.5
+
+# Mandatory at w != 1, not optional. The generator advances the latent with the CFG combination
+# while `target_eps` stores the conditional branch alone, so without the unconditional branch the
+# label stops being the epsilon that solves the step it is attached to -- the exactness property
+# that makes this dataset usable. Costs a second teacher forward per step: 1500 x 200 x 2 = 600k.
+save_uncond_target: true

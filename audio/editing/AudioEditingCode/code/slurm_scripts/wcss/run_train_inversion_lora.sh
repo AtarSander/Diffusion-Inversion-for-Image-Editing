@@ -18,6 +18,7 @@
 #   bash editing/AudioEditingCode/code/slurm_scripts/wcss/submit_train.sh --array=12-23 # rerun + conv/ff
 #   bash editing/AudioEditingCode/code/slurm_scripts/wcss/submit_train.sh --array=24-26 # t<=250 only
 #   bash editing/AudioEditingCode/code/slurm_scripts/wcss/submit_train.sh --array=27    # full+time_emb
+#   bash editing/AudioEditingCode/code/slurm_scripts/wcss/submit_train.sh --array=28    # pair-branch CFG w=2.5
 #   bash editing/AudioEditingCode/code/slurm_scripts/wcss/submit_train.sh
 #
 # Prerequisites:
@@ -103,6 +104,17 @@ CONFIGS=(
   # 24 h limit: the real set costs less than the old 256 fixed crops did despite the longer
   # windows, because 35 of them replace 256.
   "full|32|16|5e-4|q4_fullte_r32_a16_lr5e-4|train_max_timestep=250 num_loss_bands=5 max_train_steps=6000 save_every_steps=1000 recon_every_steps=1000 recon_real_max_duration_s=60.0 recon_num_real=35"
+  # 28: the pair-branch CFG loss. Everything is held at index 26's values -- q4, full preset,
+  # r32/a16, lr 5e-4 -- so the only change against a run already scored on the benchmark is the
+  # guidance: trajectories generated at w=2.5 with both branches cached, loss and reconstruction
+  # both formed at w=2.5. Index 26 fitted a gap 2.98x smaller than the one it was deployed on.
+  # Needs the cfg25 dataset: CONFIG_NAME=generate_trajectories_cfg25 through submit_trajectories.sh.
+  # Costs 2x forwards per step, so expect roughly double index 26's wall-clock per 1000 steps.
+  # batch 16 x accum 2 keeps index 26's effective batch of 32 while holding peak activation memory
+  # at one batch-32 forward's worth: both CFG branches stay in the graph, because a merged adapter
+  # perturbs both at deployment and the loss on the combination must backprop through each. Batch
+  # 32 with two forwards OOMed a 24 GB A5000 at batch 8, and H100 headroom here is untested.
+  "full|32|16|5e-4|cfg25_q4_full_r32_a16_lr5e-4|train_max_timestep=250 num_loss_bands=5 max_train_steps=6000 save_every_steps=1000 recon_every_steps=1000 recon_real_max_duration_s=60.0 recon_num_real=35 guidance_scale=2.5 data_root=\${oc.env:LORAINV_DATA_ROOT}/audioldm2_trajectories_cfg25_fp32 batch_size=16 gradient_accumulation_steps=2"
 )
 
 # Fail before the 12 GB model load rather than after it: wandb only reports a bad credential

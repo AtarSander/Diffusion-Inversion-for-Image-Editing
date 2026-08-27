@@ -8,6 +8,16 @@ model_id: cvssp/audioldm2-large
 num_inference_steps: 200 # must match the trajectory dataset's DDIM grid
 adapter_name: inversion
 
+# Guidance the trajectory dataset was generated with. Must match it: at w != 1 the epsilon that
+# advanced the cached latent is the CFG combination, so the loss forms the same combination from
+# both cached branches and the student evaluates both branches too -- two forwards per step
+# instead of one. A paired probe measured the shift gap as 2.98x larger at w=2.5 than at w=1.0
+# (3.16x in the q025_000 band), so an adapter trained at 1.0 was fitted to a ~3x smaller problem
+# than the benchmark deploys it on. See output/shift_gap/20260824_131925/. The reconstruction eval
+# runs both of its passes at this w as well, so the round trip stays a true inverse pair and the
+# curve scores the adapter inside the regime it was fitted to.
+guidance_scale: 1.0
+
 data_root: ${oc.env:LORAINV_DATA_ROOT}/audioldm2_trajectories_gonogo_fp32
 val_fraction: 0.20 # split by trajectory, never by transition; must exceed recon_num_generated
 # 285k train transitions / 32 = ~8.9k steps per epoch, so max_train_steps=20000 is ~2.2 epochs.
