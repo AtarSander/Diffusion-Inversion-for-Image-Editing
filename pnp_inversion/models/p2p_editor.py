@@ -69,8 +69,8 @@ class P2PEditor:
             state_dict = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
         except TypeError:
             state_dict = torch.load(checkpoint_path, map_location="cpu")
-        if isinstance(state_dict, dict) and "lora_state_dict" in state_dict:
-            state_dict = state_dict["lora_state_dict"]
+        from utils.lora_adapters import single_lora_state
+        state_dict = single_lora_state(state_dict, checkpoint_path)
         set_peft_model_state_dict(self.ldm_stable.unet, state_dict, adapter_name=adapter_name)
         if scale is not None and hasattr(self.ldm_stable.unet, "set_adapters"):
             self.ldm_stable.unet.set_adapters([adapter_name], weights=[float(scale)])

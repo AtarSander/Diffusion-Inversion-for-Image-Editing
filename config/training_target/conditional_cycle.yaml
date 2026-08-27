@@ -1,0 +1,4 @@
+# Conditional inversion regression plus a one-transition cycle reconstruction loss.
+mode: conditional_cycle
+guidance_scale: null
+recon_lambda: 1.0

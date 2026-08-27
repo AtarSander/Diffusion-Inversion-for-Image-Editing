@@ -1,0 +1,19 @@
+# @package _global_
+
+defaults:
+  - pnp_lora_metrics
+  - _self_
+
+generated_root: checkpoints/../evaluation/sd15_fp16_baselines
+metrics_root: ${generated_root}/metrics
+log_root: ${generated_root}/logs
+cache_root: ${oc.env:JOB_CACHE_ROOT}/metrics
+
+# Overridden by the launcher with the exact generated method directory.
+method_name: ddim+p2p
+
+hydra:
+  run:
+    dir: ${oc.env:JOB_CACHE_ROOT}/hydra/metrics/${method_name}
+  job:
+    chdir: false

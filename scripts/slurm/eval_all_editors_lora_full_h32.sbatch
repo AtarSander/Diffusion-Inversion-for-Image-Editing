@@ -21,8 +21,14 @@ RANK=${2:?Pass LoRA rank: 8, 16, or 32}
 RUN_TAG=${3:?Pass a unique evaluation tag}
 TASK_ID=${4:?Pass method task id 0-7}
 INVERSION_GUIDANCE=${5:-1.0}
+LORA_MODE=${6:-single}
 
 case "$RANK" in 8|16|32) ;; *) echo "Unsupported rank: $RANK" >&2; exit 2 ;; esac
+case "$LORA_MODE" in single|branch_pair) ;; *) echo "Unsupported LoRA mode: $LORA_MODE" >&2; exit 2 ;; esac
+if [[ "$LORA_MODE" == branch_pair && $((TASK_ID % 2)) -eq 0 ]]; then
+  echo "Branch-pair checkpoints are supported only for Direct-Inversion tasks 1, 3, 5, and 7." >&2
+  exit 2
+fi
 
 REPO_DIR=${SLURM_SUBMIT_DIR:?SLURM_SUBMIT_DIR is required}
 CHECKPOINT=$REPO_DIR/$CHECKPOINT_REL
@@ -75,6 +81,7 @@ python3 -m "$MODULE" --config-name "$CONFIG" \
   "edit_method_list=[$METHOD]" \
   lora="r$RANK" \
   lora.checkpoint_path="$CHECKPOINT" \
+  lora.mode="$LORA_MODE" \
   output_path="$EVAL_ROOT" \
   cache_root="$JOB_CACHE_ROOT/editing" \
   guidance.inversion_scale="$INVERSION_GUIDANCE"

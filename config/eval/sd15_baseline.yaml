@@ -1,0 +1,22 @@
+# @package _global_
+
+# SD1.5 controls matched to the existing LoRA editor inference setup.
+repo_dir: .
+data_path: data/raw/PIE-Bench_v1
+output_path: checkpoints/../evaluation/sd15_fp16_baselines
+cache_root: ${oc.env:JOB_CACHE_ROOT}/editing
+
+model_id: runwayml/stable-diffusion-v1-5
+inference_dtype: fp16
+backend: p2p
+inversion: ddim
+inversion_guidance_scale: 1.0
+
+edit_category_list: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
+rerun_exist_images: false
+
+hydra:
+  run:
+    dir: ${oc.env:JOB_CACHE_ROOT}/hydra/generation/${backend}_${inversion}
+  job:
+    chdir: false
