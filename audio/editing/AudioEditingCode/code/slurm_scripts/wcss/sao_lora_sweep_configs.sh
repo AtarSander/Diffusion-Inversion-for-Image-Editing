@@ -8,11 +8,15 @@
 # odeinv, not ddim: the ddim path's sampler is rejected (output/sao_schedules/REPORT.md), and the
 # adapter is trained against the cosine-grid teacher, so it must be measured on that grid.
 LORA_MODE=odeinv
-# Filled in once the corrected run has checkpoints. The old sao_r8_a4_lr5e-5 adapter was trained
-# against the beta grid with the shifted pairing on raw network outputs -- none of which matches
-# odeinv -- so it is not comparable here.
+# From the corrected run (slurm 5776575, cosine ODE, matched pairing, data-prediction targets).
+# Step 4000 is where val loss plateaus: 2.604e-5 at 2000, 2.521e-5 at 3000, 2.439e-5 at 4000,
+# 2.463e-5 at 5000, against a 2.630e-4 LoRA-disabled baseline. Selected on loss because this
+# pipeline has no reconstruction eval -- and the AudioLDM2 run is the standing warning that loss
+# and reconstruction peak at different steps, so both arms are carried rather than one.
 LORA_CHECKPOINTS=(
   ""  # no adapter: the paired reference arm
+  "saocos_r8_a4_lr5e-5/checkpoint_step_4000.pt"
+  "saocos_r8_a4_lr5e-5/checkpoint_step_4000_ema.pt"
 )
 
 # tstart traces the front. Stable Audio's baselines run a 100-step grid at cfg_src 1.0, so the
