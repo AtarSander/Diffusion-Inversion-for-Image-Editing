@@ -19,8 +19,11 @@ val_fraction: 0.20 # split by trajectory, never by transition
 # batch of 32 that is 3.75k steps per epoch, so max_train_steps=20000 is ~5.3 epochs.
 # The DiT is 1.06B parameters at latent [64, 1024], so the per-device batch is small and the
 # effective batch comes from accumulation instead.
-batch_size: 4
-gradient_accumulation_steps: 8
+# 8 x 4 rather than 4 x 8 for the same effective batch of 32: the step time is dominated by the
+# sequential micro-batches, and at 4 x 8 the previous run took 4.35 s/step and hit the 24 h
+# walltime at step 19,722 of 20,000. Halving the micro-batch count should land near 12 h.
+batch_size: 8
+gradient_accumulation_steps: 4
 num_workers: 8
 
 # Restrict training to the cleanest tail of the schedule by keeping only transitions with
