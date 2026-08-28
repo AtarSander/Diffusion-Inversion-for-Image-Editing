@@ -29,7 +29,9 @@ def _synthetic_batch(trainer: SDXLInversionTrainer, batch_size: int) -> dict[str
     latent_width = trainer.width // 8
     return {
         "x_clean": torch.randn(batch_size, 4, latent_height, latent_width),
-        "timestep": torch.randint(0, pipe.scheduler.config.num_train_timesteps, (batch_size,)),
+        "timestep": pipe.scheduler.timesteps[
+            torch.randint(0, len(pipe.scheduler.timesteps), (batch_size,))
+        ].cpu(),
         "prompt_embeds": torch.randn(
             batch_size,
             pipe.tokenizer.model_max_length,
@@ -47,7 +49,11 @@ def _try_batch(
     torch.cuda.empty_cache()
     torch.cuda.reset_peak_memory_stats()
     try:
-        batch = _make_batch(dataset, batch_size) if dataset is not None else _synthetic_batch(trainer, batch_size)
+        batch = (
+            _make_batch(dataset, batch_size)
+            if dataset is not None
+            else _synthetic_batch(trainer, batch_size)
+        )
         trainer.optimizer.zero_grad(set_to_none=True)
         trainer.forward_loss(batch).backward()
         peak_gib = torch.cuda.max_memory_allocated() / 1024**3
@@ -90,6 +96,11 @@ def main(cfg: DictConfig) -> None:
         max_val_batches=1,
         max_grad_norm=cfg.max_grad_norm,
         gradient_checkpointing=cfg.gradient_checkpointing,
+        training_target_mode=str(cfg.training_target.mode),
+        training_guidance_scale=OmegaConf.select(
+            cfg, "training_target.guidance_scale", default=None
+        ),
+        recon_lambda=OmegaConf.select(cfg, "training_target.recon_lambda", default=None),
     )
     use_synthetic = bool(OmegaConf.select(cfg, "stress_test.synthetic", default=True))
     dataset = None
