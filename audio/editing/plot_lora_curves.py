@@ -172,8 +172,11 @@ def main(
 
     palette = plt.get_cmap("tab10")
     colours = {"no LoRA": "black", "DDPM-inv": "#1f77b4", "SDEdit": "#2ca02c"}
+    # Skip the palette entries already spent on the reference methods, or the first adapter comes
+    # out the same blue as DDPM-inv and the two series are indistinguishable.
+    reserved = {"#1f77b4": 0, "#2ca02c": 2}
     for i, checkpoint in enumerate(checkpoints):
-        colours[checkpoint] = palette(i % 10)
+        colours[checkpoint] = palette((i + len(reserved) + 1) % 10)
 
     def style(name):
         """Reference methods are drawn heavy and dashed; adapters thin, so overlap stays legible."""
@@ -204,7 +207,13 @@ def main(
         axis.set_ylabel(f"{title} $\\uparrow$", fontsize=15)
         axis.tick_params(labelsize=14)
         axis.grid(True, linestyle="--", alpha=0.2)
-    axes[0].legend(fontsize=14, loc="lower right", framealpha=0.9)
+    # One shared legend in a strip between the title and the axes: in-axes placement covered the
+    # low-LPAPS corner, which is where the interesting points sit.
+    handles, labels = axes[0].get_legend_handles_labels()
+    figure.legend(
+        handles, labels, fontsize=14, loc="upper center", bbox_to_anchor=(0.5, 0.93),
+        ncol=len(labels), frameon=False,
+    )
 
     # The paired differences are no longer plotted, but they are what the markdown reports: an
     # effect of ~0.002 LPAPS against a spread ten times larger is only resolvable pairwise.
@@ -232,8 +241,9 @@ def main(
         f"{MODELS[model]['title']}: inversion LoRA on MedleyMD, {MODELS[model]['grid']} "
         f"(n={int(frame['n'].iloc[0])} edits per point)",
         fontsize=16,
+        y=0.995,
     )
-    figure.tight_layout()
+    figure.tight_layout(rect=(0, 0, 1, 0.88))
     plot_path = out_dir / "plots" / f"{stamp}_{model}_lora_tradeoff.png"
     figure.savefig(plot_path, dpi=170, bbox_inches="tight")
     plt.close(figure)

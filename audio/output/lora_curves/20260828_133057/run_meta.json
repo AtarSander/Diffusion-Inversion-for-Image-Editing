@@ -1,0 +1,15 @@
+{
+  "timestamp": "20260828_133057",
+  "model": "stable_audio",
+  "runs_root": "/nas/lstanisz/code/lorainv/pwr-mount/audio/outputs/edits/medleymd/medleymd",
+  "cfg_tars": [
+    3.5,
+    7.0
+  ],
+  "checkpoints": [
+    "saocos_r8_a4_lr5e-5_checkpoint_step_4000",
+    "saocos_r8_a4_lr5e-5_checkpoint_step_4000_ema"
+  ],
+  "num_runs": 40,
+  "git_sha": "a7d0331dc267046cc6456148250fe8ec22113bd4"
+}
