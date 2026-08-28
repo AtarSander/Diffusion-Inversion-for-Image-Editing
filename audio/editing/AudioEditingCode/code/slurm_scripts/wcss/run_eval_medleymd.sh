@@ -85,8 +85,8 @@ if [ "${ARM:-}" = "lora" ]; then
   # medleymd/stable_audio).
   source "${SWEEP_CONFIGS:-editing/AudioEditingCode/code/slurm_scripts/wcss/lora_sweep_configs.sh}" || exit 1
   RUNS=()
-  while IFS='|' read -r ckpt tstart cfg; do
-    RUNS+=("$EDITS_ROOT/${LORA_EDITS_SUBDIR:-audioldm2_ddim}/$(lora_sweep_run_name "$ckpt" "$tstart" "$cfg")/audios")
+  while IFS='|' read -r ckpt tstart cfg steps; do
+    RUNS+=("$EDITS_ROOT/${LORA_EDITS_SUBDIR:-audioldm2_ddim}/$(lora_sweep_run_name "$ckpt" "$tstart" "$cfg" "${steps:-$LORA_STEPS}")/audios")
   done < <(lora_sweep_configs)
   # The grid file owns the split, so a submission cannot pair the LoRA runs with the wrong
   # prompt CSV by forgetting SPLIT.

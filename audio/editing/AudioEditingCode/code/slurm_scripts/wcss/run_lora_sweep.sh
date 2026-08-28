@@ -47,8 +47,11 @@ if [ "$TASK_ID" -ge "${#CONFIGS[@]}" ]; then
   exit 2
 fi
 
-IFS='|' read -r CKPT TSTART CFG_TAR <<< "${CONFIGS[$TASK_ID]}"
-RUN_NAME="$(lora_sweep_run_name "$CKPT" "$TSTART" "$CFG_TAR")"
+# A fourth field overrides the grid length for that row, which is what the matched-NFE grids need:
+# holding compute fixed means trading steps against tstart per method.
+IFS='|' read -r CKPT TSTART CFG_TAR ROW_STEPS <<< "${CONFIGS[$TASK_ID]}"
+STEPS="${ROW_STEPS:-$LORA_STEPS}"
+RUN_NAME="$(lora_sweep_run_name "$CKPT" "$TSTART" "$CFG_TAR" "$STEPS")"
 : "${RUN_NAME:?run name resolved empty; edits would land in the parent directory}"
 
 # An empty checkpoint field is the paired no-LoRA arm: same grid, frozen teacher. The Stable Audio
@@ -63,7 +66,7 @@ if [ -n "$CKPT" ]; then
   LORA_ARGS=(--lora_path "$LORA_PATH")
 fi
 
-echo "task=$TASK_ID ckpt=${CKPT:-none} tstart=$TSTART cfg_tar=$CFG_TAR run=$RUN_NAME node=$(hostname)"
+echo "task=$TASK_ID ckpt=${CKPT:-none} tstart=$TSTART cfg_tar=$CFG_TAR steps=$STEPS run=$RUN_NAME node=$(hostname)"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 
 cd editing/AudioEditingCode/code
@@ -72,7 +75,7 @@ ok=0
 for attempt in 1 2 3; do
   python "$SCRIPT" \
     --mode "${LORA_MODE:-ddim}" \
-    --num_diffusion_steps "$LORA_STEPS" \
+    --num_diffusion_steps "$STEPS" \
     --cfg_src "$LORA_CFG_SRC" \
     --cfg_tar "$CFG_TAR" \
     --tstart "$TSTART" \

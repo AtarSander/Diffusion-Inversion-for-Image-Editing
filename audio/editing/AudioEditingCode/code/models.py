@@ -1493,6 +1493,9 @@ class StableAudWrapper(PipelineWrapper):
         if encoder_attention_mask is None:
             embeds = torch.zeros_like(embeds, device=embeds.device)
 
+        # NFE counter: every editing method routes its denoiser calls through here, so this is the
+        # one place that can report compute honestly across methods.
+        self.nfe = getattr(self, "nfe", 0) + 1
         noise_pred = self.model.transformer(
             sample,
             timestep.unsqueeze(0),

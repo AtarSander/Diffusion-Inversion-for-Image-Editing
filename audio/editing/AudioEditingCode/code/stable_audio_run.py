@@ -498,6 +498,11 @@ def run_stable_audio_edit(
                 )
             os.makedirs(save_path, exist_ok=True)
 
+    nfe = getattr(ldm_stable, "nfe", 0) + getattr(ldm_stable_inverse, "nfe", 0) * (
+        ldm_stable_inverse is not ldm_stable
+    )
+    print(f"NFE: {nfe} denoiser calls (mode={mode} steps={num_diffusion_steps} tstart={tstart[0]})")
+
     # VAE decode audio
     with inference_mode():
         x0_dec = ldm_stable.vae_decode(w0)
