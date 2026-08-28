@@ -21,7 +21,7 @@ if str(AUDIO_ROOT) not in sys.path:
 from src.inversion_lora.stable_audio import (  # noqa: E402
     MODEL_ID,
     SCHEDULES,
-    FirstOrderSolver,
+    ExactDPMSolver,
     StableAudioTeacher,
     decode_to_audio,
     load_teacher,
@@ -37,7 +37,7 @@ def relative(a: torch.Tensor, b: torch.Tensor) -> float:
 
 @torch.no_grad()
 def sample(
-    teacher: StableAudioTeacher, solver: FirstOrderSolver, text_audio: torch.Tensor, seed: int
+    teacher: StableAudioTeacher, solver: ExactDPMSolver, text_audio: torch.Tensor, seed: int
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Run the first-order reverse pass, keeping every latent and every data prediction.
 
@@ -71,7 +71,7 @@ def sample(
 @torch.no_grad()
 def invert(
     teacher: StableAudioTeacher,
-    solver: FirstOrderSolver,
+    solver: ExactDPMSolver,
     clean: torch.Tensor,
     text_audio: torch.Tensor,
     data: torch.Tensor | None = None,
@@ -111,7 +111,7 @@ def invert(
 @torch.no_grad()
 def shift_gap(
     teacher: StableAudioTeacher,
-    solver: FirstOrderSolver,
+    solver: ExactDPMSolver,
     trajectory: torch.Tensor,
     data: torch.Tensor,
     text_audio: torch.Tensor,
@@ -184,7 +184,7 @@ def main(
     report = {}
     for schedule in SCHEDULES:
         teacher = load_teacher(model_id, torch_device, num_inference_steps, schedule=schedule)
-        solver = FirstOrderSolver(teacher.model.scheduler)
+        solver = ExactDPMSolver(teacher.model.scheduler)
         text_audio = teacher.encode_prompt(prompt)
         logger.info(
             "{}: sigma {:.4g}..{:.4g}, t {:.4g}..{:.4g}, preconditioned={}",

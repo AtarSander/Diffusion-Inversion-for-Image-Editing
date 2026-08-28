@@ -1,0 +1,28 @@
+{
+  "git_sha": "ac2af3b52fe3d50d54e7dc0c29931dac45203e31",
+  "prompt": "A gentle acoustic guitar melody with soft percussion.",
+  "seed": 42,
+  "num_inference_steps": 100,
+  "orders": {
+    "order1": {
+      "nfe_sampling": 100,
+      "nfe_inversion": 99,
+      "oracle_round_trip": 2.0457011942198733e-06,
+      "substituted_round_trip": 0.04740731790661812,
+      "audio_rms": 0.08536802232265472,
+      "audio_peak": 0.4543331265449524,
+      "final_latent_rms": 0.9926203489303589,
+      "wav": "output/sao_orders/order1_100steps.wav"
+    },
+    "order2": {
+      "nfe_sampling": 100,
+      "nfe_inversion": 99,
+      "oracle_round_trip": 2.0687530195573345e-06,
+      "substituted_round_trip": 0.0609678290784359,
+      "audio_rms": 0.08780457824468613,
+      "audio_peak": 0.4790966510772705,
+      "final_latent_rms": 1.0062812566757202,
+      "wav": "output/sao_orders/order2_100steps.wav"
+    }
+  }
+}

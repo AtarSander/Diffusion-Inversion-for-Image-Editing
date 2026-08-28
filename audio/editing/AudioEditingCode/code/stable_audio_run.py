@@ -17,7 +17,7 @@ if str(_AUDIO_ROOT) not in _sys.path:
     _sys.path.insert(0, str(_AUDIO_ROOT))
 from src.inversion_lora.apply_lora import attach_inversion_lora  # noqa: E402
 from src.inversion_lora.stable_audio import (  # noqa: E402
-    FirstOrderSolver,
+    ExactDPMSolver,
     ode_denoise,
     ode_invert,
 )
@@ -302,7 +302,7 @@ def run_stable_audio_edit(
             ldm_stable.setup_extra_inputs(
                 w0, init_timestep=ldm_stable.model.scheduler.timesteps[0], audio_end_in_s=duration
             )
-            solver = FirstOrderSolver(ldm_stable.model.scheduler)
+            solver = ExactDPMSolver(ldm_stable.model.scheduler)
             src_emb, _, src_mask = ldm_stable.encode_text(source_prompt)
             tar_emb, _, tar_mask = ldm_stable.encode_text(target_prompt)
             uncond_emb, _, uncond_mask = ldm_stable.encode_text([""], negative=True)

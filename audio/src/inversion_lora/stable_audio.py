@@ -17,7 +17,7 @@ MODEL_ID = "stabilityai/stable-audio-open-1.0"
 
 # `cosine` is Stable Audio's own sigma grid (500..0.3, t 0.99..0.19) and the only one used. Its
 # scheduler is an SDE -- unseeded Brownian noise per step -- so trajectories come from
-# `FirstOrderSolver` instead of `scheduler.step`, which is deterministic and exactly invertible.
+# `ExactDPMSolver` instead of `scheduler.step`, which is deterministic and exactly invertible.
 #
 # `beta` is what the editing code's `ddim` mode builds by rebuilding the scheduler as
 # DPMSolverMultistepScheduler, which silently drops sigma_min/sigma_max and lands on a linear-beta
@@ -152,7 +152,7 @@ class StableAudioTeacher:
 
         This is the trajectory the inversion LoRA is trained on. Unlike `reverse_trajectory` it does
         not call `scheduler.step`, so it is reproducible on the cosine grid (whose scheduler is an
-        SDE) and exactly invertible by `FirstOrderSolver.inverse`.
+        SDE) and exactly invertible by `ExactDPMSolver.inverse`.
 
         Args:
             text_audio: Cross-attention states `[1, S, D]`.
@@ -164,7 +164,7 @@ class StableAudioTeacher:
             `(trajectory[i], timesteps[i])` and the reverse step from `trajectory[i]` to
             `trajectory[i + 1]` consumed exactly that. All on the CPU.
         """
-        solver = FirstOrderSolver(self.model.scheduler)
+        solver = ExactDPMSolver(self.model.scheduler)
         shape = (1, self.pipe.transformer.config.in_channels, self.latent_length)
         x = torch.randn(
             shape,
@@ -287,8 +287,8 @@ def decode_to_audio(teacher: StableAudioTeacher, latents: torch.Tensor) -> torch
     return audio[:, :, :samples].detach().cpu().float()
 
 
-class FirstOrderSolver:
-    """DPMSolver++ first order on a scheduler's sigma grid, with its exact algebraic inverse.
+class ExactDPMSolver:
+    """DPMSolver++ on a scheduler's sigma grid, with the exact algebraic inverse of each step.
 
     The reverse step is affine in the sample -- `x_t = A * x_s + B * D`, with `D` the data
     prediction -- so recovering `x_s` from `x_t` is exact arithmetic given `D`. That is the property
@@ -297,9 +297,11 @@ class FirstOrderSolver:
     output/sao_pairing/REPORT.md). Everything here is stateless and indexed by step, so the
     inversion can walk the reverse grid backwards exactly.
 
-    First order rather than the schedulers' default second order because the shifted-denoiser
-    objective is only well posed per step: a multistep update mixes model outputs from several
-    steps, so no single substitution defines its error.
+    First order is the clean instrument for the shifted-denoiser objective, since undoing one step
+    then needs exactly one prediction. Second order is also exactly invertible -- the update stays
+    affine in the sample and linear in the two cached predictions -- but undoing a step needs the
+    prediction at the *previous* (noisier) grid point too, which inversion has not reached yet, so
+    that one has to be substituted as well. Both are provided; `coefficients` is per order.
     """
 
     def __init__(self, scheduler):
@@ -398,6 +400,54 @@ class FirstOrderSolver:
         h = (torch.log(alpha_t) - torch.log(sigma_t)) - (torch.log(alpha_s) - torch.log(sigma_s))
         return sigma_t / sigma_s, -(alpha_t * (torch.exp(-h) - 1.0))
 
+    def coefficients_2nd(self, index: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Affine coefficients `(A, C0, C1)` of the second-order step from `index` to `index + 1`.
+
+        diffusers writes the midpoint update over `D0 = m0` and `D1 = (m0 - m1) / r0`; expanding
+        those onto the raw predictions gives `x_t = A x + C0 m0 + C1 m1`, which is linear in both
+        and so invertible in closed form. Requires `index >= 1`, since it reads sigma at
+        `index - 1`; step 0 has no history and must use `forward`.
+
+        Args:
+            index: Step index into the grid.
+
+        Returns:
+            `(A, C0, C1)`.
+        """
+        assert index >= 1, f"second order needs a previous step, got index={index}"
+        assert index < self.invertible_steps, (
+            f"step {index} ends at sigma_t = 0, where r0 = h_0/h vanishes and the second-order "
+            "term divides by zero; use `forward`/`inverse` there (diffusers' lower_order_final)"
+        )
+        assert self.scheduler.config.solver_type == "midpoint", (
+            f"only the midpoint variant is wired, got {self.scheduler.config.solver_type}"
+        )
+        alpha_t, sigma_t = self._alpha_sigma(index + 1)
+        alpha_s0, sigma_s0 = self._alpha_sigma(index)
+        alpha_s1, sigma_s1 = self._alpha_sigma(index - 1)
+        lam = lambda a, s: torch.log(a) - torch.log(s)
+        h = lam(alpha_t, sigma_t) - lam(alpha_s0, sigma_s0)
+        h_0 = lam(alpha_s0, sigma_s0) - lam(alpha_s1, sigma_s1)
+        r0 = h_0 / h
+        b = -(alpha_t * (torch.exp(-h) - 1.0))
+        # D0 term plus half the D1 term, with D1 = (m0 - m1) / r0.
+        return sigma_t / sigma_s0, b + 0.5 * b / r0, -0.5 * b / r0
+
+    def forward_2nd(
+        self, x_s: torch.Tensor, data: torch.Tensor, previous: torch.Tensor, index: int
+    ) -> torch.Tensor:
+        """One second-order reverse step, using this step's and the previous step's predictions."""
+        a, c0, c1 = self.coefficients_2nd(index)
+        return a * x_s + c0 * data + c1 * previous
+
+    def inverse_2nd(
+        self, x_t: torch.Tensor, data: torch.Tensor, previous: torch.Tensor, index: int
+    ) -> torch.Tensor:
+        """Exact inverse of `forward_2nd`, given both predictions it consumed."""
+        a, c0, c1 = self.coefficients_2nd(index)
+        assert float(a) != 0.0, f"step {index} has no inverse (sigma_t = 0)"
+        return (x_t - c0 * data - c1 * previous) / a
+
     def forward(self, x_s: torch.Tensor, data: torch.Tensor, index: int) -> torch.Tensor:
         """One reverse step: noisier `x_s` at `index` to cleaner `x_t` at `index + 1`."""
         a, b = self.coefficients(index)
@@ -414,7 +464,7 @@ class FirstOrderSolver:
 
 
 def ode_invert(
-    solver: FirstOrderSolver,
+    solver: ExactDPMSolver,
     x_clean: torch.Tensor,
     predict,
     steps: int,
@@ -447,7 +497,7 @@ def ode_invert(
 
 
 def ode_denoise(
-    solver: FirstOrderSolver,
+    solver: ExactDPMSolver,
     x: torch.Tensor,
     start_index: int,
     predict,

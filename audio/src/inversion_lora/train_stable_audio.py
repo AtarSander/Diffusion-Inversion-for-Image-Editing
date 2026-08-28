@@ -23,7 +23,7 @@ from src.inversion_lora.dataset import (  # noqa: E402
     split_sample_ids,
     transitions_below_timestep,
 )
-from src.inversion_lora.stable_audio import FirstOrderSolver, load_teacher  # noqa: E402
+from src.inversion_lora.stable_audio import ExactDPMSolver, load_teacher  # noqa: E402
 from src.inversion_lora.train import (  # noqa: E402
     AudioLDM2InversionTrainer,
     NullTracker,
@@ -52,7 +52,7 @@ class StableAudioInversionTrainer(AudioLDM2InversionTrainer):
 
     def __init__(self, ldm, cfg: DictConfig, tracker: Any):
         super().__init__(ldm, cfg, tracker)
-        self.solver = FirstOrderSolver(ldm.model.scheduler)
+        self.solver = ExactDPMSolver(ldm.model.scheduler)
         # The base class bands the schedule against num_train_timesteps=1000, which is meaningless
         # on a grid whose timesteps run 0.99..0.19: every example would land in one band.
         self.band_top = max(self.solver.timesteps)
