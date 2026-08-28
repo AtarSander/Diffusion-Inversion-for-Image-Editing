@@ -16,7 +16,8 @@ class _FakeCheckpointedModel:
         self.checkpoint_calls.append("disable")
         self.is_gradient_checkpointing = False
 
-    def enable_gradient_checkpointing(self) -> None:
+    def enable_gradient_checkpointing(self, **kwargs: object) -> None:
+        del kwargs
         self.checkpoint_calls.append("enable")
         self.is_gradient_checkpointing = True
 
@@ -34,6 +35,7 @@ def _trainer_with_scheduler() -> SDXLInversionTrainer:
     scheduler.set_timesteps(50)
     trainer = object.__new__(SDXLInversionTrainer)
     trainer.pipe = SimpleNamespace(scheduler=scheduler)
+    trainer._base_forward_active = False
     return trainer
 
 
@@ -136,7 +138,7 @@ def test_conditional_cycle_disables_lora_only_for_base_generation_and_backpropag
     )
 
     assert trainer.adapter_calls == [False, True]
-    assert trainer.model.checkpoint_calls == ["disable", "enable"]
+    assert trainer.model.checkpoint_calls == []
     assert trainer.model.is_gradient_checkpointing
     assert trainer.adapters_enabled
     assert len(trainer.base_inputs) == 1
@@ -152,6 +154,38 @@ def test_conditional_cycle_disables_lora_only_for_base_generation_and_backpropag
     assert trainer.student_scale.grad is not None
     assert torch.isfinite(trainer.student_scale.grad)
     assert trainer.student_scale.grad.abs() > 0
+
+
+def test_base_checkpoint_recomputation_keeps_lora_disabled() -> None:
+    trainer = _trainer_with_scheduler()
+    trainer.adapters_enabled = True
+    trainer.adapter_calls = []
+
+    def set_lora_enabled(self: SDXLInversionTrainer, enabled: bool) -> None:
+        self.adapter_calls.append(enabled)
+        self.adapters_enabled = enabled
+
+    trainer._set_lora_enabled = MethodType(set_lora_enabled, trainer)
+
+    seen_adapter_states: list[bool] = []
+
+    class SquareModule(torch.nn.Module):
+        def forward(self, value: torch.Tensor) -> torch.Tensor:
+            seen_adapter_states.append(trainer.adapters_enabled)
+            return value.square()
+
+    value = torch.tensor(2.0, requires_grad=True)
+    trainer._base_forward_active = True
+    trainer.adapters_enabled = False
+    output = trainer._gradient_checkpointing_func(SquareModule(), value)
+    trainer._base_forward_active = False
+    trainer.adapters_enabled = True
+
+    output.backward()
+
+    assert seen_adapter_states == [False, False]
+    assert trainer.adapters_enabled
+    torch.testing.assert_close(value.grad, torch.tensor(4.0))
 
 
 def test_conditional_cycle_is_a_supported_training_target_mode() -> None:

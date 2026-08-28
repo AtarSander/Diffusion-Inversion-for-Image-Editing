@@ -6,6 +6,7 @@ from typing import Any
 import hydra
 import torch
 import torch.nn.functional as F
+import torch.utils.checkpoint
 import wandb
 from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
 from diffusers.optimization import get_scheduler
@@ -61,6 +62,7 @@ class SDXLInversionTrainer:
         max_val_batches: int | None,
         max_grad_norm: float | None = None,
         gradient_checkpointing: bool = False,
+        offload_frozen_components: bool = False,
         validation_preview_config: DictConfig | None = None,
         training_target_mode: str = "conditional",
         training_guidance_scale: float | None = None,
@@ -84,6 +86,7 @@ class SDXLInversionTrainer:
         self.height = int(height)
         self.width = int(width)
         self.training_target_mode = self._normalize_training_target_mode(training_target_mode)
+        self._base_forward_active = False
         self.recon_lambda = None if recon_lambda is None else float(recon_lambda)
         if self.training_target_mode in CYCLE_LOSS_MODES:
             if self.recon_lambda is None:
@@ -104,6 +107,13 @@ class SDXLInversionTrainer:
                 f"or null per-sample guidance; got {self.training_guidance_scale}."
             )
         self._freeze_pipeline_components()
+        if offload_frozen_components and validation_preview_config is not None:
+            raise ValueError(
+                "offload_frozen_components=true is incompatible with validation preview; "
+                "disable the preview or keep the pipeline components on GPU."
+            )
+        if offload_frozen_components:
+            self._offload_frozen_pipeline_components()
         self._inject_lora_adapters(lora_config)
         self._freeze_non_lora_parameters()
         self._cast_trainable_parameters(torch.float32)
@@ -113,7 +123,9 @@ class SDXLInversionTrainer:
             self._set_active_adapter(SINGLE_ADAPTER_NAME)
 
         if gradient_checkpointing and hasattr(self.model, "enable_gradient_checkpointing"):
-            self.model.enable_gradient_checkpointing()
+            self.model.enable_gradient_checkpointing(
+                gradient_checkpointing_func=self._gradient_checkpointing_func
+            )
 
         self.trainable_parameters = [p for p in self.model.parameters() if p.requires_grad]
         if not self.trainable_parameters:
@@ -434,15 +446,11 @@ class SDXLInversionTrainer:
         add_time_ids: torch.Tensor | None,
     ) -> torch.Tensor:
         """Run frozen theta without LoRA while preserving gradients to latents."""
-        was_checkpointing = bool(getattr(self.model, "is_gradient_checkpointing", False))
         adapters_disabled = False
-        checkpointing_disabled = False
         try:
+            self._base_forward_active = True
             self._set_lora_enabled(False)
             adapters_disabled = True
-            if was_checkpointing and hasattr(self.model, "disable_gradient_checkpointing"):
-                self.model.disable_gradient_checkpointing()
-                checkpointing_disabled = True
             return self.predict_noise(
                 latents,
                 scheduler_timesteps,
@@ -451,10 +459,50 @@ class SDXLInversionTrainer:
                 add_time_ids,
             )
         finally:
+            self._base_forward_active = False
             if adapters_disabled:
                 self._set_lora_enabled(True)
-            if checkpointing_disabled:
-                self.model.enable_gradient_checkpointing()
+
+    def _gradient_checkpointing_func(
+        self,
+        module: torch.nn.Module,
+        *args: torch.Tensor,
+    ) -> torch.Tensor:
+        """Checkpoint UNet blocks while preserving the adapter state of each forward pass.
+
+        The cycle loss runs the same UNet once with LoRA and once as the frozen base model.
+        Diffusers normally recomputes checkpointed blocks during backward using the model's
+        *current* adapter state. The base pass has returned by then, so blindly using the
+        default checkpoint function would incorrectly recompute it with LoRA enabled.
+        Capture which pass created each checkpoint and restore that state around recomputation.
+        """
+        checkpoint_without_lora = self._base_forward_active
+
+        if not checkpoint_without_lora:
+            return torch.utils.checkpoint.checkpoint(
+                module.__call__,
+                *args,
+                use_reentrant=False,
+            )
+
+        def base_module_forward(*module_args: torch.Tensor) -> torch.Tensor:
+            # During the original base forward, adapters are already disabled and must remain
+            # disabled for the following blocks. During backward recomputation, temporarily
+            # disable them for this block and then restore the student state.
+            restore_student_state = not self._base_forward_active
+            if restore_student_state:
+                self._set_lora_enabled(False)
+            try:
+                return module(*module_args)
+            finally:
+                if restore_student_state:
+                    self._set_lora_enabled(True)
+
+        return torch.utils.checkpoint.checkpoint(
+            base_module_forward,
+            *args,
+            use_reentrant=False,
+        )
 
     def _ddim_alpha_pair(
         self,
@@ -1058,6 +1106,25 @@ class SDXLInversionTrainer:
                 component.requires_grad_(False)
                 component.eval()
 
+    def _offload_frozen_pipeline_components(self) -> None:
+        """Keep only the UNet on GPU when training from cached trajectory tensors."""
+        offloaded: list[str] = []
+        for name in (
+            "text_encoder",
+            "text_encoder_2",
+            "vae",
+            "safety_checker",
+            "image_encoder",
+        ):
+            component = getattr(self.pipe, name, None)
+            if component is None or component is self.model:
+                continue
+            component.to("cpu")
+            offloaded.append(name)
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        logger.info("Offloaded unused frozen pipeline components to CPU: {}", offloaded)
+
     def _freeze_non_lora_parameters(self) -> None:
         for name, parameter in self.model.named_parameters():
             parameter.requires_grad_("lora" in name.lower())
@@ -1441,6 +1508,7 @@ def main(cfg: DictConfig) -> None:
         max_val_batches=cfg.max_val_batches,
         max_grad_norm=cfg.max_grad_norm,
         gradient_checkpointing=cfg.gradient_checkpointing,
+        offload_frozen_components=cfg.offload_frozen_components,
         validation_preview_config=(
             cfg
             if bool(OmegaConf.select(cfg, "validation_preview.enabled", default=False))

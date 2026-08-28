@@ -55,10 +55,12 @@ def _try_batch(
             else _synthetic_batch(trainer, batch_size)
         )
         trainer.optimizer.zero_grad(set_to_none=True)
-        trainer.forward_loss(batch).backward()
+        loss = trainer.forward_loss(batch)
+        loss.backward()
+        trainer.optimizer.step()
         peak_gib = torch.cuda.max_memory_allocated() / 1024**3
         trainer.optimizer.zero_grad(set_to_none=True)
-        del batch
+        del batch, loss
         return True, peak_gib
     except torch.cuda.OutOfMemoryError:
         trainer.optimizer.zero_grad(set_to_none=True)
@@ -96,6 +98,7 @@ def main(cfg: DictConfig) -> None:
         max_val_batches=1,
         max_grad_norm=cfg.max_grad_norm,
         gradient_checkpointing=cfg.gradient_checkpointing,
+        offload_frozen_components=cfg.offload_frozen_components,
         training_target_mode=str(cfg.training_target.mode),
         training_guidance_scale=OmegaConf.select(
             cfg, "training_target.guidance_scale", default=None

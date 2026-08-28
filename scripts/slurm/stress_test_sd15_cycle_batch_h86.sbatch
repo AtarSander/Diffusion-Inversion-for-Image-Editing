@@ -18,7 +18,7 @@ set -euo pipefail
 REPO_DIR=${SLURM_SUBMIT_DIR:?SLURM_SUBMIT_DIR is required}
 STORAGE_ROOT="$(dirname "$(readlink -f "${REPO_DIR}/checkpoints")")"
 RESULT_DIR=${STORAGE_ROOT}/logs/batch_size_stress
-RESULT_LOG=${RESULT_DIR}/sd15_conditional_cycle_fp32_r32_h86_${SLURM_JOB_ID}.log
+RESULT_LOG=${RESULT_DIR}/sd15_conditional_cycle_fp32_r32_${SLURM_JOB_ID}.log
 JOB_TMP_DIR=${SLURM_TMPDIR:-/tmp}/sd15-cycle-cap-${SLURM_JOB_ID}
 VENV_DIR=${JOB_TMP_DIR}/venv
 MAX_BATCH_SIZE=${MAX_BATCH_SIZE:-128}
@@ -39,7 +39,8 @@ mkdir -p "${RESULT_DIR}" "${JOB_TMP_DIR}"
 cd "${REPO_DIR}"
 uv venv --python "$(command -v python3)" "${VENV_DIR}"
 source "${VENV_DIR}/bin/activate"
-uv sync --active --frozen --no-dev
+uv sync --active --frozen
+pytest -q tests/test_conditional_cycle_loss.py
 
 python3 -m diff_inversion.modeling.batch_size_stress_test --config-name train_sd15 \
   lora=r32 \
