@@ -31,6 +31,7 @@ METHOD_LABELS = {"ddpm": "DDPM-inv", "sdedit": "SDEdit"}
 MODELS = {
     "audioldm2": {
         "title": "AudioLDM2",
+        "grid": "DDIM grid",
         "subdirs": ["audioldm2_ddim", "audioldm2_ddpm", "audioldm2_sdedit"],
         "glob": "audioldm2_*hparam*",
         "base": re.compile(
@@ -45,14 +46,18 @@ MODELS = {
     },
     "stable_audio": {
         "title": "Stable Audio Open",
+        "grid": "odeinv grid, cosine sigmas",
         "subdirs": ["stable_audio"],
         "glob": "stableaudio_*hparam*",
+        # odeinv only. Matching the rejected ddim runs as well put two samplers in one figure
+        # with two rows both labelled "no LoRA", which the paired lookup then read as a Series.
+        # The old ddim figure stays reproducible from output/lora_curves/20260824_104339.
         "base": re.compile(
-            r"stableaudio_ddim_nolora_hparam_cfgtar(?P<cfg_tar>[\d.]+)"
+            r"stableaudio_odeinv_nolora_hparam_cfgtar(?P<cfg_tar>[\d.]+)"
             r"_t(?P<tstart>\d+)_s(?P<steps>\d+)$"
         ),
         "lora": re.compile(
-            r"stableaudio_ddimlora_hparam_(?P<checkpoint>.+?)"
+            r"stableaudio_odeinvlora_hparam_(?P<checkpoint>.+?)"
             r"_cfgtar(?P<cfg_tar>[\d.]+)_t(?P<tstart>\d+)_s(?P<steps>\d+)$"
         ),
     },
@@ -221,7 +226,7 @@ def main(
                 })
 
     figure.suptitle(
-        f"{MODELS[model]['title']}: inversion LoRA on MedleyMD, DDIM grid "
+        f"{MODELS[model]['title']}: inversion LoRA on MedleyMD, {MODELS[model]['grid']} "
         f"(n={int(frame['n'].iloc[0])} edits per point)",
         fontsize=16,
     )

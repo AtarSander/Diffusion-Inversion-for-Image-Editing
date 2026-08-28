@@ -8,6 +8,63 @@ Most recent first. Keep this file current — it is the handover doc between ses
 
 ---
 
+## 2026-08-28 — RESULT: with the objective fixed, the Stable Audio adapter does move editing
+
+First run of the corrected pipeline end to end. Dataset regenerated on Stable Audio's native cosine
+sigma grid with the first-order ODE sampler, matched-timestep pairing and data-prediction targets;
+adapter `saocos_r8_a4_lr5e-5` (attn, r8, lr 5e-5, batch 8 x accum 4, slurm 5776575); edits through
+the new `odeinv` mode on the 115-row hparam split, 24 runs (slurm 5777789), eval 5777813. Report:
+`output/sao_lora/20260828_102312/`, figure `output/lora_curves/20260828_102421/`.
+
+Objective: LoRA-disabled val loss 2.630e-4, adapter 2.439e-5 at step 4000 = **90.7% closed**, flat
+from step 3000 (2.521e-5) through 17000 (2.334e-5). Step 4000 + its EMA were taken to the sweep.
+
+**Paired against the no-LoRA twin at every cell, same 115 rows:**
+
+| cell | no-LoRA LPAPS | d LPAPS | d mel PSNR | d CLAP |
+| --- | --- | --- | --- | --- |
+| t25/cfg3.5 | 2.913 | -0.0385*** | -0.089*** | -0.0011 |
+| t25/cfg7.0 | 2.995 | -0.0303*** | -0.078*** | -0.0019* |
+| t50/cfg3.5 | 4.500 | -0.0624*** | +0.018 | -0.0000 |
+| t50/cfg7.0 | 4.925 | -0.0481*** | +0.083*** | +0.0039** |
+| t75/cfg3.5 | 5.342 | **-0.0803*** | **+0.140*** | **+0.0050*** |
+| t75/cfg7.0 | 5.666 | -0.0660*** | +0.134*** | +0.0017 |
+| t99/cfg3.5 | 5.431 | -0.0769*** | +0.129*** | +0.0053*** |
+| t99/cfg7.0 | 5.718 | -0.0555*** | +0.141*** | +0.0039** |
+
+Means -0.057 LPAPS, +0.060 mel PSNR, +0.0021 CLAP. EMA matches raw to the third decimal.
+
+The contrast with the beta-grid run is the point. There the largest effect was -0.024 LPAPS **with
+CLAP going negative** -- a trade along the front. Here, at six of eight cells, preservation and
+alignment improve **together**, so the operating point moves off the front. Sign is consistent at
+all eight cells, p<0.001 for LPAPS everywhere. So the earlier Stable Audio null was a property of
+the mis-specified objective, not of the model: fix the sampler, the pairing and the target space and
+the adapter collects.
+
+### What this does not say
+
+- **Small against the front**, which spans 2.91 to 5.72 LPAPS here. The best cell is 2.9% of it.
+  Real, consistent, not a regime change.
+- **t25 disagrees with itself**: LPAPS improves while mel PSNR *worsens* (-0.09, p<0.001) at both
+  guidances. Unexplained. Shallow inversion is where the adapter has the least to correct, so a
+  sign flip there is suspicious and worth a look before the result is leaned on.
+- **The odeinv no-LoRA front is worse than the retracted beta front** (5.43 vs 4.28 LPAPS at full
+  inversion), consistent with first-order sampling being weaker than the second-order path the old
+  numbers used. The adapter is clearing a lower bar. A second-order odeinv with its exact inverse
+  would be the fair comparison, and is the obvious next build.
+- Checkpoint chosen on **val loss**, which AudioLDM2 showed can peak at a different step than
+  reconstruction. No reconstruction eval exists on this path yet.
+
+### Next
+
+1. Second-order odeinv + its exact inverse, so the front is competitive with the old table and the
+   `ddpm`/`sdedit` baselines are compared like for like.
+2. The reconstruction ladder on this pipeline, which is also the honest checkpoint-selection signal.
+3. Real-audio shift gap: everything measured so far is on generated trajectories, while editing
+   inverts VAE latents of real mixes.
+
+---
+
 ## 2026-08-24 (later) — RETRACTION: the Stable Audio objective is mis-specified
 
 Triggered by listening to the probe wavs: the `beta`-grid teacher sounds clearly worse than the

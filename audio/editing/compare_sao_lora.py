@@ -9,11 +9,14 @@ import fire
 import pandas as pd
 from scipy import stats
 
-CHECKPOINT_DIR = "sao_r8_a4_lr5e-5"
+# The corrected run: cosine ODE grid, matched pairing, data-prediction targets (slurm 5776575).
+CHECKPOINT_DIR = "saocos_r8_a4_lr5e-5"
 LADDER = ["nolora", 2000, 4000, 6000, 8000, 10000, 12000, 14000, 16000, 18000, "18000_ema"]
-EDIT_ARMS = ["18000", "18000_ema"]
-TSTART = [25, 50, 75, 100]
+EDIT_ARMS = ["4000", "4000_ema"]
+TSTART = [25, 50, 75, 99]
 CFG_TAR = [3.5, 7.0]
+# odeinv, not the rejected ddim path; tstart 99 is full inversion.
+EDIT_PREFIX = "stableaudio_odeinv"
 
 
 def read_run(run_dir: Path) -> dict:
@@ -98,11 +101,11 @@ def grid_table(root: Path) -> tuple[str, dict]:
     for tstart in TSTART:
         for cfg in CFG_TAR:
             cell = f"t{tstart}/cfg{cfg}"
-            base = read_run(root / f"stableaudio_ddim_nolora_hparam_cfgtar{cfg}_t{tstart}_s100")
+            base = read_run(root / f"{EDIT_PREFIX}_nolora_hparam_cfgtar{cfg}_t{tstart}_s100")
             records[cell] = {"nolora": base["agg"]["final"]["LPAPS"]["mean"]}
             for arm in EDIT_ARMS:
                 run = read_run(
-                    root / f"stableaudio_ddimlora_hparam_{CHECKPOINT_DIR}_checkpoint_step_{arm}"
+                    root / f"{EDIT_PREFIX}lora_hparam_{CHECKPOINT_DIR}_checkpoint_step_{arm}"
                     f"_cfgtar{cfg}_t{tstart}_s100"
                 )
                 dl, pl = paired(run, base, "lpaps", "per")
@@ -131,9 +134,11 @@ def main(root: str, output_dir: str = "output/sao_lora") -> None:
     out = Path(__file__).resolve().parents[1] / output_dir / stamp
     out.mkdir(parents=True, exist_ok=True)
 
-    ladder_md, ladder_json = ladder_table(root)
+    ladder_md, ladder_json = "_not run on this pipeline yet_", {}
+    if (root / "stableaudio_recon_tracks_s100_nolora" / "metrics.json").exists():
+        ladder_md, ladder_json = ladder_table(root)
+        print(ladder_md, "\n")
     grid_md, grid_json = grid_table(root)
-    print(ladder_md, "\n")
     print(grid_md)
 
     report = f"""# Stable Audio inversion LoRA: reconstruction and editing ({stamp})
