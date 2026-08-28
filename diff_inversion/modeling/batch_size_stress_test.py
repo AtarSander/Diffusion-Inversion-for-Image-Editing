@@ -45,22 +45,24 @@ def _try_batch(
     trainer: SDXLInversionTrainer,
     dataset: LatentTrajectoryDataset | None,
     batch_size: int,
+    num_updates: int,
 ) -> tuple[bool, float]:
     torch.cuda.empty_cache()
     torch.cuda.reset_peak_memory_stats()
     try:
-        batch = (
-            _make_batch(dataset, batch_size)
-            if dataset is not None
-            else _synthetic_batch(trainer, batch_size)
-        )
-        trainer.optimizer.zero_grad(set_to_none=True)
-        loss = trainer.forward_loss(batch)
-        loss.backward()
-        trainer.optimizer.step()
+        for _ in range(num_updates):
+            batch = (
+                _make_batch(dataset, batch_size)
+                if dataset is not None
+                else _synthetic_batch(trainer, batch_size)
+            )
+            trainer.optimizer.zero_grad(set_to_none=True)
+            loss = trainer.forward_loss(batch)
+            loss.backward()
+            trainer.optimizer.step()
+            trainer.optimizer.zero_grad(set_to_none=True)
+            del batch, loss
         peak_gib = torch.cuda.max_memory_allocated() / 1024**3
-        trainer.optimizer.zero_grad(set_to_none=True)
-        del batch, loss
         return True, peak_gib
     except torch.cuda.OutOfMemoryError:
         trainer.optimizer.zero_grad(set_to_none=True)
@@ -76,8 +78,13 @@ def main(cfg: DictConfig) -> None:
         raise RuntimeError("CUDA is required for this stress test.")
 
     max_batch_size = int(OmegaConf.select(cfg, "stress_test.max_batch_size", default=128))
+    num_updates = int(OmegaConf.select(cfg, "stress_test.num_updates", default=3))
     device_name = torch.cuda.get_device_name()
-    logger.info("Testing SD1.5 LoRA micro-batch capacity on {}", device_name)
+    logger.info(
+        "Testing SD1.5 LoRA micro-batch capacity on {} for {} consecutive updates",
+        device_name,
+        num_updates,
+    )
 
     pipe = make_pipe(cfg.model, "cuda")
     trainer = SDXLInversionTrainer(
@@ -121,7 +128,7 @@ def main(cfg: DictConfig) -> None:
 
     lower, upper = 0, 1
     while upper <= max_batch_size:
-        fits, peak_gib = _try_batch(trainer, dataset, upper)
+        fits, peak_gib = _try_batch(trainer, dataset, upper, num_updates)
         logger.info("batch_size={} fits={} peak_allocated_gib={:.2f}", upper, fits, peak_gib)
         if not fits:
             break
@@ -130,7 +137,7 @@ def main(cfg: DictConfig) -> None:
     upper = min(upper, max_batch_size + 1)
     while upper - lower > 1:
         candidate = (lower + upper) // 2
-        fits, peak_gib = _try_batch(trainer, dataset, candidate)
+        fits, peak_gib = _try_batch(trainer, dataset, candidate, num_updates)
         logger.info("batch_size={} fits={} peak_allocated_gib={:.2f}", candidate, fits, peak_gib)
         if fits:
             lower = candidate

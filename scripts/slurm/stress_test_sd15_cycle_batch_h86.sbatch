@@ -27,6 +27,7 @@ REQUIRED_BATCH_SIZE=${REQUIRED_BATCH_SIZE:-128}
 module load python/3.11.15
 module load uv/0.11.2
 export TOKENIZERS_PARALLELISM=false PYTHONUNBUFFERED=1 HYDRA_FULL_ERROR=1
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 source "${REPO_DIR}/scripts/slurm/job_local_cache.sh"
 
 cleanup() {
@@ -49,6 +50,7 @@ python3 -m diff_inversion.modeling.batch_size_stress_test --config-name train_sd
   model.torch_dtype=float32 \
   model.variant=null \
   +stress_test.synthetic=true \
+  +stress_test.num_updates=3 \
   +stress_test.max_batch_size="${MAX_BATCH_SIZE}" >"${RESULT_LOG}" 2>&1
 
 grep "largest_micro_batch" "${RESULT_LOG}"

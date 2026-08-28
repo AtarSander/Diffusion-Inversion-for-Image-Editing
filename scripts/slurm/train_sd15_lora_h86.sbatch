@@ -24,12 +24,14 @@ shift
 HYDRA_OVERRIDES=("$@")
 WANDB_PROFILE=online
 TRAIN_VARIANT=uniform
+CHECKPOINT_DIR_OVERRIDE=
 for override in "${HYDRA_OVERRIDES[@]}"; do
   case "$override" in
     wandb=offline|wandb.mode=offline) WANDB_PROFILE=offline ;;
     wandb=disabled|wandb.mode=disabled) WANDB_PROFILE=disabled ;;
     wandb=online|wandb.mode=online) WANDB_PROFILE=online ;;
     sampling=final_tail|sampling.mode=final_tail) TRAIN_VARIANT=final_tail ;;
+    checkpoint_dir=*) CHECKPOINT_DIR_OVERRIDE=${override#checkpoint_dir=} ;;
   esac
 done
 
@@ -38,12 +40,20 @@ STORAGE_ROOT="$(dirname "$(readlink -f "$REPO_DIR/checkpoints")")"
 [[ -d "$STORAGE_ROOT" ]] || { echo "Cannot resolve project storage from $REPO_DIR/checkpoints" >&2; exit 2; }
 RUN_NAME=sd15-inversion-lora-r${RANK}-${TRAIN_VARIANT}-e1
 CHECKPOINT_DIR=$REPO_DIR/checkpoints/sd15_inversion_lora_r${RANK}_${TRAIN_VARIANT}_e1
+if [[ -n "$CHECKPOINT_DIR_OVERRIDE" ]]; then
+  if [[ "$CHECKPOINT_DIR_OVERRIDE" = /* ]]; then
+    CHECKPOINT_DIR=$CHECKPOINT_DIR_OVERRIDE
+  else
+    CHECKPOINT_DIR=$REPO_DIR/$CHECKPOINT_DIR_OVERRIDE
+  fi
+fi
 JOB_TMP_DIR=${SLURM_TMPDIR:-/tmp}/sd15-lora-r${RANK}-${TRAIN_VARIANT}-${SLURM_JOB_ID}
 VENV_DIR=$JOB_TMP_DIR/venv
 
 module load python/3.11.15
 module load uv/0.11.2
 export PYTHONUNBUFFERED=1 TOKENIZERS_PARALLELISM=false HYDRA_FULL_ERROR=1
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 source "$REPO_DIR/scripts/slurm/job_local_cache.sh"
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 export MKL_NUM_THREADS=$SLURM_CPUS_PER_TASK
@@ -53,6 +63,29 @@ export NUMEXPR_NUM_THREADS=$SLURM_CPUS_PER_TASK
 cleanup() { [[ -n "${VIRTUAL_ENV:-}" ]] && deactivate || true; rm -rf -- "$JOB_TMP_DIR"; }
 trap cleanup EXIT
 mkdir -p "$JOB_TMP_DIR" "$CHECKPOINT_DIR"
+
+RESUME_OVERRIDES=()
+if [[ "${AUTO_RESUME:-0}" == "1" ]]; then
+  if [[ -f "$CHECKPOINT_DIR/checkpoint_final.pt" ]]; then
+    echo "Final checkpoint already exists; nothing to resume: $CHECKPOINT_DIR/checkpoint_final.pt"
+    exit 0
+  fi
+
+  LATEST_STATE=$(find "$CHECKPOINT_DIR" -maxdepth 1 -type f \
+    -name 'training_state_step_*.pt' -printf '%f\n' | sort -V | tail -n 1)
+  if [[ -z "$LATEST_STATE" ]]; then
+    echo "AUTO_RESUME=1 but no periodic training-state checkpoint exists in $CHECKPOINT_DIR" >&2
+    exit 3
+  fi
+
+  RESUME_PATH=$CHECKPOINT_DIR/$LATEST_STATE
+  RESUME_OVERRIDES=(
+    resume.enabled=true
+    resume.mode=training_state
+    "resume.checkpoint_path=$RESUME_PATH"
+  )
+  echo "Automatically resuming from $RESUME_PATH"
+fi
 
 cd "$REPO_DIR"
 
@@ -71,4 +104,5 @@ source "$VENV_DIR/bin/activate"
 uv sync --active --frozen --no-dev
 
 echo "Training rank $RANK, variant $TRAIN_VARIANT."
-python3 -m diff_inversion.modeling.train --config-name train_sd15 lora="r$RANK" run_name="$RUN_NAME" checkpoint_dir="$CHECKPOINT_DIR" "${HYDRA_OVERRIDES[@]}"
+python3 -m diff_inversion.modeling.train --config-name train_sd15 lora="r$RANK" run_name="$RUN_NAME" checkpoint_dir="$CHECKPOINT_DIR" \
+  "${HYDRA_OVERRIDES[@]}" "${RESUME_OVERRIDES[@]}"
