@@ -52,9 +52,12 @@ MODELS = {
         # odeinv only. Matching the rejected ddim runs as well put two samplers in one figure
         # with two rows both labelled "no LoRA", which the paired lookup then read as a Series.
         # The old ddim figure stays reproducible from output/lora_curves/20260824_104339.
+        # The odeinv no-LoRA arm, plus ddpm/sdedit as reference methods on the same grid. The
+        # rejected ddim runs are deliberately not matched: they used a different sampler, and two
+        # rows both labelled "no LoRA" break the paired lookup.
         "base": re.compile(
-            r"stableaudio_odeinv_nolora_hparam_cfgtar(?P<cfg_tar>[\d.]+)"
-            r"_t(?P<tstart>\d+)_s(?P<steps>\d+)$"
+            r"stableaudio_(?:odeinv_nolora|(?P<mode>ddpm|sdedit))_hparam"
+            r"_cfgtar(?P<cfg_tar>[\d.]+)_t(?P<tstart>\d+)_s(?P<steps>\d+)$"
         ),
         "lora": re.compile(
             r"stableaudio_odeinvlora_hparam_(?P<checkpoint>.+?)"
