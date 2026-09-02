@@ -1,10 +1,12 @@
 # Real weight of the cycle loss vs L_inv — SD1.4 DDIM, cfg=1
 
-Measured, not derived. `CompVis/stable-diffusion-v1-4`, DDIM-50, cfg=1.0, fp32, seed 42, 150 transitions over 3 prompts. Commit `e575d93f`.
+Measured, not derived. `CompVis/stable-diffusion-v1-4`, cfg=1.0, fp32, seed 42, 150 transitions over 3 prompts per grid length. Commit `e575d93f`.
+
+Figure: `output/cycle_loss_weight/plots/cycle_loss_weight_sd14_20260902_150849.png` (SVG alongside).
 
 ## Headline
 
-**At `lambda_cycle=1.0` the cycle term contributes 0.477% of L_inv — 1 part in 210.**
+**At `lambda_cycle=1.0` on DDIM-50 the cycle term contributes 0.477% of L_inv — 1 part in 210.**
 
 | quantity | value |
 |---|---|
@@ -15,15 +17,28 @@ Measured, not derived. `CompVis/stable-diffusion-v1-4`, DDIM-50, cfg=1.0, fp32, 
 | mean L_cycle | 3.8036e-06 |
 | mean B^2 | 5.1296e-03 |
 
+## Grid-length sweep (panel f)
+
+The weight is set by the step size, so it grows as the grid coarsens:
+
+| DDIM steps | mean B^2 | mean ratio | lambda_cycle for parity |
+|---|---|---|---|
+| 10 | 1.2936e-01 | 8.192% | 12 |
+| 20 | 3.2371e-02 | 2.682% | 37 |
+| 50 | 5.1296e-03 | 0.477% | 210 |
+| 100 | 1.2773e-03 | 0.123% | 815 |
+
+At 50 steps (what `pnp_inversion` uses) the term is negligible. At 10 steps it is 8.2% and no longer ignorable.
+
 ## What this verifies
 
 - **`L_cycle = B^2 ||e-v||^2` exactly.** Affine reconstruction of the DDIM step asserted against `scheduler.step()` at every timestep (tol 2e-3, passed).
 - **`z_hat - z_i == -(B/A)(e-u)`** — max relative error 1.11e-03.
-- **`||e-v|| ~ ||e-u||`**: measured ratio 0.9850, so the entire relative weight is the prefactor `B^2`. This is why the ratio equals B^2 to within ~2%.
-- **Fixed point is unique.** Contraction factor `|B/A|*||J||` = 0.0961 << 1 (mean effective ||J|| = 1.729). So `L_cycle=0` <=> correct inversion; the degeneracy concern is empirically dead.
-- `clip_sample=False` in SD1.4's shipped scheduler config, so the step really is affine. (If it were True, x0 clipping would break invertibility outright.)
+- **`||e-v|| ~ ||e-u||`**: measured 0.9850 (panel c), so the entire relative weight is the prefactor `B^2`. Panel (a) shows measured ratio tracking `B^2`.
+- **Fixed point is unique.** Contraction factor `|B/A|*||J||` = 0.0961 << 1 (mean effective ||J|| = 1.729, range 0.92-8.3). So `L_cycle=0` <=> correct inversion; the degeneracy concern is empirically dead (panels d, e).
+- `clip_sample=False` in SD1.4's shipped scheduler config, so the step really is affine. If it were True, x0 clipping would break invertibility outright.
 
-## Per-timestep (prompt 1)
+## Per-timestep, DDIM-50 (prompt 1)
 
 | t | B^2 | L_inv | L_cycle | ratio | \|e-v\|/\|e-u\| | J_eff |
 |---|---|---|---|---|---|---|
@@ -42,6 +57,11 @@ Measured, not derived. `CompVis/stable-diffusion-v1-4`, DDIM-50, cfg=1.0, fp32, 
 
 Measured at LoRA initialisation, where the adapter is exactly the identity so `eps_phi(z_{i+1},t_i) = eps_theta(z_{i+1},t_i)`. The ratio is scale-free — both terms carry the same residual `(e-u)` and shrink together as training proceeds — so it stays ~`B^2` throughout training, not just at step 0.
 
-`B^2` is a property of the SD beta schedule (scaled_linear, 0.00085->0.012, 1000 steps) and is therefore identical on SD1.5 and SDXL at the same grid length. It scales with step size: at DDIM-10 the same measurement gives 8.0%, since B grows as the grid coarsens.
+`B^2` is a property of the SD beta schedule (scaled_linear, 0.00085->0.012, 1000 steps) and is therefore the same on SD1.5 and SDXL at equal grid length.
 
-Run: `HF_HOME=... .venv/bin/python scripts/measure_cycle_loss_weight.py --device cuda:0 --num_ddim_steps 50`
+Reproduce:
+
+```bash
+HF_HOME=... .venv/bin/python scripts/measure_cycle_loss_weight.py --device cuda:0 --num_ddim_steps 50
+.venv/bin/python scripts/plot_cycle_loss_weight.py
+```
