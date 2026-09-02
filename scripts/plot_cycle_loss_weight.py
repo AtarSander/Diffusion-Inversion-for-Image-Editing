@@ -37,22 +37,71 @@ def by_timestep(rows: list[dict], key: str) -> tuple[np.ndarray, np.ndarray, np.
     return t, np.array([v.mean() for v in vals]), np.array([v.std() for v in vals])
 
 
+def panel_ratio(ax, rows: list[dict], summary: dict, title: str, big: bool = False) -> None:
+    """Draw the headline panel: measured L_cycle/L_inv against the analytic B^2.
+
+    Args:
+        ax: Target axes.
+        rows: Per-transition measurements.
+        summary: The run's summary block.
+        title: Axes title.
+        big: Scale fonts and markers up for a standalone figure.
+    """
+    ms, lw, fs = (5.5, 2.0, 11.5) if big else (3.5, 1.6, 8.5)
+    t, m, sd = by_timestep(rows, "ratio")
+    tb, b2, _ = by_timestep(rows, "B2")
+    ax.fill_between(t, m - sd, m + sd, color=C_CYC, alpha=0.20, lw=0,
+                    label="spread over prompts" if big else None)
+    ax.plot(t, m, "o-", color=C_CYC, ms=ms, lw=lw,
+            label=r"measured $\mathcal{L}_{cyc}/\mathcal{L}_{inv}$")
+    ax.plot(tb, b2, "--", color="k", lw=lw - 0.2, label=r"$B^2$ (analytic prediction)")
+    ax.axhline(summary["mean_ratio"], color=C_REF, ls=":", lw=1.4,
+               label=f"mean = {100 * summary['mean_ratio']:.3f}%")
+    ax.set(yscale="log", xlabel="timestep $t_i$", ylabel=r"$\mathcal{L}_{cycle}/\mathcal{L}_{inv}$",
+           title=title)
+    ax.invert_xaxis()
+    ax.legend(fontsize=fs, loc="lower left")
+    ax.grid(alpha=0.3, which="both" if big else "major")
+
+
 def main(
     results_dir: str = "output/cycle_loss_weight",
     main_steps: int = 50,
     output_dir: str = "output/cycle_loss_weight/plots",
+    only_headline: bool = False,
 ) -> None:
-    """Draw the five-panel diagnostic figure.
+    """Draw the six-panel diagnostic figure, or panel (a) alone.
 
     Args:
         results_dir: Where the measurement JSONs live, relative to the repo root.
         main_steps: Grid length used for the per-timestep panels.
         output_dir: Destination for the PNG/SVG, relative to the repo root.
+        only_headline: Render just panel (a) as a standalone figure.
     """
     data = load(ROOT / results_dir)
     assert main_steps in data, f"no run at {main_steps} steps; have {sorted(data)}"
     d = data[main_steps]
     rows, s = d["rows"], d["summary"]
+
+    out = ROOT / output_dir
+    out.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    if only_headline:
+        fig, ax = plt.subplots(figsize=(8.2, 5.4))
+        panel_ratio(
+            ax, rows, s,
+            title=f"Effective weight of the cycle term at $\\lambda_{{cycle}}$=1\n"
+                  f"{d['model_key'].split('/')[-1]}, DDIM-{main_steps}, cfg=1  —  "
+                  f"mean {100 * s['mean_ratio']:.3f}% (1 part in {1 / s['mean_ratio']:.0f})",
+            big=True,
+        )
+        fig.tight_layout()
+        for ext in ("png", "svg"):
+            p = out / f"cycle_weight_headline_sd14_ddim{main_steps}_{stamp}.{ext}"
+            fig.savefig(p, dpi=170, bbox_inches="tight")
+            print(f"wrote {p}")
+        return
 
     fig, axes = plt.subplots(2, 3, figsize=(16.5, 8.6))
     fig.suptitle(
@@ -69,19 +118,7 @@ def main(
     )
 
     # (a) the headline: ratio vs timestep, with B^2 overlaid
-    ax = axes[0, 0]
-    t, m, sd = by_timestep(rows, "ratio")
-    tb, b2, _ = by_timestep(rows, "B2")
-    ax.fill_between(t, m - sd, m + sd, color=C_CYC, alpha=0.20, lw=0)
-    ax.plot(t, m, "o-", color=C_CYC, ms=3.5, lw=1.6, label=r"measured $\mathcal{L}_{cyc}/\mathcal{L}_{inv}$")
-    ax.plot(tb, b2, "--", color="k", lw=1.4, label=r"$B^2$ (analytic prediction)")
-    ax.axhline(s["mean_ratio"], color=C_REF, ls=":", lw=1.3,
-               label=f"mean = {100 * s['mean_ratio']:.3f}%")
-    ax.set(yscale="log", xlabel="timestep $t_i$", ylabel="ratio",
-           title="(a) Effective weight of the cycle term")
-    ax.invert_xaxis()
-    ax.legend(fontsize=8.5, loc="lower left")
-    ax.grid(alpha=0.3)
+    panel_ratio(axes[0, 0], rows, s, title="(a) Effective weight of the cycle term")
 
     # (b) absolute magnitudes
     ax = axes[0, 1]
@@ -155,9 +192,6 @@ def main(
     ax.grid(alpha=0.3, which="both")
 
     fig.tight_layout(rect=[0, 0, 1, 0.925])
-    out = ROOT / output_dir
-    out.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     for ext in ("png", "svg"):
         p = out / f"cycle_loss_weight_sd14_{stamp}.{ext}"
         fig.savefig(p, dpi=150, bbox_inches="tight")
