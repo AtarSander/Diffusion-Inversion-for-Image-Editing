@@ -48,20 +48,28 @@ def panel_ratio(ax, rows: list[dict], summary: dict, title: str, big: bool = Fal
         big: Scale fonts and markers up for a standalone figure.
     """
     ms, lw, fs = (5.5, 2.0, 11.5) if big else (3.5, 1.6, 8.5)
-    t, m, sd = by_timestep(rows, "ratio")
+    t, m, _ = by_timestep(rows, "ratio")
     tb, b2, _ = by_timestep(rows, "B2")
-    ax.fill_between(t, m - sd, m + sd, color=C_CYC, alpha=0.20, lw=0,
-                    label="spread over prompts" if big else None)
     ax.plot(t, m, "o-", color=C_CYC, ms=ms, lw=lw,
             label=r"measured $\mathcal{L}_{cyc}/\mathcal{L}_{inv}$")
     ax.plot(tb, b2, "--", color="k", lw=lw - 0.2, label=r"$B^2$ (analytic prediction)")
-    ax.axhline(summary["mean_ratio"], color=C_REF, ls=":", lw=1.4,
-               label=f"mean = {100 * summary['mean_ratio']:.3f}%")
     ax.set(yscale="log", xlabel="timestep $t_i$", ylabel=r"$\mathcal{L}_{cycle}/\mathcal{L}_{inv}$",
            title=title)
     ax.invert_xaxis()
     ax.legend(fontsize=fs, loc="lower left")
     ax.grid(alpha=0.3, which="both" if big else "major")
+    if big:
+        # x is inverted, so the schedule runs noise (left) -> clean image (right). Annotate
+        # below the axis; inside the axes the labels collide with the curve at both ends.
+        ax.annotate("", xy=(1.0, -0.155), xytext=(0.0, -0.155), xycoords="axes fraction",
+                    annotation_clip=False,
+                    arrowprops=dict(arrowstyle="-|>", lw=1.5, color="#666",
+                                    shrinkA=0, shrinkB=0))
+        ax.text(0.5, -0.20, "denoising", transform=ax.transAxes, ha="center", va="top",
+                fontsize=fs - 1.0, color="#666", clip_on=False)
+        for x, ha, lab in ((0.0, "left", "pure noise"), (1.0, "right", "clean image")):
+            ax.text(x, -0.20, lab, transform=ax.transAxes, ha=ha, va="top",
+                    fontsize=fs, color="#222", fontweight="semibold", clip_on=False)
 
 
 def main(
