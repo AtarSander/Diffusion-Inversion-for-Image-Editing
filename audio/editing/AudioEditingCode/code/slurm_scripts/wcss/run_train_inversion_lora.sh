@@ -115,6 +115,32 @@ CONFIGS=(
   # perturbs both at deployment and the loss on the combination must backprop through each. Batch
   # 32 with two forwards OOMed a 24 GB A5000 at batch 8, and H100 headroom here is untested.
   "full|32|16|5e-4|cfg25_q4_full_r32_a16_lr5e-4|train_max_timestep=250 num_loss_bands=5 max_train_steps=6000 save_every_steps=1000 recon_every_steps=1000 recon_real_max_duration_s=60.0 recon_num_real=35 guidance_scale=2.5 data_root=\${oc.env:LORAINV_DATA_ROOT}/audioldm2_trajectories_cfg25_fp32 batch_size=16 gradient_accumulation_steps=2"
+  # 29-34: STABLE AUDIO ONLY. Run with
+  #   SCRIPT=src/inversion_lora/train_stable_audio.py RUN_PREFIX=saocos_
+  # The AudioLDM2 config has no `cycle` key, so pointing these at train.py aborts on the override.
+  #
+  # Every field matches the pure-inversion baseline saocos_r8_a4_lr5e-5 (attn, r8/a4, 5e-5), so
+  # the cycle term is the only difference, and these runs' step-4000 checkpoints line up with the
+  # baseline checkpoint the hparam sweeps already scored.
+  #
+  # 29-32: k=1 at four gradient-balance targets. lambda is set per step so the cycle term's
+  # gradient norm is target_ratio x the inversion term's. On this grid B^2 is constant at 5.21e-3
+  # (geometric sigmas => step-independent A, B), so the term contributes no schedule reweighting
+  # at all: its only content is the bootstrapped target plus the gradient path through the frozen
+  # teacher. 12000 steps rather than 20000 because the extra teacher forward and its backward put
+  # the step near 2x the baseline's, and 20000 would run past the 24 h limit.
+  "attn|8|4|5e-5|cyc_k1_g0.1_r8_a4_lr5e-5|cycle.enabled=true cycle.steps=1 cycle.target_ratio=0.1 max_train_steps=12000"
+  "attn|8|4|5e-5|cyc_k1_g0.5_r8_a4_lr5e-5|cycle.enabled=true cycle.steps=1 cycle.target_ratio=0.5 max_train_steps=12000"
+  "attn|8|4|5e-5|cyc_k1_g1.0_r8_a4_lr5e-5|cycle.enabled=true cycle.steps=1 cycle.target_ratio=1.0 max_train_steps=12000"
+  "attn|8|4|5e-5|cyc_k1_g2.0_r8_a4_lr5e-5|cycle.enabled=true cycle.steps=1 cycle.target_ratio=2.0 max_train_steps=12000"
+  # 33-34: the multi-step cycle, which is the only variant that penalises how per-step residuals
+  # COMPOUND -- a one-step round trip cannot see that. k inversion steps (only the last carrying
+  # gradient) then k generation steps with the frozen teacher, so k + 1 graphs are alive at once;
+  # gradient checkpointing cannot buy that room back (the recompute would run with the adapter on),
+  # so batch 4 x accum 8 holds the effective batch at 32. 6000 steps: at ~3-4x the baseline step
+  # this is the most that fits the walltime, and checkpoints land every 2000 either way.
+  "attn|8|4|5e-5|cyc_k2_g1.0_r8_a4_lr5e-5|cycle.enabled=true cycle.steps=2 cycle.target_ratio=1.0 max_train_steps=6000 batch_size=4 gradient_accumulation_steps=8"
+  "attn|8|4|5e-5|cyc_k3_g1.0_r8_a4_lr5e-5|cycle.enabled=true cycle.steps=3 cycle.target_ratio=1.0 max_train_steps=6000 batch_size=4 gradient_accumulation_steps=8"
 )
 
 # Fail before the 12 GB model load rather than after it: wandb only reports a bad credential
