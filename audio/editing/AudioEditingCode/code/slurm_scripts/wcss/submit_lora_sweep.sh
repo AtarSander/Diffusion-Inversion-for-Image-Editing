@@ -34,7 +34,14 @@ echo "partition : $HPC_PWR_PARTITION"
 echo "grid file : $SWEEP_CONFIGS"
 echo "entrypoint: ${SCRIPT:-edit_audioldm_medleydb.py}"
 echo "split     : $LORA_SPLIT"
-echo "grid      : ${#LORA_CHECKPOINTS[@]} checkpoints x ${#LORA_TSTART[@]} tstart x ${#LORA_CFG_TAR[@]} cfg_tar = ${#CONFIGS[@]} runs"
+# A budget-matched grid has no LORA_TSTART: a fixed NFE pins tstart per method and varies the
+# grid length instead, so it enumerates depth points directly. set -u makes the missing array
+# fatal rather than cosmetic, which is why this is guarded rather than just tolerated.
+if [ -n "${LORA_TSTART+x}" ]; then
+  echo "grid      : ${#LORA_CHECKPOINTS[@]} checkpoints x ${#LORA_TSTART[@]} tstart x ${#LORA_CFG_TAR[@]} cfg_tar = ${#CONFIGS[@]} runs"
+else
+  echo "grid      : ${#CONFIGS[@]} runs from ${#LORA_CHECKPOINTS[@]} checkpoint(s), depth points at a fixed NFE budget"
+fi
 
 # Check every checkpoint here, on the login node, rather than failing 48 tasks one by one.
 missing=0
@@ -54,9 +61,12 @@ done
 [ "$missing" -eq 0 ] || exit 1
 
 for i in "${!CONFIGS[@]}"; do
-  IFS='|' read -r ckpt tstart cfg <<< "${CONFIGS[$i]}"
-  printf '  %2d  tstart=%-3s cfg_tar=%-4s  %s\n' "$i" "$tstart" "$cfg" \
-    "$(lora_sweep_run_name "$ckpt" "$tstart" "$cfg")"
+  # Rows carry an optional 4th field, steps. Legacy grids emit three and fall back to
+  # LORA_STEPS; their lora_sweep_run_name ignores the extra positional, so names are unchanged.
+  IFS='|' read -r ckpt tstart cfg steps <<< "${CONFIGS[$i]}"
+  steps="${steps:-${LORA_STEPS:-100}}"
+  printf '  %2d  tstart=%-3s cfg_tar=%-4s steps=%-4s %s\n' "$i" "$tstart" "$cfg" "$steps" \
+    "$(lora_sweep_run_name "$ckpt" "$tstart" "$cfg" "$steps")"
 done
 
 REF_DIR="$(python3 -c 'import sys; sys.path.insert(0, "editing/AudioEditingCode/code"); import env; print(env.medley_split_paths("'"$LORA_SPLIT"'")[1])' 2>/dev/null || true)"
