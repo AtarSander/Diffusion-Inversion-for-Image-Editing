@@ -287,6 +287,23 @@ class AudioLDM2InversionTrainer:
         """No-CFG loss: MSE between the student's epsilon and the cached teacher epsilon."""
         return self.per_example_loss(batch).mean()
 
+    def training_loss(
+        self, batch: dict[str, Any]
+    ) -> tuple[torch.Tensor, torch.Tensor, dict[str, float]]:
+        """The scalar to backpropagate, the per-example inversion losses, and extras to log.
+
+        Split out so a subclass can add terms -- the per-example values are still the inversion
+        loss alone, so the band breakdown keeps meaning the same thing across variants.
+
+        Args:
+            batch: One training batch.
+
+        Returns:
+            `(loss, per_example_inversion_loss, extra_scalars_to_log)`.
+        """
+        per_example = self.per_example_loss(batch)
+        return per_example.mean(), per_example, {}
+
     def target_noise(self, batch: dict[str, Any]) -> torch.Tensor:
         """The cached teacher epsilon that advanced the trajectory, combined when w != 1."""
         target_eps = batch["target_eps"].to(device=self.device, dtype=self.unet.dtype)
@@ -404,6 +421,15 @@ class AudioLDM2InversionTrainer:
                 toggled += 1
         if not toggled:
             raise AttributeError("No injected LoRA layers exposed enable_adapters().")
+
+    @contextmanager
+    def lora_disabled(self):
+        """Run a block with every adapter off, restoring them afterwards."""
+        self.set_lora_enabled(False)
+        try:
+            yield
+        finally:
+            self.set_lora_enabled(True)
 
     @torch.no_grad()
     def validate(self, val_loader: DataLoader, max_batches: int | None) -> dict[str, float]:
@@ -632,6 +658,7 @@ class AudioLDM2InversionTrainer:
         accum = max(1, int(self.cfg.gradient_accumulation_steps))
         micro_step = 0
         recent: list[float] = []
+        recent_extra: dict[str, list[float]] = {}
         self.unet.train()
         self.optimizer.zero_grad(set_to_none=True)
         progress = tqdm(total=max_train_steps, initial=self.global_step, desc="train steps")
@@ -652,8 +679,7 @@ class AudioLDM2InversionTrainer:
                     self.log_first_batch(batch)
                     logged_first = True
 
-                per_example = self.per_example_loss(batch)
-                loss = per_example.mean()
+                loss, per_example, extra = self.training_loss(batch)
                 if not torch.isfinite(loss):
                     raise FloatingPointError(
                         f"Non-finite training loss at step {self.global_step}: {float(loss)}"
@@ -661,6 +687,8 @@ class AudioLDM2InversionTrainer:
                 (loss / accum).backward()
                 self.record_bands(per_example, batch["timestep"])
                 recent.append(float(loss))
+                for key, value in extra.items():
+                    recent_extra.setdefault(key, []).append(value)
                 micro_step += 1
                 if micro_step % accum:
                     continue
@@ -681,6 +709,8 @@ class AudioLDM2InversionTrainer:
                 if self._due(self.cfg.log_every_steps):
                     train_loss = sum(recent) / len(recent)
                     bands = self.pop_band_losses()
+                    extras = {k: sum(v) / len(v) for k, v in recent_extra.items() if v}
+                    recent_extra = {}
                     # Also to the logger: with the tracker disabled the curve would otherwise be
                     # invisible, which makes a smoke run unreadable.
                     logger.info(
@@ -688,9 +718,14 @@ class AudioLDM2InversionTrainer:
                         self.global_step,
                         train_loss,
                         self.baseline_reference,
-                        " ".join(f"{k.split('/')[-1]}={v:.6f}" for k, v in bands.items()),
+                        " ".join(
+                            f"{k.split('/')[-1]}={v:.6f}"
+                            for k, v in {**bands, **extras}.items()
+                        ),
                     )
-                    self.tracker.log({"train/loss": train_loss, **bands}, step=self.global_step)
+                    self.tracker.log(
+                        {"train/loss": train_loss, **bands, **extras}, step=self.global_step
+                    )
                     recent = []
                 if val_loader is not None and self._due(self.cfg.eval_every_steps):
                     metrics = self.validate(val_loader, self.cfg.max_val_batches)

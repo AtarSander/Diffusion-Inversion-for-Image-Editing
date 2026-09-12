@@ -22,6 +22,7 @@ from src.inversion_lora.dataset import (  # noqa: E402
     collate_stable_audio_batch,
     split_sample_ids,
     transitions_below_timestep,
+    transitions_with_room_below,
 )
 from src.inversion_lora.stable_audio import ExactDPMSolver, load_teacher  # noqa: E402
 from src.inversion_lora.train import (  # noqa: E402
@@ -66,6 +67,25 @@ class StableAudioInversionTrainer(AudioLDM2InversionTrainer):
             len(self.solver.timesteps), self.solver.timesteps[0], self.solver.timesteps[-1],
             float(self.solver.sigmas[0]), float(self.solver.sigmas[-2]),
         )
+        self.cycle_enabled = bool(cfg.get("cycle", {}).get("enabled", False))
+        self.cycle_steps = int(cfg.get("cycle", {}).get("steps", 1))
+        if self.cycle_enabled:
+            # The balance is read off the deepest adapter tensor, so the two probe backwards stop
+            # near the end of the network instead of traversing all 24 blocks.
+            anchors = [n for n in self.lora_named_parameters if "lora_B" in n]
+            assert anchors, f"no lora_B tensor among {list(self.lora_named_parameters)[:4]}"
+            self.balance_anchor = self.lora_named_parameters[anchors[-1]]
+            a, b = self.solver.coefficients(0)
+            # B^2 is the ratio of loss *values*. The gradient ratio the balancer equalises also
+            # carries the factor (I + (B/A) J) from differentiating the teacher at z_hat, so the
+            # reported lambda sits below 1/B^2 by however much that Jacobian amplifies.
+            logger.info(
+                "cycle loss ON: steps={} target_ratio={} anchor={} | grid A={:.5f} B={:.5f} "
+                "B/A={:.4f}, so the value ratio is ~B^2={:.3e} (1/B^2={:.0f}) while lambda "
+                "balances gradients and will read lower",
+                self.cycle_steps, float(cfg.cycle.target_ratio), anchors[-1],
+                float(a), float(b), float(b) / float(a), float(b) ** 2, 1.0 / float(b) ** 2,
+            )
 
     def log_first_batch(self, batch: dict[str, Any]) -> None:
         """Print the first training batch's shapes, Stable Audio's single conditioning included."""
@@ -97,6 +117,133 @@ class StableAudioInversionTrainer(AudioLDM2InversionTrainer):
             self.solver.model_input_batch(x_clean, sigmas), timestep, text_audio
         )
         return self.solver.data_prediction_batch(x_clean, raw, sigmas)
+
+    def data_prediction_at(
+        self, x: torch.Tensor, index: torch.Tensor, text_audio: torch.Tensor
+    ) -> torch.Tensor:
+        """The network's data prediction at latent `x`, read at grid step `index`.
+
+        Args:
+            x: Latents `[B, C, L]`.
+            index: Grid step indices `[B]`, on the CPU.
+            text_audio: Cross-attention states `[B, S, D]`.
+
+        Returns:
+            Data predictions `[B, C, L]`.
+        """
+        assert x.shape[0] == index.shape[0] == text_audio.shape[0], (x.shape, index.shape)
+        sigmas = self.solver.sigmas[index].to(device=x.device, dtype=x.dtype).reshape(-1, 1, 1)
+        timestep = torch.tensor(
+            [self.solver.timesteps[int(i)] for i in index], device=x.device, dtype=torch.float32
+        )
+        raw = self.ldm.forward(self.solver.model_input_batch(x, sigmas), timestep, text_audio)
+        return self.solver.data_prediction_batch(x, raw, sigmas)
+
+    def cycle_per_example(self, batch: dict[str, Any], student: torch.Tensor) -> torch.Tensor:
+        """Round-trip error of a `cycle_steps`-step inversion followed by the same many gen steps.
+
+        One step reduces to `B^2 ||D_phi(x_{k+1}) - D_theta(z_hat_k)||^2`: the inverse cancels the
+        A of the generation step, so only the prediction difference survives, scaled by B. For
+        `k > 1` the chain is walked with the adapter and walked back with the frozen teacher, which
+        penalises how per-step residuals *compound* -- the thing a single step cannot see.
+
+        Only the final inversion step carries gradient; the earlier ones run under `no_grad`, which
+        keeps k adapter graphs from being alive at once.
+
+        Args:
+            batch: One training batch.
+            student: The adapter's data prediction at the stored (cleaner) latent, with graph.
+
+        Returns:
+            Per-example squared round-trip error `[B]`.
+        """
+        x_clean = batch["x_clean"].to(device=self.device, dtype=self.unet.dtype)
+        timestep = batch["timestep"].to(device=self.device, dtype=torch.float32)
+        text_audio = batch["text_audio"].to(device=self.device, dtype=self.unet.dtype)
+        k = int(self.cycle_steps)
+
+        # The stored timestep is the cleaner latent's own, at grid index `top`; the reverse step
+        # that produced it runs from `top - 1`, so that is the first step to undo.
+        top = self.solver.index_for(timestep)
+        assert int(top.min()) >= k, (
+            f"a {k}-step cycle needs {k} steps below the stored latent, but one example sits at "
+            f"grid index {int(top.min())}; restrict the dataset or lower cycle_steps"
+        )
+
+        # Walk up (noisier). The first step uses the prediction we already have; later ones need
+        # fresh adapter calls, which run detached.
+        x, indices = x_clean, []
+        for step in range(k):
+            index = top - 1 - step
+            indices.append(index)
+            if step == 0:
+                prediction = student
+            else:
+                with torch.no_grad():
+                    prediction = self.data_prediction_at(x, index + 1, text_audio)
+            a, b = (c.to(device=x.device, dtype=x.dtype) for c in
+                    self.solver.coefficients_batch(index))
+            x = (x - b * prediction) / a
+
+        # Walk back down with the frozen teacher. Gradient flows through x the whole way.
+        # This cannot be combined with gradient checkpointing: the recompute happens during the
+        # backward, after this context has exited, so the blocks would be re-run with the adapter
+        # ON and the saved activations would not match. Memory has to come from the batch size.
+        with self.lora_disabled():
+            for index in reversed(indices):
+                prediction = self.data_prediction_at(x, index, text_audio)
+                a, b = (c.to(device=x.device, dtype=x.dtype) for c in
+                        self.solver.coefficients_batch(index))
+                x = a * x + b * prediction
+
+        return ((x.float() - x_clean.float()) ** 2).flatten(1).mean(dim=1)
+
+    def adaptive_weight(self, inversion: torch.Tensor, cycle: torch.Tensor) -> torch.Tensor:
+        """Gradient-norm balance between the two terms, measured at the deepest adapter tensor.
+
+        The VQGAN adaptive weight: scale the second loss so its gradient norm matches the first's,
+        times a target ratio. Detached, so it is a weight and not something to differentiate
+        through. Computed on one late LoRA tensor rather than the whole adapter, which keeps the
+        two extra backward passes short.
+
+        Args:
+            inversion: The inversion loss scalar.
+            cycle: The cycle loss scalar.
+
+        Returns:
+            A detached scalar weight.
+        """
+        g_inv = torch.autograd.grad(inversion, self.balance_anchor, retain_graph=True)[0]
+        g_cyc = torch.autograd.grad(cycle, self.balance_anchor, retain_graph=True)[0]
+        weight = g_inv.norm() / (g_cyc.norm() + float(self.cfg.cycle.eps))
+        return weight.clamp(max=float(self.cfg.cycle.lambda_max)).detach() * float(
+            self.cfg.cycle.target_ratio
+        )
+
+    def training_loss(
+        self, batch: dict[str, Any]
+    ) -> tuple[torch.Tensor, torch.Tensor, dict[str, float]]:
+        """Inversion loss, plus the adaptively weighted cycle loss when it is enabled."""
+        student = self.predict_noise(batch)
+        target = self.target_noise(batch)
+        assert student.shape == target.shape, (student.shape, target.shape)
+        per_example = ((student.float() - target.float()) ** 2).flatten(1).mean(dim=1)
+        inversion = per_example.mean()
+        if not self.cycle_enabled:
+            return inversion, per_example, {}
+
+        cycle = self.cycle_per_example(batch, student).mean()
+        weight = self.adaptive_weight(inversion, cycle)
+        return (
+            inversion + weight * cycle,
+            per_example,
+            {
+                "train/loss_inv": float(inversion),
+                "train/loss_cycle": float(cycle),
+                "train/lambda_cycle": float(weight),
+                "train/cycle_value_share": float(weight * cycle) / max(float(inversion), 1e-12),
+            },
+        )
 
 
 def check_dataset_convention(data_root: str) -> None:
@@ -152,6 +299,22 @@ def build_loaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader | None, set[i
             len(train_dataset),
         )
         train_dataset = Subset(train_dataset, keep)
+
+    cycle_steps = int(cfg.get("cycle", {}).get("steps", 1))
+    if cfg.get("cycle", {}).get("enabled", False) and cycle_steps > 1:
+        # Validation is deliberately left unfiltered: it scores the inversion loss alone, so
+        # keeping the same transitions across every arm makes val/loss comparable.
+        base = train_dataset.dataset if isinstance(train_dataset, Subset) else train_dataset
+        room = set(transitions_with_room_below(base, cycle_steps))
+        if isinstance(train_dataset, Subset):
+            keep = [i for i in train_dataset.indices if i in room]
+            train_dataset = Subset(base, keep)
+        else:
+            train_dataset = Subset(base, sorted(room))
+        logger.info(
+            "train: a {}-step cycle needs {} grid points below each latent: {:,} transitions kept",
+            cycle_steps, cycle_steps, len(train_dataset),
+        )
 
     val_loader = None
     if val_ids:

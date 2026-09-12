@@ -174,6 +174,32 @@ def transitions_below_timestep(
     return keep
 
 
+def transitions_with_room_below(
+    dataset: AudioLDM2TrajectoryDataset, steps: int
+) -> list[int]:
+    """Flat indices of transitions that have at least `steps` grid points below them.
+
+    A k-step cycle inverts k times from the stored latent, so the transitions nearest the noisy
+    end of each trajectory cannot supply the chain and are dropped. Costs one pass over the index.
+
+    Args:
+        dataset: An indexed trajectory dataset.
+        steps: The cycle length k.
+
+    Returns:
+        Indices into `dataset`, ascending.
+    """
+    keep: list[int] = []
+    start = 0
+    for sample in dataset.samples:
+        # The stored latent of transition i sits at grid index i + 1, so i + 1 >= k is the room.
+        keep.extend(start + i for i in range(sample["num_transitions"]) if i + 1 >= steps)
+        start += sample["num_transitions"]
+    if not keep:
+        raise ValueError(f"No transitions have {steps} grid points below them")
+    return keep
+
+
 def split_sample_ids(
     root_dir: str | Path, val_fraction: float, seed: int = 0
 ) -> tuple[set[int], set[int]]:

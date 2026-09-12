@@ -360,6 +360,26 @@ class ExactDPMSolver:
         )
         return alpha_t * x - sigma_t * raw
 
+    def index_for(self, timesteps: torch.Tensor) -> torch.Tensor:
+        """Map a batch of grid timesteps back to their step indices.
+
+        Args:
+            timesteps: Timesteps `[B]`, each of which must be on this grid.
+
+        Returns:
+            Indices `[B]` on the CPU.
+        """
+        grid = torch.tensor(self.timesteps, dtype=torch.float64)
+        query = timesteps.double().cpu().reshape(-1)
+        # Nearest grid point rather than searchsorted: the cached timesteps are float32, so a
+        # widened query need not be bit-identical to the float64 grid value, and an ordering
+        # search then lands one step off. The assert still rejects a genuinely foreign grid.
+        index = (query.reshape(-1, 1) - grid.reshape(1, -1)).abs().argmin(dim=1)
+        assert torch.allclose(grid[index], query, atol=1e-6), (
+            "timesteps are not on this solver's grid; the dataset and the solver disagree"
+        )
+        return index
+
     def sigma_for(self, timesteps: torch.Tensor) -> torch.Tensor:
         """Map a batch of grid timesteps back to their sigmas, shaped for broadcasting.
 
@@ -369,14 +389,22 @@ class ExactDPMSolver:
         Returns:
             Sigmas `[B, 1, 1]`.
         """
-        grid = torch.tensor(self.timesteps, dtype=torch.float64)
-        index = torch.searchsorted(grid.flip(0), timesteps.double().cpu().flip(0))
-        index = (len(grid) - 1 - index.flip(0)).clamp(0, len(grid) - 1)
-        chosen = grid[index]
-        assert torch.allclose(chosen, timesteps.double().cpu(), atol=1e-6), (
-            "timesteps are not on this solver's grid; the dataset and the solver disagree"
-        )
+        index = self.index_for(timesteps)
         return self.sigmas[index].to(timesteps.device).reshape(-1, 1, 1)
+
+    def coefficients_batch(self, indices: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """`coefficients` for a batch of step indices, shaped `[B, 1, 1]` for broadcasting.
+
+        Args:
+            indices: Step indices `[B]`, each addressing the reverse step `index -> index + 1`.
+
+        Returns:
+            `(A, B)`, each `[B, 1, 1]` on the CPU.
+        """
+        pairs = [self.coefficients(int(i)) for i in indices]
+        a = torch.stack([p[0].reshape(()) for p in pairs]).reshape(-1, 1, 1)
+        b = torch.stack([p[1].reshape(()) for p in pairs]).reshape(-1, 1, 1)
+        return a, b
 
     def model_input_batch(self, x: torch.Tensor, sigmas: torch.Tensor) -> torch.Tensor:
         """`model_input` for a batch with one sigma per element."""

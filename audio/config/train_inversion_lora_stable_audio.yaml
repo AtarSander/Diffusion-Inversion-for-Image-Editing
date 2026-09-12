@@ -70,6 +70,27 @@ lora:
     - to_v
     - to_out.0
 
+# One-step (k=1) or multi-step (k>1) round-trip penalty on top of the inversion loss. On this
+# grid the sigmas are geometric, so A and B are step-independent (A + B = 1) and B^2 = 5.21e-3:
+# at k=1 the term is a *constant* 0.52% rescaling of the inversion loss, and its only distinct
+# content is the bootstrapped target plus the gradient path through the frozen teacher.
+# See output/sao_cycle_weight/. k>1 is the version that penalises compounding error, which no
+# single-step term can see.
+# The cycle term keeps k + 1 forward graphs alive at once -- one adapter pass plus one
+# frozen-teacher pass per generation step -- so k >= 2 needs a smaller batch_size (4) and more
+# accumulation to hold the effective batch at 32. Gradient checkpointing cannot buy that room
+# back; see the note in cycle_per_example.
+cycle:
+  enabled: false
+  steps: 1 # k: how many inversion steps to chain before generating back
+  # Gradient-norm balancing (the VQGAN adaptive weight): lambda is set so the cycle term's
+  # gradient norm is `target_ratio` times the inversion term's, measured at the deepest LoRA
+  # tensor. With B^2 constant at 5.21e-3, a working balancer should report lambda near
+  # 192 * target_ratio.
+  target_ratio: 1.0
+  lambda_max: 1.0e4
+  eps: 1.0e-4
+
 learning_rate: 5e-5
 weight_decay: 0.0
 
