@@ -8,6 +8,73 @@ Most recent first. Keep this file current — it is the handover doc between ses
 
 ---
 
+## 2026-09-12 — RUNNING: cycle loss (4 adaptive arms + k=2,3) and the matched-NFE comparison
+
+**Hypothesis.** The cycle loss `||z_{i+1} - F_gen(F_inv(z_{i+1}))||^2` is claimed to add
+something beyond the inversion loss. Algebraically it does not look like it: both solver steps
+are affine, the inverse cancels the generation step's `A`, and the residual collapses to
+`B * (D_phi(x_{i+1}) - D_theta(z_hat))`. So at k=1 it is the same two predictions, reweighted.
+
+**Measured first, before spending cluster time.**
+
+- SD1.4 DDIM-50, cfg=1, 150 transitions (`output/cycle_loss_weight/`): the cycle term is
+  **0.477% of L_inv** at lambda=1 (1 part in 210). The measured ratio tracks the analytic `B^2`
+  across the whole schedule because `||e-v|| / ||e-u|| = 0.985` -- the two terms carry the same
+  residual, so the prefactor is the entire story. Weight is a step-size effect: 8.19% at
+  DDIM-10, 2.68% at 20, 0.123% at 100.
+- Contraction factor `|B/A| * ||J||` = 0.096 << 1, so `L_cycle = 0` has a *unique* zero and it
+  is the correct inversion. An earlier degeneracy worry of mine was wrong and is retracted.
+- Stable Audio cosine grid (`output/sao_cycle_weight/`): `B^2` is **exactly constant** at
+  5.21e-3. The scheduler spaces sigmas geometrically, so every step shares one log-SNR
+  increment and `A + B = 1` exactly. On SAO the term carries *no* schedule reweighting at all.
+
+**What that leaves.** The term's only distinct content is the bootstrapped target plus the
+gradient path through the frozen teacher. Running jobs measure whether that content is worth
+the cost.
+
+**Running (submitted 2026-09-12).**
+
+- Training array 5880219, tasks 29-34. 29-32: k=1 at gradient-balance targets 0.1/0.5/1.0/2.0.
+  33-34: k=2 and k=3. All match the baseline `saocos_r8_a4_lr5e-5` (attn, r8/a4, 5e-5) in every
+  other field.
+- Matched-NFE edits 5880249/5880254/5880264 + dependent evals, BUDGET=300, 16 runs.
+
+**First readings.**
+
+- `lambda_cycle` = 0.0051 at target_ratio 1.0 (0.00051 at 0.1, so the balancer scales
+  correctly). That means `||grad L_cycle||` is ~**200x** `||grad L_inv||` before weighting: the
+  Jacobian path through the teacher dominates, it is not a small correction. Note this makes the
+  naive `lambda ~ 1/B^2 = 192` estimate wrong by ~40,000x -- `B^2` is the *value* ratio, and the
+  gradient ratio also carries `(I + (B/A) J)`.
+- Step rate is 2.4x my estimate: 10.03 s/step (k=1), 18.77 (k=2), 26.82 (k=3). All six will hit
+  the 24 h walltime. Checkpoints land every 2000 steps, so 29-32 reach ~8600 (ckpt 2000-8000),
+  33 reaches ~4600 (2000, 4000), 34 reaches ~3200 (**2000 only**).
+
+**Next steps.**
+
+1. Compare every arm at **step 2000**, the point all seven reach (baseline has step_2000 and
+   step_4000, both with EMA). Add 4000/6000/8000 where available.
+2. Recover k=3 at step 4000 by resuming: task 34 writes
+   `training_state_checkpoint_step_2000.pt`, and 2000 more steps is ~15 h, inside one walltime.
+3. Matched-NFE figure: the plotter parses the `nfe300_t..._s...` names now
+   (`stable_audio_nfe` in `MODELS`, covered by `tests/test_lora_curve_run_names.py`), but the
+   x-axis needs choosing -- `steps` is the free variable at a fixed budget, not tstart.
+
+**Traps found on the way** (all fixed, see 845ec32 / 581e1ad):
+
+- `index_for` matched timesteps with `searchsorted`, which needs the query bit-identical to the
+  grid after widening. Cached timesteps are float32, the grid float64 -- one rounding from
+  silently picking the wrong sigma. Now nearest-neighbour.
+- **Gradient checkpointing cannot be used with the cycle loss.** The recompute runs during the
+  backward, after the adapter-disabled context has exited, so teacher blocks would be re-run
+  with the adapter ON. Fails loudly on a shape mismatch. The option was removed; k >= 2 buys
+  memory with batch 4 x accum 8 instead.
+- `submit_lora_sweep.sh`'s preview still assumed the old 3-field grid rows, so under `set -u`
+  every matched-NFE edit submission died before `sbatch` and the dependent eval then failed with
+  "Job dependency problem" on an empty job id.
+
+---
+
 ## 2026-08-28 — RESULT: with the objective fixed, the Stable Audio adapter does move editing
 
 First run of the corrected pipeline end to end. Dataset regenerated on Stable Audio's native cosine
