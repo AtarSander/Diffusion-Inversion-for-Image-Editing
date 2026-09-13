@@ -44,6 +44,13 @@ else
 fi
 
 # Check every checkpoint here, on the login node, rather than failing 48 tasks one by one.
+# Unless the submission is chained: with --dependency the upstream job is still writing the
+# checkpoints, so absence now says nothing. Warn and let the job resolve them when it runs --
+# run_lora_sweep.sh passes the path straight to the edit script, which fails loudly per task.
+deferred=0
+for arg in "$@"; do
+  case "$arg" in --dependency=*) deferred=1 ;; esac
+done
 missing=0
 for ckpt in "${LORA_CHECKPOINTS[@]}"; do
   [ -n "$ckpt" ] || continue   # the paired no-LoRA arm
@@ -58,6 +65,11 @@ for ckpt in "${LORA_CHECKPOINTS[@]}"; do
     echo "  ok  $ckpt"
   fi
 done
+if [ "$missing" -ne 0 ] && [ "$deferred" -eq 1 ]; then
+  echo "  ^ not on disk yet, but this submission is chained -- the upstream job should write" >&2
+  echo "    them before it runs. Submitting anyway; a still-missing one fails that task only." >&2
+  missing=0
+fi
 [ "$missing" -eq 0 ] || exit 1
 
 for i in "${!CONFIGS[@]}"; do
