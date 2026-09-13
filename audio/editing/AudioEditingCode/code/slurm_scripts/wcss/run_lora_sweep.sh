@@ -94,10 +94,13 @@ fi
 # Pack the per-example wavs into one tar: a finished run then costs a handful of inodes instead
 # of 115, and the eval unpacks it to node-local scratch. Only after a successful edit, and
 # archive_run verifies every file is in the archive before it removes anything.
+# LORA_EDITS_SUBDIR, not a hardcoded audioldm2_ddim: a Stable Audio run writes under
+# medleymd/stable_audio, and archiving the wrong directory failed the whole task AFTER a
+# successful 12-minute edit, which then killed every afterok eval chained to it.
 if [ "${ARCHIVE_RUNS:-1}" = "1" ]; then
   cd "${SLURM_SUBMIT_DIR:-$PWD}"
   PYTHONPATH="$PWD:${PYTHONPATH:-}" python -m editing.archive_run pack \
-    --run_dir "$(python -c 'import sys; sys.path.insert(0, "editing/AudioEditingCode/code"); import env, pathlib; print(pathlib.Path(env.PATH_EDIT_OUTPUTS) / "medleymd" / sys.argv[1] / sys.argv[2])' "audioldm2_ddim" "$RUN_NAME")" \
+    --run_dir "$(python -c 'import sys; sys.path.insert(0, "editing/AudioEditingCode/code"); import env, pathlib; print(pathlib.Path(env.PATH_EDIT_OUTPUTS) / "medleymd" / sys.argv[1] / sys.argv[2])' "${LORA_EDITS_SUBDIR:-audioldm2_ddim}" "$RUN_NAME")" \
     --remove True --overwrite True || echo "WARNING: archiving failed for $RUN_NAME; audios/ kept" >&2
 fi
 

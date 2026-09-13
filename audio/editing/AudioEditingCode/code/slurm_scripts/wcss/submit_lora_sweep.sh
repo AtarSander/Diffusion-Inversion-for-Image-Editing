@@ -88,6 +88,10 @@ fi
 
 EXPORTS=("SWEEP_CONFIGS=$SWEEP_CONFIGS")
 [ -n "${SCRIPT:-}" ] && EXPORTS+=("SCRIPT=$SCRIPT")
+# The job archives what it just wrote, so it needs the same subdir the eval is told about.
+[ -n "${LORA_EDITS_SUBDIR:-}" ] && EXPORTS+=("LORA_EDITS_SUBDIR=$LORA_EDITS_SUBDIR")
+[ -n "${PROBE:-}" ] && EXPORTS+=("PROBE=$PROBE")
+[ -n "${METHOD:-}" ] && EXPORTS+=("METHOD=$METHOD")
 if [ -n "${SKIP_EXISTING:-}" ]; then
   echo "skip_existing: on (resuming)"
   EXPORTS+=("SKIP_EXISTING=$SKIP_EXISTING")

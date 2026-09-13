@@ -35,7 +35,10 @@ LORA_STEPS=100
 LORA_CFG_SRC=1.0
 case "$PROBE" in
   recon)
-    LORA_TSTART=(100)
+    # 99, not 100: on odeinv the last reverse step ends at sigma = 0 and has no inverse, so the
+    # edit script asserts steps in (0, 99]. The old sao_recon_configs.sh uses 100 because it ran
+    # the ddim mode, where that step exists.
+    LORA_TSTART=(99)
     LORA_CFG_TAR=(1.0)
     LORA_SPLIT=full
     # 35 distinct tracks, not all 115 rows: a reconstruction depends only on (audio, source
