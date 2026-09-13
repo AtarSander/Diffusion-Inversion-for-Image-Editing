@@ -8,6 +8,64 @@ Most recent first. Keep this file current — it is the handover doc between ses
 
 ---
 
+## 2026-09-13 — RESULT: the k=1 cycle loss is inert. Three follow-ups queued.
+
+**Result (closes the cycle-loss question at k=1).** Four arms spanning 20x in gradient-balance
+target match the *no-cycle baseline* to 6-7 significant figures at every checkpoint (relative
+spread 3.4e-6 at step 4000). Not "the lambda knob does not matter" -- adding the term at all
+does not matter. See `output/cycle_arms/`.
+
+Cause, as the algebra predicted: `grad L_cycle = (I + (B/A)J^T)(I + (B/A)J)(e-u)` is parallel to
+`grad L_inv` up to a `(B/A)||J||` rotation, and `B/A = 0.0778` on this grid. A parallel gradient
+is a rescaling, and **Adam is per-parameter scale invariant**, so it divides the rescaling back
+out. That is why setting the gradient norms *equal* still changed nothing. An earlier reading of
+mine -- "the Jacobian path dominates, so the arms probe a real axis" -- was wrong: the path is
+large in norm and nearly useless in direction.
+
+k=2 and k=3 *do* move the solution (4e-2 relative deviation vs 1e-6). Higher val L_inv, which is
+expected since they optimise compounding and val L_inv does not measure it. Editing grid is
+`sao_cycle_arms_configs.sh`, all three arms at step 2000 (the deepest depth k=3 can reach).
+
+**Matched-NFE result** (`output/matched_nfe/`). Every method at ~300 denoiser calls, verified by
+the in-code counter at 299/300/300. DDPM-inversion dominates the front: CLAP 0.307 at LPAPS 4.17
+where ODEInv needs 4.47. The LoRA improves LPAPS at all four depths (-0.024 to -0.080) with CLAP
+flat-to-positive -- the hparam-sweep result reproduced on a compute-matched grid -- but that is
+~10% of the DDPM gap.
+
+**Why DDPM-inversion wins, established from its code** (`tests/test_ddpm_noise_space.py`).
+`get_zs_from_xts` solves the sampler's own update for the injected noise, so `z` is *defined* as
+the residual that lands the step on a prescribed `x_{t-1}`. Tested: the replay is exact even with
+the prediction set to zero or 1000x wrong. **It is not an inversion** -- reconstruction does not
+depend on the model being right, because a free variable per step absorbs the error. ODE
+inversion has no such variable: a wrong prediction lands in the latent as exactly `-(B/A)` times
+the prediction error.
+
+Consequence for how we report: at T=100 the DDPM code is `x_T` plus one `z` per step, **101x**
+the single latent we store. The matched-NFE table equalises compute and leaves stored information
+wildly unequal. Neither of its two mechanisms (exactness; the off-trajectory `x_t` that make `z`
+image-correlated) is adoptable without becoming DDPM-inversion, so this is a framing change, not
+a research direction.
+
+**Queued.**
+
+1. **Is inversion accuracy even the binding constraint?** (`sao_accuracy_configs.sh`, PROBE=recon
+   and PROBE=edit.) We close 90.7% of the shift gap and move LPAPS 0.08; that ratio is suspicious.
+   The same 12-checkpoint ladder scored for reconstruction and for editing. If editing flattens
+   while reconstruction keeps improving, more accuracy cannot help and 2 and 3 below are capped
+   before they start. **Run first -- it gates the others.** Note the old `sao_recon_configs.sh`
+   is unusable here: it omits LORA_MODE (so it ran the rejected ddim sampler) and names runs by
+   checkpoint basename alone, which would have overwritten the sao_r8 ladder step for step.
+2. **CFG-aware training** (training config 35, dataset
+   `generate_trajectories_stable_audio_cfg35.yaml`). The adapter is a w=1 object deployed at
+   cfg_tar 3.5-7.0 against a gap ~3x larger. Both branches are cached so w can be changed without
+   regenerating. Costs ~2x generation and 1.5x disk (118 GB) -- **check free space first**.
+3. **Second order with a matched adapter.** Staged: first deploy the *existing* adapter with
+   order-2 inversion (no training, cheap); only if that moves, train an adapter for the
+   second-order substitution. Order 2 is exactly invertible but was 1.29x worse under
+   substitution with an adapter trained for the first-order one.
+
+---
+
 ## 2026-09-12 — RUNNING: cycle loss (4 adaptive arms + k=2,3) and the matched-NFE comparison
 
 **Hypothesis.** The cycle loss `||z_{i+1} - F_gen(F_inv(z_{i+1}))||^2` is claimed to add

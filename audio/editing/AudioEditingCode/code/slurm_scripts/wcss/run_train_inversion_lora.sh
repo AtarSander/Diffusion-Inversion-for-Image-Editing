@@ -141,6 +141,14 @@ CONFIGS=(
   # this is the most that fits the walltime, and checkpoints land every 2000 either way.
   "attn|8|4|5e-5|cyc_k2_g1.0_r8_a4_lr5e-5|cycle.enabled=true cycle.steps=2 cycle.target_ratio=1.0 max_train_steps=6000 batch_size=4 gradient_accumulation_steps=8"
   "attn|8|4|5e-5|cyc_k3_g1.0_r8_a4_lr5e-5|cycle.enabled=true cycle.steps=3 cycle.target_ratio=1.0 max_train_steps=6000 batch_size=4 gradient_accumulation_steps=8"
+  # 35: EXPERIMENT 1, Stable Audio only. The adapter is trained at w=1 but deployed at cfg_tar
+  # 3.5-7.0, and the gap it must close grows ~3x from guidance 1.0 to 2.5 -- so it has been
+  # fitting a gap several times smaller than the one it meets. Everything matches the baseline
+  # saocos_r8_a4_lr5e-5 except the guidance, so the comparison is clean.
+  # Needs the cfg35 dataset: CONFIG_NAME=generate_trajectories_stable_audio_cfg35 first.
+  # Two forwards per step for the student plus the guided target, so ~2x the baseline step;
+  # batch 4 x accum 8 holds the effective batch at 32 while keeping one batch-4 graph per branch.
+  "attn|8|4|5e-5|cfg35_r8_a4_lr5e-5|guidance_scale=3.5 data_root=\${oc.env:LORAINV_DATA_ROOT}/stable_audio_cosine_ode_cfg35_fp32 max_train_steps=12000 batch_size=4 gradient_accumulation_steps=8"
 )
 
 # Fail before the 12 GB model load rather than after it: wandb only reports a bad credential

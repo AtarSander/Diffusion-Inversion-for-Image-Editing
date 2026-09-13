@@ -293,6 +293,9 @@ def collate_stable_audio_batch(items: list[dict[str, Any]]) -> dict[str, Any]:
         "sample_idx": [item["sample_idx"] for item in items],
         "step_idx": [item["step_idx"] for item in items],
     }
+    if "uncond_eps" in items[0]:
+        batch["uncond_eps"] = torch.stack([item["uncond_eps"] for item in items])
+        assert batch["uncond_eps"].shape == batch["target_eps"].shape
     assert batch["x_clean"].shape == batch["target_eps"].shape
     assert batch["timestep"].shape[0] == len(items)
     return batch

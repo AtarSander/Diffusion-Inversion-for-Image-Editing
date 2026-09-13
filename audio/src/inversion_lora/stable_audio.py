@@ -146,8 +146,9 @@ class StableAudioTeacher:
 
     @torch.no_grad()
     def ode_trajectory(
-        self, text_audio: torch.Tensor, seed: int, progress: bool = True
-    ) -> tuple[torch.Tensor, torch.Tensor, list[float]]:
+        self, text_audio: torch.Tensor, seed: int, progress: bool = True,
+        guidance_scale: float = 1.0, uncond_text_audio: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, list[float], torch.Tensor | None]:
         """Sample deterministically with the first-order ODE, keeping latents and data predictions.
 
         This is the trajectory the inversion LoRA is trained on. Unlike `reverse_trajectory` it does
@@ -160,10 +161,15 @@ class StableAudioTeacher:
             progress: Show a per-step progress bar.
 
         Returns:
-            `(trajectory, data, timesteps)`, where `data[i]` is the data prediction at
-            `(trajectory[i], timesteps[i])` and the reverse step from `trajectory[i]` to
-            `trajectory[i + 1]` consumed exactly that. All on the CPU.
+            `(trajectory, data, timesteps, uncond)`, where `data[i]` is the CONDITIONAL data
+            prediction at `(trajectory[i], timesteps[i])`. At `guidance_scale == 1.0` that is
+            also what the reverse step consumed and `uncond` is None; above 1.0 the step consumed
+            `uncond[i] + w * (data[i] - uncond[i])`, and both branches are returned so the loss
+            can be formed at any guidance. All on the CPU.
         """
+        assert guidance_scale == 1.0 or uncond_text_audio is not None, (
+            "guidance above 1.0 needs the unconditional conditioning; pass encode_prompt('')"
+        )
         solver = ExactDPMSolver(self.model.scheduler)
         shape = (1, self.pipe.transformer.config.in_channels, self.latent_length)
         x = torch.randn(
@@ -172,17 +178,32 @@ class StableAudioTeacher:
             device=self.device,
         ) * solver.sigmas[0]
 
-        trajectory, data = [x.cpu()], []
+        trajectory, data, uncond = [x.cpu()], [], []
         for index in tqdm(
             range(len(solver.timesteps)), desc="sampling", leave=False, disable=not progress
         ):
             t = torch.tensor([solver.timesteps[index]], device=self.device)
-            raw = self.forward(solver.model_input(x, index), t, text_audio)
-            prediction = solver.data_prediction(x, raw, index)
-            data.append(prediction.cpu())
+            model_input = solver.model_input(x, index)
+            conditional = solver.data_prediction(
+                x, self.forward(model_input, t, text_audio), index
+            )
+            data.append(conditional.cpu())
+            if guidance_scale == 1.0:
+                prediction = conditional
+            else:
+                # Both branches are cached rather than only their combination, so the guidance the
+                # loss is formed at can be changed without regenerating the dataset.
+                unconditional = solver.data_prediction(
+                    x, self.forward(model_input, t, uncond_text_audio), index
+                )
+                uncond.append(unconditional.cpu())
+                prediction = unconditional + guidance_scale * (conditional - unconditional)
             x = solver.forward(x, prediction, index)
             trajectory.append(x.cpu())
-        return torch.cat(trajectory), torch.cat(data), list(solver.timesteps)
+        return (
+            torch.cat(trajectory), torch.cat(data), list(solver.timesteps),
+            torch.cat(uncond) if uncond else None,
+        )
 
     @torch.no_grad()
     def reverse_trajectory(

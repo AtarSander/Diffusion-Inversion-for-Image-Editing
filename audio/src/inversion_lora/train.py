@@ -166,11 +166,7 @@ class AudioLDM2InversionTrainer:
         # step that produced the data was driven by the combination, so both branches must be
         # evaluated and combined -- two forwards per step instead of one.
         self.guidance_scale = float(cfg.get("guidance_scale", 1.0))
-        self.uncond = (
-            tuple(t.detach() for t in ldm.encode_text([""], negative=True))
-            if self.guidance_scale != 1.0
-            else None
-        )
+        self.uncond = self.build_uncond(ldm) if self.guidance_scale != 1.0 else None
         self.band_top = int(cfg.train_max_timestep or self.num_train_timesteps)
         self.band_labels = band_labels(
             self.band_top, int(cfg.num_loss_bands), self.num_train_timesteps
@@ -226,6 +222,17 @@ class AudioLDM2InversionTrainer:
                 float(cfg.ema_decay),
                 1.0 / (1.0 - float(cfg.ema_decay)),
             )
+
+    def build_uncond(self, ldm):
+        """The unconditional conditioning the guided loss needs, in this model's own format.
+
+        Args:
+            ldm: The loaded teacher.
+
+        Returns:
+            Whatever `predict_noise` needs for the unconditional branch.
+        """
+        return tuple(t.detach() for t in ldm.encode_text([""], negative=True))
 
     def _freeze_components(self) -> None:
         for name in FROZEN_COMPONENTS:

@@ -113,10 +113,28 @@ class StableAudioInversionTrainer(AudioLDM2InversionTrainer):
             text_audio.shape,
         )
         sigmas = self.solver.sigma_for(timestep).to(dtype=x_clean.dtype)
-        raw = self.ldm.forward(
-            self.solver.model_input_batch(x_clean, sigmas), timestep, text_audio
+        model_input = self.solver.model_input_batch(x_clean, sigmas)
+        conditional = self.solver.data_prediction_batch(
+            x_clean, self.ldm.forward(model_input, timestep, text_audio), sigmas
         )
-        return self.solver.data_prediction_batch(x_clean, raw, sigmas)
+        if self.uncond is None:
+            return conditional
+        # The step this is distilled from was driven by the guided combination, so the student
+        # must be guided too -- a merged adapter perturbs both branches at deployment.
+        unconditional = self.solver.data_prediction_batch(
+            x_clean,
+            self.ldm.forward(model_input, timestep, self.uncond.expand(x_clean.shape[0], -1, -1)),
+            sigmas,
+        )
+        return unconditional + self.guidance_scale * (conditional - unconditional)
+
+    def build_uncond(self, ldm) -> torch.Tensor:
+        """Stable Audio's unconditional cross-attention states `[1, S, D]`.
+
+        The base class calls `encode_text([""], negative=True)`, which is AudioLDM2's three-tensor
+        signature; Stable Audio carries a single tensor from `encode_prompt`.
+        """
+        return ldm.encode_prompt("").detach()
 
     def data_prediction_at(
         self, x: torch.Tensor, index: torch.Tensor, text_audio: torch.Tensor
@@ -246,7 +264,7 @@ class StableAudioInversionTrainer(AudioLDM2InversionTrainer):
         )
 
 
-def check_dataset_convention(data_root: str) -> None:
+def check_dataset_convention(data_root: str, guidance_scale: float | None = None) -> None:
     """Refuse a cached dataset that was not generated the way the loss assumes.
 
     A dataset from the beta grid, or with the shifted pairing, or holding raw network outputs, would
@@ -254,11 +272,18 @@ def check_dataset_convention(data_root: str) -> None:
 
     Args:
         data_root: Dataset directory holding `sample_*`.
+        guidance_scale: Guidance the loss will be formed at; None skips the check.
     """
     samples = sorted(Path(data_root).glob("sample_*/meta.json"))
     if not samples:
         raise FileNotFoundError(f"no sample_*/meta.json under {data_root}")
     meta = json.loads(samples[0].read_text())
+    if guidance_scale is not None and float(meta.get("guidance_scale", 1.0)) != guidance_scale:
+        raise ValueError(
+            f"{samples[0].parent} was generated at guidance "
+            f"{meta.get('guidance_scale', 1.0)}, but training asks for {guidance_scale}. The "
+            "target is the prediction the reverse step consumed, so these must agree."
+        )
     wrong = {k: meta.get(k) for k, v in REQUIRED_META.items() if meta.get(k) != v}
     if wrong:
         raise ValueError(
@@ -281,13 +306,15 @@ def build_loaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader | None, set[i
     Returns:
         `(train_loader, val_loader, val_ids)`; `val_loader` is None when nothing is held out.
     """
-    check_dataset_convention(cfg.data_root)
+    check_dataset_convention(cfg.data_root, float(cfg.get("guidance_scale", 1.0)))
     train_ids, val_ids = split_sample_ids(cfg.data_root, float(cfg.val_fraction), int(cfg.seed))
+    load_uncond = float(cfg.get("guidance_scale", 1.0)) != 1.0
     train_dataset = AudioLDM2TrajectoryDataset(
         cfg.data_root,
         sample_ids=train_ids,
         conditioning_keys=STABLE_AUDIO_CONDITIONING_KEYS,
         timestep_dtype=torch.float32,
+        load_uncond=load_uncond,
     )
     logger.info("train: {:,} transitions from {} trajectories", len(train_dataset), len(train_ids))
     if cfg.train_max_timestep:
@@ -323,6 +350,7 @@ def build_loaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader | None, set[i
             sample_ids=val_ids,
             conditioning_keys=STABLE_AUDIO_CONDITIONING_KEYS,
             timestep_dtype=torch.float32,
+            load_uncond=load_uncond,
         )
         logger.info("val:   {:,} transitions from {} trajectories", len(val_dataset), len(val_ids))
         capped = int(cfg.max_val_batches) * int(cfg.batch_size)

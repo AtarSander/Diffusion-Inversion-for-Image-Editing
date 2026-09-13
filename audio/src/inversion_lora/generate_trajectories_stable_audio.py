@@ -29,6 +29,7 @@ def save_sample(
     record: dict,
     meta: dict,
     store_dtype: torch.dtype,
+    uncond: torch.Tensor | None = None,
 ) -> None:
     """Write one trajectory in the layout `AudioLDM2TrajectoryDataset` reads.
 
@@ -41,6 +42,8 @@ def save_sample(
         record: Caption record, written to `prompt.json`.
         meta: Run metadata; the per-sample shapes and counts are added here.
         store_dtype: Dtype the tensors are cast to on disk.
+        uncond: Unconditional predictions `[N, C, L]` when the trajectory was sampled with
+            guidance; the dataset reads these as `uncond_eps` and the trainer recombines them.
     """
     (sample_dir / "latents").mkdir(parents=True, exist_ok=True)
     (sample_dir / "targets").mkdir(parents=True, exist_ok=True)
@@ -52,6 +55,9 @@ def save_sample(
 
     torch.save(trajectory, sample_dir / "latents/trajectory.pt")
     torch.save(outputs, sample_dir / "targets/target_eps.pt")
+    if uncond is not None:
+        assert uncond.shape == outputs.shape, (uncond.shape, outputs.shape)
+        torch.save(uncond.to(store_dtype), sample_dir / "targets/uncond_eps.pt")
     torch.save({"text_audio": text_audio.to(store_dtype).cpu()[0]}, sample_dir / "conditioning.pt")
     with (sample_dir / "timesteps.json").open("w", encoding="utf-8") as f:
         json.dump(timesteps, f)
@@ -150,7 +156,16 @@ def main(cfg: DictConfig) -> None:
     )
 
     store_dtype = getattr(torch, str(cfg.store_dtype))
+    guidance_scale = float(cfg.get("guidance_scale", 1.0))
+    uncond_audio = teacher.encode_prompt("") if guidance_scale != 1.0 else None
+    if guidance_scale != 1.0:
+        logger.info(
+            "guidance {}: the reverse step is driven by the combination, so both branches are "
+            "cached and the dataset costs 1.5x. Two forwards per step, so generation is ~2x.",
+            guidance_scale,
+        )
     meta_base = {
+        "guidance_scale": guidance_scale,
         "model_id": str(cfg.model_id),
         "schedule": str(cfg.schedule),
         "solver": "first_order_ode",
@@ -170,7 +185,9 @@ def main(cfg: DictConfig) -> None:
 
         seed = int(cfg.seed) + sample_idx
         text_audio = teacher.encode_prompt(record["prompt"])
-        trajectory, data, grid = teacher.ode_trajectory(text_audio, seed=seed)
+        trajectory, data, grid, uncond = teacher.ode_trajectory(
+            text_audio, seed=seed, guidance_scale=guidance_scale, uncond_text_audio=uncond_audio
+        )
 
         # The pair inversion actually needs on this grid: the student sees the cleaner latent at
         # *its own* timestep and must predict the teacher's data prediction at the noisier one,
@@ -179,6 +196,7 @@ def main(cfg: DictConfig) -> None:
         # The last transition ends at sigma = 0, where the reverse step discards the sample and has
         # no inverse, so it is dropped: trajectory[:-1] pairs with data[:-1].
         trajectory, outputs, timesteps = trajectory[:-1], data[:-1], grid[1:]
+        uncond = uncond[:-1] if uncond is not None else None
 
         if offset == 0:
             log_first_sample(teacher, record, trajectory, outputs, timesteps, text_audio)
@@ -192,6 +210,7 @@ def main(cfg: DictConfig) -> None:
             record,
             {**meta_base, "sample_idx": sample_idx, "seed": seed},
             store_dtype,
+            uncond=uncond,
         )
 
     logger.success("Wrote trajectories for {} samples to {}", len(records), out_dir)
