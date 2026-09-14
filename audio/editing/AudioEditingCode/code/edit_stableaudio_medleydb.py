@@ -16,7 +16,7 @@ if str(_AUDIO_ROOT) not in _sys.path:
     _sys.path.insert(0, str(_AUDIO_ROOT))
 from editing.dataset_medley import prepare_dataset  # noqa: E402
 
-from env import PATH_AUDIOS_MEDLEY, PATH_EDIT_OUTPUTS, medley_split_paths
+from env import PATH_EDIT_OUTPUTS, medley_audio_root, medley_split_paths
 
 PATH_DIR_OUTPUT = Path(PATH_EDIT_OUTPUTS+"/medleymd").resolve()
 
@@ -115,7 +115,7 @@ def main(
     # Prepare dataset
     prompts_csv, _ = medley_split_paths(split)
     df_instruments = prepare_dataset(
-        path_audios=Path(PATH_AUDIOS_MEDLEY),
+        path_audios=Path(medley_audio_root(split)),
         path_prompts=Path(prompts_csv),
         unique_tracks=unique_tracks,
     )

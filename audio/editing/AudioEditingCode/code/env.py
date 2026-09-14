@@ -51,6 +51,13 @@ def source_of(name: str) -> str:
 # prepare_dataset() reconstructs via filename.split("_MIX")[0].
 PATH_AUDIOS_MEDLEY = _resolve("MEDLEYDB_AUDIO_DIR", AUDIO_ROOT / "data/medleydb/V1_mix")
 
+# Model-generated eval inputs: one clip per unique (track, source caption) pair, synthesised
+# from the source captions by src/inversion_lora/generate_eval_inputs.py and laid out like the
+# real mixes (<root>/gen{g}/gen{g}_MIX.wav). Splits in GENERATED_SPLITS resolve here.
+PATH_AUDIOS_MEDLEY_GEN = _resolve(
+    "MEDLEY_GEN_AUDIO_DIR", AUDIO_ROOT / "outputs/medleymd/gen_inputs/audios"
+)
+
 # MusicCaps clips; only needed for real-audio-seeded inversion trajectories.
 PATH_MUSICCAPS = _resolve("MUSICCAPS_AUDIO_DIR", AUDIO_ROOT / "data/musiccaps/audio")
 
@@ -88,7 +95,27 @@ MEDLEY_SPLIT_CSVS = {
     # One row per distinct MedleyDB track. Taken from the full CSV by the drivers' and eval's
     # --unique_tracks flag rather than by a CSV of its own, but it needs its own reference set.
     "tracks": "captions_gpt5.csv",
+    # The hparam rows with generated source audio in place of the real mixes; built by
+    # src/inversion_lora/generate_eval_inputs.py, which also writes the wavs the filenames name.
+    "genhparam": "captions_gpt5_genhparam.csv",
 }
+
+# Splits whose source audio is model-generated rather than real MedleyDB mixes.
+GENERATED_SPLITS = ("genhparam",)
+
+
+def medley_audio_root(split: str) -> str:
+    """Source-audio root for one split: the real MedleyDB mixes, or the generated-input set.
+
+    Args:
+        split: Key of `MEDLEY_SPLIT_CSVS`.
+
+    Returns:
+        Directory holding `<name>/<name>_MIX.wav` source files for that split's rows.
+    """
+    if split not in MEDLEY_SPLIT_CSVS:
+        raise ValueError(f"Unknown split {split!r}; expected one of {list(MEDLEY_SPLIT_CSVS)}")
+    return PATH_AUDIOS_MEDLEY_GEN if split in GENERATED_SPLITS else PATH_AUDIOS_MEDLEY
 
 
 def medley_split_paths(split: str) -> tuple[str, str]:
@@ -124,6 +151,7 @@ ALDM2_TEMP_DIR = _resolve("ALDM2_TEMP_DIR", AUDIO_ROOT / ".temp/audioldm2")
 
 SETTINGS = {
     "PATH_AUDIOS_MEDLEY": ("MEDLEYDB_AUDIO_DIR", PATH_AUDIOS_MEDLEY),
+    "PATH_AUDIOS_MEDLEY_GEN": ("MEDLEY_GEN_AUDIO_DIR", PATH_AUDIOS_MEDLEY_GEN),
     "PATH_PROMPTS_MEDLEY": ("MEDLEY_PROMPTS_CSV", PATH_PROMPTS_MEDLEY),
     "PATH_MUSICCAPS": ("MUSICCAPS_AUDIO_DIR", PATH_MUSICCAPS),
     "PATH_EDIT_OUTPUTS": ("EDIT_OUTPUTS_DIR", PATH_EDIT_OUTPUTS),

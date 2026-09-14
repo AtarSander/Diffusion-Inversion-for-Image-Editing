@@ -11,9 +11,9 @@ from editing.AudioEditingCode.code.env import (
     MEDLEY_SPLIT_CSVS as SPLIT_CSVS,
 )
 from editing.AudioEditingCode.code.env import (
-    PATH_AUDIOS_MEDLEY,
     PATH_LOWER_BOUND_MEDLEY,
     PATH_PROMPTS_MEDLEY,
+    medley_audio_root,
 )
 
 
@@ -50,7 +50,7 @@ def build_split(split: str, out_root: Path, overwrite: bool = False) -> Path:
     for idx, (_, row) in zip(names, df.iterrows()):
         filename = row["filename"]
         dirname = filename.split("_MIX")[0]
-        source = (Path(PATH_AUDIOS_MEDLEY) / dirname / filename).resolve()
+        source = (Path(medley_audio_root(split)) / dirname / filename).resolve()
         if not source.exists():
             raise FileNotFoundError(f"{csv_path.name} row {idx}: missing source {source}")
         target = target_dir / f"a{idx}.wav"

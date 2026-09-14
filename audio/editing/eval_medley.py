@@ -16,7 +16,7 @@ from editing.AudioEditingCode.evals.meta_clap_consistency import CLAPTextConsist
 from editing.AudioEditingCode.evals.utils import calc_clap_win, calc_lpaps_win
 from editing import run_metrics
 from editing.dataset_medley import prepare_dataset
-from editing.AudioEditingCode.code.env import PATH_AUDIOS_MEDLEY, medley_split_paths
+from editing.AudioEditingCode.code.env import medley_audio_root, medley_split_paths
 from src.metrics.alignment import MusicAlignmentEval
 DISABLE_TQDM = False
 
@@ -29,7 +29,7 @@ def prepare_data(
     split: str = "full",
 ):
     df_musiccaps = prepare_dataset(
-        Path(PATH_AUDIOS_MEDLEY),
+        Path(medley_audio_root(split)),
         Path(medley_split_paths(split)[0]),
         unique_tracks=unique_tracks,
     )
