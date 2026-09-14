@@ -8,6 +8,68 @@ Most recent first. Keep this file current — it is the handover doc between ses
 
 ---
 
+## 2026-09-14 — RESULT: three nulls, one ceiling. Accuracy is not the binding constraint.
+
+**The headline.** Editing quality saturates by training step 2000. On the 12-checkpoint ladder of
+`saocos_r8_a4_lr5e-5` (115 edits, cfg_tar 3.5, 100-step grid): LPAPS 4.4371 at step 2000 vs
+4.4370 at step 20000 (tstart 50), 5.2632 vs 5.2630 (tstart 75), against a no-LoRA gap of 0.06 and
+0.08. **Ten times more training moves editing by 0.0002** while val loss falls 2.60e-5 -> 2.44e-5.
+CLAP, MuQ and directional CLAP equally flat. `output/cycle_and_ladder/`.
+
+So any experiment whose mechanism is "close the shift gap better" is capped before it starts --
+which is most of what was queued.
+
+**Three independent nulls, all consistent with that ceiling.**
+
+1. k=1 cycle loss, four gradient-balance targets spanning 20x: matched the *no-cycle baseline* to
+   6-7 significant figures (relative spread 3.4e-6 at step 4000). `output/cycle_arms/`.
+2. Multi-step cycle k=2 and k=3: 0.001-0.002 LPAPS from baseline at every tstart.
+3. 10x more training: 0.0002 LPAPS.
+
+Cause for 1 and 2: `grad L_cycle = (I + (B/A)J^T)(I + (B/A)J)(e-u)` is parallel to `grad L_inv` up
+to a `(B/A)||J||` rotation, `B/A = 0.0778` here, and **Adam is per-parameter scale invariant** --
+a parallel gradient is a rescaling and gets divided back out. Note k>1 ran with "last step only"
+gradients, so its gradient still flows through one prediction; full BPTT is the only untried
+variant.
+
+**RETRACTION.** I first reported k=2 improving LPAPS by 0.147. That was my analysis bug: the
+regex captured any checkpoint step, so the baseline label pooled step-2000 with step-4000 runs and
+pivot_table averaged them into a baseline ~0.15 worse than reality -- manufacturing exactly the
+gain. Verified the two supposedly-different runs are identical per example (correlation 1.0, max
+diff 0.0). Duplicate (arm, tstart, cfg) cells now assert.
+
+**All methods on one front** (`output/all_methods/`, cfg_tar 3.5, s100). The four ODEInv adapter
+variants (LoRA @2000, @4000, cycle k=2, k=3) are one indistinguishable curve spanning 0.002 LPAPS.
+DDPM-inv is on a better front: CLAP 0.288 at LPAPS 3.48 where every ODEInv variant needs 4.44 for
+CLAP 0.308. SDEdit dominated everywhere.
+
+**Why DDPM-inv wins, from its code** (`tests/test_ddpm_noise_space.py`). `get_zs_from_xts` solves
+the sampler's update for the injected noise, so `z` is defined as whatever lands the step on a
+prescribed `x_{t-1}`. Tested: exact replay even with the prediction zeroed or 1000x wrong. **It is
+not an inversion** -- a free variable per step absorbs all model error, and the code is `x_T` plus
+one `z` per step, **101x** the single latent we store. Our matched-NFE table equalises compute and
+leaves stored state unequal; report it that way. Neither its exactness nor its edit-friendly noise
+statistics is adoptable without becoming DDPM-inversion.
+
+**Running.** cfg35 (experiment 1): 1500 guided trajectories generated and verified, training
+capped at 2000 steps (~5.6 h), then an 8-run edit sweep at cfg_src 1.0 *and* 3.5 -- both, because
+the adapter trains on guided predictions while the pipeline inverts unguided by default, and
+without the pair you cannot separate "better adapter" from "guided inversion". Reconstruction
+ladder re-submitted in parallel.
+
+**Owed.** The reconstruction ladder is the missing half of the ceiling argument: it replaces
+"editing is flat vs training step" with "flat vs *measured* round-trip error", which is the
+difference between a discouraging observation and a publishable null.
+
+**Launch traps that cost real time** (all fixed): `run_lora_sweep.sh` archived into a hardcoded
+`audioldm2_ddim`, so every Stable Audio run reported a missing directory after a successful edit
+-- `LORA_EDITS_SUBDIR` must reach the *edit* job, not just the eval. Hydra `+key=value` adds a key
+while `key=value` overrides one, so a smoke test using `+` passed while the slurm grid could not
+work. `SCRIPT` and `CONFIG_NAME` must be set together or the Stable Audio config runs the
+AudioLDM2 script. On odeinv, tstart max is 99, not 100.
+
+---
+
 ## 2026-09-13 — RESULT: the k=1 cycle loss is inert. Three follow-ups queued.
 
 **Result (closes the cycle-loss question at k=1).** Four arms spanning 20x in gradient-balance
