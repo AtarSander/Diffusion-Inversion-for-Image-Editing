@@ -148,7 +148,11 @@ CONFIGS=(
   # Needs the cfg35 dataset: CONFIG_NAME=generate_trajectories_stable_audio_cfg35 first.
   # Two forwards per step for the student plus the guided target, so ~2x the baseline step;
   # batch 4 x accum 8 holds the effective batch at 32 while keeping one batch-4 graph per branch.
-  "attn|8|4|5e-5|cfg35_r8_a4_lr5e-5|guidance_scale=3.5 data_root=\${oc.env:LORAINV_DATA_ROOT}/stable_audio_cosine_ode_cfg35_fp32 max_train_steps=12000 batch_size=4 gradient_accumulation_steps=8"
+  # 2000 steps, not 12000: the accuracy ladder showed editing dead flat from step 2000 to 20000,
+  # and at ~10 s/step 12000 would be killed on walltime at ~8600 anyway -- which would also make
+  # a chained edit sweep wait 24 h for a checkpoint that exists at 5.6 h. Saving every 500 gives
+  # a four-point dose-response inside the run for free.
+  "attn|8|4|5e-5|cfg35_r8_a4_lr5e-5|guidance_scale=3.5 data_root=\${oc.env:LORAINV_DATA_ROOT}/stable_audio_cosine_ode_cfg35_fp32 max_train_steps=2000 save_every_steps=500 eval_every_steps=500 batch_size=4 gradient_accumulation_steps=8"
 )
 
 # Fail before the 12 GB model load rather than after it: wandb only reports a bad credential
