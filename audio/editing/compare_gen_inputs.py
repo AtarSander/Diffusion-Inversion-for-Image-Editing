@@ -53,35 +53,37 @@ def main(runs_root: str, out_root: str = "output/gen_inputs") -> None:
     """
     root = Path(runs_root)
 
-    fig, axes = plt.subplots(2, 4, figsize=(24, 11))
+    # One front figure: rows are the splits (real on top, generated below), columns the
+    # alignment metrics; per-column shared axes make the distribution shift directly readable.
+    fig, axes = plt.subplots(2, 4, figsize=(24, 11), sharex="col", sharey="col")
     fig.suptitle(
-        "H1 — editing model generations instead of real audio (cfg_tar 3.5, 100-step grid, "
-        "115 paired rows)", fontsize=17, fontweight="bold", y=0.99,
+        "H1 — the same methods on real audio (top) and on model generations (bottom) "
+        "(cfg_tar 3.5, 100-step grid, 115 paired rows)", fontsize=17, fontweight="bold", y=0.99,
     )
-
-    # Top row: the fronts on both splits, one panel per alignment metric.
-    for ax, (metric, name) in zip(
-        axes[0], [("clap", "CLAP"), ("muqt_sim_p0", "MuQ-MuLan"),
-                  ("clap_dir", "Directional CLAP"), ("mulan_dir", "Directional MuLan")]
-    ):
-        for split, (marker, style, alpha) in SPLIT_STYLE.items():
+    panels = [("clap", "CLAP"), ("muqt_sim_p0", "MuQ-MuLan"),
+              ("clap_dir", "Directional CLAP"), ("mulan_dir", "Directional MuLan")]
+    for row, split in enumerate(SPLIT_STYLE):
+        for ax, (metric, name) in zip(axes[row], panels):
             for method, color in COLORS.items():
                 xs, ys = [], []
                 for t in TSTARTS:
                     df = frame(root, split, method, t)
                     xs.append(df["lpaps"].mean())
                     ys.append(df[metric].mean())
-                ax.plot(xs, ys, style, marker=marker, ms=8, lw=1.8, color=color, alpha=alpha,
-                        markeredgecolor="black", markeredgewidth=0.8,
-                        label=f"{method} ({SPLIT_LABEL[split]})")
-        ax.set_xlabel("LPAPS to source (lower = preserved)", fontsize=FS)
-        ax.set_ylabel(f"{name} to target", fontsize=FS)
-        ax.set_title(name, fontsize=FS + 1)
-        ax.tick_params(labelsize=FS)
-        ax.grid(True, linestyle="--", alpha=0.2)
-    axes[0][0].legend(fontsize=FS - 3, loc="lower right", framealpha=0.9)
+                ax.plot(xs, ys, "-", marker="o", ms=9, lw=2.0, color=color, label=method,
+                        markeredgecolor="black", markeredgewidth=0.8)
+                for x, y, t in zip(xs, ys, TSTARTS):
+                    ax.annotate(str(t), (x, y), fontsize=FS - 2, color=color,
+                                textcoords="offset points", xytext=(5, 5))
+            if row == 1:
+                ax.set_xlabel("LPAPS to source (lower = preserved)", fontsize=FS)
+            ax.set_ylabel(f"{name} to target", fontsize=FS)
+            ax.set_title(f"{name} — {SPLIT_LABEL[split]}", fontsize=FS + 1)
+            ax.tick_params(labelsize=FS)
+            ax.grid(True, linestyle="--", alpha=0.2)
+    axes[0][0].legend(fontsize=FS - 1, loc="lower right", framealpha=0.9)
 
-    # Bottom row: the H1 test itself -- the paired LoRA - no-LoRA delta per tstart, both splits.
+    # The paired deltas stay in the report even though the figure now shows only the fronts.
     rows = []
     for split in SPLIT_STYLE:
         for t in TSTARTS:
@@ -95,38 +97,6 @@ def main(runs_root: str, out_root: str = "output/gen_inputs") -> None:
                              "delta": d.mean(), "ci95": ci,
                              "p": stats.ttest_rel(lora[metric], base[metric]).pvalue})
     deltas = pd.DataFrame(rows)
-
-    width = 0.38
-    for ax, (metric, name) in zip(axes[1], DELTA_METRICS.items()):
-        for k, (split, _) in enumerate(SPLIT_STYLE.items()):
-            sub = deltas[(deltas.split == split) & (deltas.metric == metric)]
-            x = [i + (k - 0.5) * width for i in range(len(TSTARTS))]
-            color = "#c44e52" if split == "genhparam" else "#4c72b0"
-            ax.bar(x, sub["delta"], width, yerr=sub["ci95"], capsize=4,
-                   color=color, edgecolor="black", linewidth=0.8,
-                   label=SPLIT_LABEL[split])
-            for xi, (_, r) in zip(x, sub.iterrows()):
-                if r["p"] < 0.001:
-                    star = "***"
-                elif r["p"] < 0.01:
-                    star = "**"
-                elif r["p"] < 0.05:
-                    star = "*"
-                else:
-                    star = ""
-                if star:
-                    off = r["ci95"] * 1.15 * (1 if r["delta"] >= 0 else -1)
-                    ax.annotate(star, (xi, r["delta"] + off), ha="center", fontsize=FS,
-                                va="bottom" if r["delta"] >= 0 else "top")
-        ax.axhline(0.0, color="black", lw=1.0)
-        ax.set_xticks(range(len(TSTARTS)))
-        ax.set_xticklabels([f"t{t}" for t in TSTARTS], fontsize=FS)
-        ax.set_xlabel("inversion depth (tstart)", fontsize=FS)
-        ax.set_ylabel(f"Δ {name}  (LoRA − no LoRA)", fontsize=FS)
-        ax.set_title(f"Paired LoRA effect: {name}", fontsize=FS + 1)
-        ax.tick_params(labelsize=FS)
-        ax.grid(True, linestyle="--", alpha=0.2)
-    axes[1][0].legend(fontsize=FS - 1, loc="lower right", framealpha=0.9)
 
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     out = AUDIO_ROOT / out_root / datetime.now().strftime("%Y%m%d_%H%M%S")
