@@ -1,0 +1,33 @@
+# Generated-input eval split for Stable Audio: the genhparam CSV plus one clip per unique
+# (track, source caption) pair, sampled from fresh noise with the deterministic cosine ODE.
+# CSV (local, no GPU): uv run --python .venv/bin/python src/inversion_lora/generate_eval_inputs.py csv_only=true
+# Wavs:                ... generate_eval_inputs.py device=cuda:0
+# Smoke:               ... device=cuda:0 num_groups=2 num_inference_steps=20 output_dir=/tmp/gen_smoke
+
+device: cpu # set to cuda:N explicitly; never auto-grab a shared GPU
+
+model_id: stabilityai/stable-audio-open-1.0
+schedule: cosine
+num_inference_steps: 100 # the grid the LoRA trajectories and the editing baselines use
+# w=1 matches the LoRA's training trajectories exactly, making this the strongest test of the
+# real-vs-generated input gap. Raise it for a "higher quality inputs" variant.
+guidance_scale: 1.0
+
+split_csv: editing/AudioEditingCode/MedleyMDPrompts/captions_gpt5_hparam.csv
+gen_csv: editing/AudioEditingCode/MedleyMDPrompts/captions_gpt5_genhparam.csv
+# null resolves through env.py: MEDLEYDB_AUDIO_DIR and MEDLEY_GEN_AUDIO_DIR respectively, so the
+# writer and every reader (drivers, eval, lower bound) cannot disagree about the layout.
+real_audio_root: null
+output_dir: null
+
+# Reserved for eval-input generation only: training trajectories use 42..1541, edits use 42.
+seed_base: 314159
+
+csv_only: false
+num_groups: null # limit for smoke runs
+overwrite: false
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null

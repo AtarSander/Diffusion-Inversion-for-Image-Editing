@@ -83,6 +83,32 @@ class StableAudioTeacher:
             repeat_interleave_real=False,
         )
 
+    def set_duration(self, duration_s: float) -> None:
+        """Re-point the timing conditioning at a new duration.
+
+        Only the two seconds embeddings depend on the duration; the rotary embedding does not,
+        because `global_states` keeps its token count. Call before `encode_prompt`, which appends
+        the current seconds embeddings.
+
+        Args:
+            duration_s: Duration the timing conditioning declares, in (0, max_duration_s].
+        """
+        assert 0 < duration_s <= self.max_duration_s, (
+            f"duration_s={duration_s} outside (0, {self.max_duration_s}]"
+        )
+        self.duration_s = float(duration_s)
+        with torch.no_grad():
+            seconds_start, seconds_end = self.pipe.encode_duration(
+                0.0, self.duration_s, self.device, False, 1
+            )
+        self.seconds_hidden_states = (seconds_start, seconds_end)
+        global_states = torch.cat([seconds_start, seconds_end], dim=2)
+        assert global_states.shape == self.global_states.shape, (
+            global_states.shape,
+            self.global_states.shape,
+        )
+        self.global_states = global_states
+
     @property
     def max_duration_s(self) -> float:
         """Longest audio the model conditions on, from its fixed latent length."""

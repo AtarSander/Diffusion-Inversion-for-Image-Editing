@@ -1,0 +1,116 @@
+,filename,source_captions,target_captions,edit,real_filename,duration_s,seed
+178,gen000_MIX.wav,"Arabic and Chinese strings playing a mysterious song, alongside drums and Chinese flutes.","Guitars playing a rock song, alongside drums and bass.",GENRE,MusicDelta_ChineseXinJing_MIX.wav,65.37,314159
+469,gen001_MIX.wav,A recording of an old upbeat cool jazz song.,A recording of an old upbeat cool Arabic song.,GENRE,MusicDelta_ModalJazz_MIX.wav,103.779,314160
+402,gen002_MIX.wav,"A grunge rock song of a man singing while an electric guitar, bass and drums are playing in the background.","A rap song of a man rapping while an electric guitar, bass and drums are playing in the background.",GENRE,MusicDelta_Grunge_MIX.wav,41.854,314161
+101,gen003_MIX.wav,A recording of happy Chinese music.,A recording of happy grunge rock music.,GENRE,MusicDelta_ChineseChaoZhou_MIX.wav,56.668,314162
+122,gen004_MIX.wav,"Chinese strings, flutes, and harp playing an epic dramatic song.","Strings, flutes, and harp playing an epic dramatic song.",GENRE,MusicDelta_ChineseDrama_MIX.wav,63.894,314163
+618,gen005_MIX.wav,A recording of a cool metal song.,A recording of a cool movie soundtrack.,GENRE,MusicDelta_SpeedMetal_MIX.wav,36.008,314164
+124,gen006_MIX.wav,A recording of Chinese instruments playing.,A recording of Hindu instruments playing.,GENRE,MusicDelta_ChineseDrama_MIX.wav,63.894,314165
+264,gen007_MIX.wav,A recording of an upbeat disco song.,A recording of an upbeat techno song.,GENRE,MusicDelta_Disco_MIX.wav,124.78,314166
+250,gen008_MIX.wav,"A woman is singing a country song with a guitar, bass and drums playing in the background.","A man is singing a rock song with a guitar, bass and drums playing in the background.",GENRE,MusicDelta_Country2_MIX.wav,17.455,314167
+623,gen009_MIX.wav,"A metal song with an electric guitar, bass and drums playing.","A jazz song with a trumpet, bass and drums playing.",GENRE,MusicDelta_SpeedMetal_MIX.wav,36.008,314168
+20,gen010_MIX.wav,A high quality recording of a rock band playing a happy rock song.,A high quality recording of a country band playing a happy country song.,GENRE,MusicDelta_Beatles_MIX.wav,36.374,314169
+675,gen011_MIX.wav,A recording of a hard rock song.,A recording of a jazz song.,GENRE,MusicDelta_Zeppelin_MIX.wav,17.475,314170
+160,gen012_MIX.wav,"Chinese strings, flutes, and harp playing a happy village Chinese song.","Arabic strings, flutes, and harp playing a happy village Arabic song.",GENRE,MusicDelta_ChineseJiangNan_MIX.wav,57.37,314171
+120,gen013_MIX.wav,A recording of a dramatic epic Chinese piece.,A recording of upbeat pop music.,GENRE,MusicDelta_ChineseDrama_MIX.wav,63.894,314172
+641,gen014_MIX.wav,"A jazz song with a saxophone, piano, bass and drums playing.","A metal song with a guitar, piano, bass and drums playing.",GENRE,MusicDelta_SwingJazz_MIX.wav,89.513,314173
+323,gen015_MIX.wav,A recording of a slow cool jazz song.,A recording of a slow cool metal song.,GENRE,MusicDelta_FusionJazz_MIX.wav,110.986,314174
+79,gen016_MIX.wav,A recording of a rock song.,A recording of a hip hop song.,GENRE,MusicDelta_Britpop_MIX.wav,36.789,314175
+464,gen001_MIX.wav,A recording of an old upbeat cool jazz song.,A recording of an old upbeat cool country song.,GENRE,MusicDelta_ModalJazz_MIX.wav,103.779,314160
+483,gen017_MIX.wav,A recording of an emotional classical music piece that fits weddings.,A recording of an emotional Chinese music piece that fits weddings.,GENRE,MusicDelta_Pachelbel_MIX.wav,302.788,314176
+345,gen018_MIX.wav,A recording of an upbeat gospel song.,A recording of an upbeat techno song.,GENRE,MusicDelta_Gospel_MIX.wav,75.737,314177
+26,gen019_MIX.wav,A recording of an upbeat rock song.,A recording of Arabic music.,GENRE,MusicDelta_Beatles_MIX.wav,36.374,314178
+417,gen020_MIX.wav,"A rock song of a man singing while a guitar, bass and drums are playing in the background.","A death metal song of a man singing while a guitar, bass and drums are playing in the background.",GENRE,MusicDelta_Hendrix_MIX.wav,19.844,314179
+573,gen021_MIX.wav,A recording of an old rock song.,A recording of an old country song.,GENRE,MusicDelta_Rockabilly_MIX.wav,25.949,314180
+0,gen022_MIX.wav,A recording of a rock song.,A recording of a heavy metal song.,GENRE,MusicDelta_80sRock_MIX.wav,36.92,314181
+165,gen023_MIX.wav,A high quality recording of Chinese instruments playing.,A high quality recording of an orchestra playing.,GENRE,MusicDelta_ChineseJiangNan_MIX.wav,57.37,314182
+625,gen009_MIX.wav,"A metal song with an electric guitar, bass and drums playing.","A classical song with a violin, bass and drums playing.",GENRE,MusicDelta_SpeedMetal_MIX.wav,36.008,314168
+130,gen024_MIX.wav,A recording of calm happy Chinese music.,A recording of calm happy movie soundtrack.,GENRE,MusicDelta_ChineseHenan_MIX.wav,59.0,314183
+60,gen025_MIX.wav,An orchestra playing classical music. You can hear flutes and strings.,A string section playing classical music.,GENRE,MusicDelta_Beethoven_MIX.wav,27.375,314184
+397,gen026_MIX.wav,A recording of a grunge rock song.,A recording of a country song.,GENRE,MusicDelta_Grunge_MIX.wav,41.854,314185
+512,gen027_MIX.wav,A recording of an upbeat angry punk song.,A recording of an upbeat cool jazz song.,GENRE,MusicDelta_Punk_MIX.wav,28.763,314186
+139,gen028_MIX.wav,"Chinese strings, flutes, and harp playing calm happy Chinese music.","Arabic strings, flutes, and harp playing calm happy Arabic music.",GENRE,MusicDelta_ChineseHenan_MIX.wav,59.0,314187
+578,gen021_MIX.wav,A recording of an old rock song.,A recording of an old Arabic song.,GENRE,MusicDelta_Rockabilly_MIX.wav,25.949,314180
+583,gen029_MIX.wav,A cool old rock song of a woman singing while a guitar and drums accompany her.,A cool old country song of a woman singing while a guitar and drums accompany her.,GENRE,MusicDelta_Rockabilly_MIX.wav,25.949,314188
+100,gen003_MIX.wav,A recording of happy Chinese music.,A recording of an arcade game soundtrack.,GENRE,MusicDelta_ChineseChaoZhou_MIX.wav,56.668,314162
+129,gen024_MIX.wav,A recording of calm happy Chinese music.,A recording of calm happy Arabic music.,GENRE,MusicDelta_ChineseHenan_MIX.wav,59.0,314183
+563,gen030_MIX.wav,"A cool 60s rock song of a man singing while a guitar, bass and drums accompany him.","A cool 80s country song of a woman singing while a banjo, bass and drums accompany her.",GENRE,MusicDelta_Rock_MIX.wav,13.091,314189
+435,gen031_MIX.wav,Strings playing a scary classical music melody with flutes and drums accompaniment in the background.,Strings playing a scary death metal melody with trumpets and drums accompaniment in the background.,GENRE,MusicDelta_InTheHalloftheMountainKing_MIX.wav,17.444,314190
+305,gen032_MIX.wav,A recording of a funky jazz song.,A recording of an upbeat arcade game soundtrack.,GENRE,MusicDelta_FunkJazz_MIX.wav,49.386,314191
+554,gen033_MIX.wav,A recording of an old timey rock song from the sixties.,A recording of a metal song from the nineties.,GENRE,MusicDelta_Rock_MIX.wav,13.091,314192
+205,gen034_MIX.wav,A recording of a cool calm jazz song.,A recording of a cool calm techno song.,GENRE,MusicDelta_CoolJazz_MIX.wav,101.562,314193
+52,gen035_MIX.wav,A recording of a calm classical music piece.,A recording of a heavy metal song.,GENRE,MusicDelta_Beethoven_MIX.wav,27.375,314194
+538,gen036_MIX.wav,A reggae song of a man singing while bass and drums accompany him.,A jazz song of a man singing while bass and drums accompany him.,GENRE,MusicDelta_Reggae_MIX.wav,17.463,314195
+99,gen003_MIX.wav,A recording of happy Chinese music.,A recording of happy techno music.,GENRE,MusicDelta_ChineseChaoZhou_MIX.wav,56.668,314162
+671,gen037_MIX.wav,A high quality recording of strings playing a happy song.,A high quality recording of a metal band playing a happy song.,GENRE,MusicDelta_Vivaldi_MIX.wav,21.837,314196
+244,gen038_MIX.wav,A recording of a country song.,A recording of a techno song.,GENRE,MusicDelta_Country2_MIX.wav,17.455,314197
+127,gen006_MIX.wav,A recording of Chinese instruments playing.,A recording of a rock band playing.,GENRE,MusicDelta_ChineseDrama_MIX.wav,63.894,314165
+152,gen039_MIX.wav,A recording of a happy village Chinese song.,A recording of an arcade game soundtrack.,GENRE,MusicDelta_ChineseJiangNan_MIX.wav,57.37,314198
+87,gen040_MIX.wav,A high quality recording of a rock band playing an upbeat rock song.,A high quality recording of a string section playing an inspiring classical music piece.,GENRE,MusicDelta_Britpop_MIX.wav,36.789,314199
+549,gen033_MIX.wav,A recording of an old timey rock song from the sixties.,A recording of an old timey country song from the seventies.,GENRE,MusicDelta_Rock_MIX.wav,13.091,314192
+135,gen024_MIX.wav,A recording of calm happy Chinese music.,A recording of calm happy jazz music.,GENRE,MusicDelta_ChineseHenan_MIX.wav,59.0,314183
+415,gen020_MIX.wav,"A rock song of a man singing while a guitar, bass and drums are playing in the background.","A jazz song of a man singing while a guitar, bass and drums are playing in the background.",GENRE,MusicDelta_Hendrix_MIX.wav,19.844,314179
+76,gen016_MIX.wav,A recording of a rock song.,A recording of Arabic music.,GENRE,MusicDelta_Britpop_MIX.wav,36.789,314175
+418,gen020_MIX.wav,"A rock song of a man singing while a guitar, bass and drums are playing in the background.",An opera song of a man singing while an orchestra and drums are playing in the background.,GENRE,MusicDelta_Hendrix_MIX.wav,19.844,314179
+146,gen041_MIX.wav,A recording of Chinese instruments playing.,A recording of Hindu instruments playing.,GENRE,MusicDelta_ChineseHenan_MIX.wav,59.0,314200
+57,gen035_MIX.wav,A recording of a calm classical music piece.,A recording of an upbeat country song.,GENRE,MusicDelta_Beethoven_MIX.wav,27.375,314194
+494,gen042_MIX.wav,A high quality recording of strings playing a wedding song.,A high quality recording of an orchestra playing a wedding song.,GENRE,MusicDelta_Pachelbel_MIX.wav,302.788,314201
+316,gen043_MIX.wav,"A trumpet playing a funky jazz melody, with an accompaniment of an electric keyboard, bass and drums.","A guitar playing a funky techno melody, with an accompaniment of an electric keyboard and a synthesizer.",GENRE,MusicDelta_FunkJazz_MIX.wav,49.386,314202
+392,gen026_MIX.wav,A recording of a grunge rock song.,A recording of a techno song.,GENRE,MusicDelta_Grunge_MIX.wav,41.854,314185
+288,gen044_MIX.wav,A recording of a sneaky jazz song.,A recording of a funky jazz song.,GENRE,MusicDelta_FreeJazz_MIX.wav,104.322,314203
+267,gen007_MIX.wav,A recording of an upbeat disco song.,A recording of an epic movie soundtrack.,GENRE,MusicDelta_Disco_MIX.wav,124.78,314166
+35,gen045_MIX.wav,A recording of an upbeat jazz song.,A recording of an epic movie soundtrack.,GENRE,MusicDelta_BebopJazz_MIX.wav,102.959,314204
+58,gen035_MIX.wav,A recording of a calm classical music piece.,A recording of a rock song.,GENRE,MusicDelta_Beethoven_MIX.wav,27.375,314194
+672,gen037_MIX.wav,A high quality recording of strings playing a happy song.,A high quality recording of a jazz band playing a happy song.,GENRE,MusicDelta_Vivaldi_MIX.wav,21.837,314196
+186,gen046_MIX.wav,A recording of a happy calm Chinese song.,A recording of a happy calm hip hop song.,GENRE,MusicDelta_ChineseYaoZu_MIX.wav,60.226,314205
+456,gen047_MIX.wav,Flutes playing alongside a trumpet a happy upbeat melody.,A rock band playing alongside a trumpet a happy upbeat melody.,GENRE,MusicDelta_LatinJazz_MIX.wav,66.966,314206
+241,gen038_MIX.wav,A recording of a country song.,A recording of a metal song.,GENRE,MusicDelta_Country2_MIX.wav,17.455,314197
+501,gen048_MIX.wav,A high quality recording of a cello and violins playing a happy and emotional piece.,A high quality recording of a piano and violins playing a happy and emotional  piece.,INSTR,MusicDelta_Pachelbel_MIX.wav,302.788,314207
+48,gen049_MIX.wav,"a saxophone, trumpet, piano, bass and drums playing.","a saxophone, violin, piano, bass and drums playing.",INSTR,MusicDelta_BebopJazz_MIX.wav,102.959,314208
+571,gen050_MIX.wav,"A high quality recording of a man singing while a guitar, bass and drums accompany him.","A high quality recording of a violin playing while a guitar, bass and drums accompany him.",INSTR,MusicDelta_Rock_MIX.wav,13.091,314209
+337,gen051_MIX.wav,"A high quality recording of a trumpet, saxophone, electric keyboard, bass and drums playing.","A high quality recording of a violin, saxophone, electric keyboard, bass and drums playing.",INSTR,MusicDelta_FusionJazz_MIX.wav,110.986,314210
+260,gen052_MIX.wav,"A high quality recording of a woman singing, and a guitar, bass and drums playing.","A high quality recording of a piano playing, and a guitar, bass and drums playing.",INSTR,MusicDelta_Country2_MIX.wav,17.455,314211
+569,gen050_MIX.wav,"A high quality recording of a man singing while a guitar, bass and drums accompany him.","A high quality recording of a piano playing while a guitar, bass and drums accompany him.",INSTR,MusicDelta_Rock_MIX.wav,13.091,314209
+223,gen053_MIX.wav,"A high quality recording of a trumpet, a saxophone, a piano, a bass guitar and drums playing.","A high quality recording of a violin, a piano, a bass guitar and drums playing.",INSTR,MusicDelta_CoolJazz_MIX.wav,101.562,314212
+47,gen049_MIX.wav,"a saxophone, trumpet, piano, bass and drums playing.","a violin, trumpet, piano, bass and drums playing.",INSTR,MusicDelta_BebopJazz_MIX.wav,102.959,314208
+439,gen054_MIX.wav,"A high quality recording of strings, flutes and drums playing.","A high quality recording of strings, trumpets and drums playing.",INSTR,MusicDelta_InTheHalloftheMountainKing_MIX.wav,17.444,314213
+438,gen054_MIX.wav,"A high quality recording of strings, flutes and drums playing.","A high quality recording of guitars, flutes and drums playing.",INSTR,MusicDelta_InTheHalloftheMountainKing_MIX.wav,17.444,314213
+684,gen055_MIX.wav,"An electric guitar playing epic riffs while another guitar, bass and drums are playing in the background.","A saxophone playing an epic solo while a guitar, bass and drums are playing in the background.",INSTR,MusicDelta_Zeppelin_MIX.wav,17.475,314214
+50,gen049_MIX.wav,"a saxophone, trumpet, piano, bass and drums playing.","strings, bass and drums playing.",INSTR,MusicDelta_BebopJazz_MIX.wav,102.959,314208
+297,gen056_MIX.wav,"A high quality recording of a clarinet, bass and drums playing.","A high quality recording of a piano, bass and drums playing.",INSTR,MusicDelta_FreeJazz_MIX.wav,104.322,314215
+40,gen057_MIX.wav,"A jazz song with a saxophone, trumpet, piano, bass and drums playing.","A jazz song with 2 trumpets, piano, bass and drums playing.",INSTR,MusicDelta_BebopJazz_MIX.wav,102.959,314216
+612,gen058_MIX.wav,A high quality recording of a guitar playing a melody while another guitar and drums are playing in the background.,A high quality recording of a trumpet playing a melody while another trumpet and drums are playing in the background.,INSTR,MusicDelta_Shadows_MIX.wav,33.491,314217
+450,gen047_MIX.wav,Flutes playing alongside a trumpet a happy upbeat melody.,Guitars playing alongside a trumpet a happy upbeat melody.,INSTR,MusicDelta_LatinJazz_MIX.wav,66.966,314206
+261,gen052_MIX.wav,"A high quality recording of a woman singing, and a guitar, bass and drums playing.","A high quality recording of a trumpet playing, and a guitar, bass and drums playing.",INSTR,MusicDelta_Country2_MIX.wav,17.455,314211
+440,gen054_MIX.wav,"A high quality recording of strings, flutes and drums playing.",A high quality recording of flutes and drums playing.,INSTR,MusicDelta_InTheHalloftheMountainKing_MIX.wav,17.444,314213
+692,gen059_MIX.wav,A high quality recording of an epic guitar hard rock solo with a rock band accompaniment.,A high quality recording of an epic piano hard rock solo with a rock band accompaniment.,INSTR,MusicDelta_Zeppelin_MIX.wav,17.475,314218
+452,gen047_MIX.wav,Flutes playing alongside a trumpet a happy upbeat melody.,Flutes playing alongside a violin a happy upbeat melody.,INSTR,MusicDelta_LatinJazz_MIX.wav,66.966,314206
+470,gen060_MIX.wav,"Trumpets playing alongside a piano, bass and drums in an upbeat old-timey cool jazz song.","Saxophones playing alongside a piano, bass and drums in an upbeat old-timey cool jazz song.",INSTR,MusicDelta_ModalJazz_MIX.wav,103.779,314219
+526,gen061_MIX.wav,"A high quality recording of a man singing while a guitar, bass and drums accompany him.","A high quality recording of a saxophone playing while a guitar, bass and drums accompany him.",INSTR,MusicDelta_Punk_MIX.wav,28.763,314220
+258,gen052_MIX.wav,"A high quality recording of a woman singing, and a guitar, bass and drums playing.","A high quality recording of a woman singing, and a violin, bass and drums playing.",INSTR,MusicDelta_Country2_MIX.wav,17.455,314211
+211,gen062_MIX.wav,"A trumpet and a saxophone playing a cool jazz melody, with an accompaniment of a piano, bass and drums.","A violin and a saxophone playing a cool jazz melody, with an accompaniment of a piano, bass and drums.",INSTR,MusicDelta_CoolJazz_MIX.wav,101.562,314221
+605,gen063_MIX.wav,A calm song with guitars and drums playing.,A calm song with violins and drums playing.,INSTR,MusicDelta_Shadows_MIX.wav,33.491,314222
+442,gen054_MIX.wav,"A high quality recording of strings, flutes and drums playing.","A high quality recording of a piano, flutes and drums playing.",INSTR,MusicDelta_InTheHalloftheMountainKing_MIX.wav,17.444,314213
+259,gen052_MIX.wav,"A high quality recording of a woman singing, and a guitar, bass and drums playing.","A high quality recording of a woman singing, and a piano, bass and drums playing.",INSTR,MusicDelta_Country2_MIX.wav,17.455,314211
+330,gen064_MIX.wav,"A trumpet playing a slow cool jazz melody while an electric keyboard, bass and drums play in the background, later a saxophone preforms a solo as well.","A saxophone playing a slow cool jazz melody while an electric keyboard, bass and drums play in the background, later a trumpet preforms a solo as well.",INSTR,MusicDelta_FusionJazz_MIX.wav,110.986,314223
+112,gen065_MIX.wav,A recording of Chinese instruments playing.,A recording of a synthesizer playing.,INSTR,MusicDelta_ChineseChaoZhou_MIX.wav,56.668,314224
+358,gen066_MIX.wav,A high quality recording of a woman singing with a guitar and drums playing in the background.,A high quality recording of a violin playing with a guitar and drums playing in the background.,INSTR,MusicDelta_Gospel_MIX.wav,75.737,314225
+451,gen047_MIX.wav,Flutes playing alongside a trumpet a happy upbeat melody.,A piano playing alongside a trumpet a happy upbeat melody.,INSTR,MusicDelta_LatinJazz_MIX.wav,66.966,314206
+280,gen067_MIX.wav,"A high quality recording of a man singing, and a guitar, bass and drums playing.","A high quality recording of a man singing, and a piano, bass and drums playing.",INSTR,MusicDelta_Disco_MIX.wav,124.78,314226
+175,gen000_MIX.wav,"Arabic and Chinese strings playing a mysterious song, alongside drums and Chinese flutes.","Arabic and Chinese strings playing a happy song, alongside drums and Chinese flutes.",MOOD,MusicDelta_ChineseXinJing_MIX.wav,65.37,314159
+224,gen068_MIX.wav,A recording of a calm country song.,"A recording of a funky, upbeat country song.",MOOD,MusicDelta_Country1_MIX.wav,34.743,314227
+426,gen069_MIX.wav,A recording of a scary classical music piece.,A recording of a happy classical music piece.,MOOD,MusicDelta_InTheHalloftheMountainKing_MIX.wav,17.444,314228
+348,gen018_MIX.wav,A recording of an upbeat gospel song.,A recording of a dark and sad gospel song.,MOOD,MusicDelta_Gospel_MIX.wav,75.737,314177
+123,gen004_MIX.wav,"Chinese strings, flutes, and harp playing an epic dramatic song.","Strings, flutes, and harp playing an upbeat happy piece.",MOOD,MusicDelta_ChineseDrama_MIX.wav,63.894,314163
+306,gen032_MIX.wav,A recording of a funky jazz song.,A recording of an angry metal song.,MOOD,MusicDelta_FunkJazz_MIX.wav,49.386,314191
+420,gen020_MIX.wav,"A rock song of a man singing while a guitar, bass and drums are playing in the background.","A rock song of a guitar, bass and drums are playing in the background.",OTHER,MusicDelta_Hendrix_MIX.wav,19.844,314179
+479,gen070_MIX.wav,"A high quality recording of trumpets playing a melody and a piano, bass and drums accompany them.","A high quality recording of women singing a melody and a piano, bass and drums accompany them.",OTHER,MusicDelta_ModalJazz_MIX.wav,103.779,314229
+425,gen071_MIX.wav,A high quality recording of a man singing with a rock band accompaniment.,A high quality recording of a rock band accompaniment.,OTHER,MusicDelta_Hendrix_MIX.wav,19.844,314230
+591,gen072_MIX.wav,A high quality recording of a woman singing while a guitar and drums play in the background.,A high quality recording of a violin playing while a flute and drums play in the background.,OTHER,MusicDelta_Rockabilly_MIX.wav,25.949,314231
+559,gen030_MIX.wav,"A cool 60s rock song of a man singing while a guitar, bass and drums accompany him.","A cool 80s rock song of a man singing while a guitar, bass and drums accompany him.",TEMPO,MusicDelta_Rock_MIX.wav,13.091,314189
+558,gen030_MIX.wav,"A cool 60s rock song of a man singing while a guitar, bass and drums accompany him.","A cool 70s rock song of a man singing while a guitar, bass and drums accompany him.",TEMPO,MusicDelta_Rock_MIX.wav,13.091,314189
+541,gen073_MIX.wav,A high quality recording of a man singing while bass and drums accompany him.,A high quality recording of a woman singing while bass and drums accompany her.,VOICE,MusicDelta_Reggae_MIX.wav,17.463,314232
+356,gen066_MIX.wav,A high quality recording of a woman singing with a guitar and drums playing in the background.,A high quality recording of a man singing with a guitar and drums playing in the background.,VOICE,MusicDelta_Gospel_MIX.wav,75.737,314225
+454,gen047_MIX.wav,Flutes playing alongside a trumpet a happy upbeat melody.,A woman vocalizing playing alongside a trumpet a happy upbeat melody.,VOICE,MusicDelta_LatinJazz_MIX.wav,66.966,314206
+403,gen074_MIX.wav,A high quality recording of a man singing with a rock band accompaniment.,A high quality recording of a woman singing with a rock band accompaniment.,VOICE,MusicDelta_Grunge_MIX.wav,41.854,314233
+249,gen008_MIX.wav,"A woman is singing a country song with a guitar, bass and drums playing in the background.","A man is singing a country song with a guitar, bass and drums playing in the background.",VOICE,MusicDelta_Country2_MIX.wav,17.455,314167
