@@ -94,7 +94,9 @@ EXPORTS=("SWEEP_CONFIGS=$SWEEP_CONFIGS")
 [ -n "${METHOD:-}" ] && EXPORTS+=("METHOD=$METHOD")
 # The grid file reads these, so the job must see the same values this preview used.
 [ -n "${SPLIT:-}" ] && EXPORTS+=("SPLIT=$SPLIT")
-[ -n "${CFG_TARS:-}" ] && EXPORTS+=("CFG_TARS=$CFG_TARS")
+# Spaces do not survive sbatch's --export list (the variable arrives truncated or not at all),
+# so multi-value CFG_TARS travels colon-separated; the grid files split on colons and spaces.
+[ -n "${CFG_TARS:-}" ] && EXPORTS+=("CFG_TARS=${CFG_TARS// /:}")
 if [ -n "${SKIP_EXISTING:-}" ]; then
   echo "skip_existing: on (resuming)"
   EXPORTS+=("SKIP_EXISTING=$SKIP_EXISTING")

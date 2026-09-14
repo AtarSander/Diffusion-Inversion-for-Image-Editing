@@ -75,6 +75,9 @@ for var in RUN_DIRS UNIQUE_TRACKS EXPECTED_ROWS SPLIT ARM SWEEP_CONFIGS LORA_EDI
            METHOD CFG_TARS; do
   [ -n "${!var:-}" ] && FORWARD+=("$var=${!var}")
 done
+# Spaces do not survive sbatch's --export list, so multi-value CFG_TARS travels
+# colon-separated; the grid files split on colons and spaces.
+[ -n "${CFG_TARS:-}" ] && FORWARD=("${FORWARD[@]/CFG_TARS=$CFG_TARS/CFG_TARS=${CFG_TARS// /:}}")
 if [ ${#FORWARD[@]} -gt 0 ]; then
   echo "forwarding: ${FORWARD[*]}"
   EXPORT_ARGS=(--export=ALL,"$(IFS=,; echo "${FORWARD[*]}")")

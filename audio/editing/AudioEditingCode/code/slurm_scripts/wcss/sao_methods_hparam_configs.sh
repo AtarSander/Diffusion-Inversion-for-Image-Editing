@@ -12,7 +12,7 @@ LORA_TSTART=(25 50 75 99)
 # CFG_TARS overrides the guidance grid (space-separated), e.g. CFG_TARS="10.5 14.0" for the
 # high-guidance DDPM sweep; SPLIT moves the whole grid onto another benchmark split, e.g.
 # SPLIT=genhparam for the generated-input rows. Both reach the eval job through the same file.
-LORA_CFG_TAR=(${CFG_TARS:-3.5 7.0})
+LORA_CFG_TAR=($(tr ":," "  " <<< "${CFG_TARS:-3.5 7.0}"))
 LORA_STEPS=100
 LORA_CFG_SRC=1.0
 LORA_SPLIT="${SPLIT:-hparam}"

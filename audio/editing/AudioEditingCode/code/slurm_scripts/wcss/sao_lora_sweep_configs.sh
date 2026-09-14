@@ -25,7 +25,7 @@ LORA_CHECKPOINTS=(
 LORA_TSTART=(25 50 75 99)
 # CFG_TARS overrides the guidance grid (space-separated); SPLIT moves the grid onto another
 # benchmark split, e.g. SPLIT=genhparam for the generated-input rows.
-LORA_CFG_TAR=(${CFG_TARS:-3.5 7.0})
+LORA_CFG_TAR=($(tr ":," "  " <<< "${CFG_TARS:-3.5 7.0}"))
 LORA_STEPS=100
 LORA_CFG_SRC=1.0
 LORA_SPLIT="${SPLIT:-hparam}"

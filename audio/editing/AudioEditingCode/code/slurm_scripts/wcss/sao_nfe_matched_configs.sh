@@ -13,7 +13,7 @@ BUDGET=300
 LORA_MODE="${METHOD:?set METHOD=odeinv, ddpm or sdedit}"
 # The guidance value changes no NFE: both CFG branches are computed per call whatever the scale,
 # so one budget's (tstart, steps) points stay valid across CFG_TARS.
-LORA_CFG_TAR=(${CFG_TARS:-3.5})
+LORA_CFG_TAR=($(tr ":," "  " <<< "${CFG_TARS:-3.5}"))
 LORA_CFG_SRC=1.0
 LORA_SPLIT=hparam
 LORA_STEPS=100  # per-row steps override this
