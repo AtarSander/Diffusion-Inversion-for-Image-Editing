@@ -8,6 +8,39 @@ Most recent first. Keep this file current — it is the handover doc between ses
 
 ---
 
+## 2026-09-15 — RESULT: H2 is a clean null; the matched-NFE sweep restores ODEInv's tail advantage
+
+**H2 (dense training data): null.** The dense991 adapter (baseline 2.692e-4, val 2.72e-5 = 89.9%
+closed — same objective fit as the coarse adapter) reproduces the coarse adapter's editing effect
+to the third decimal. Paired dense − coarse@4000 over the 8 cells: dLPAPS −0.0005..−0.0062 (three
+cells p<0.05, all ~100x smaller than the adapter effect itself), every other metric ±0.001.
+Dense − no-LoRA matches the coarse deltas cell for cell. So a verified-exact 10x-denser training
+trajectory — per-step input shift 1.4e-4, ~1e-2 accumulated — buys ~0.003 LPAPS. Together with H1
+(the full real-vs-generated shift buys ~0.07 LPAPS, ~4% of the front), the dose-response is
+roughly proportional and small everywhere: **the input-distribution axis is not where the editing
+ceiling lives.** Runs: `saocos_dense991_r8_a4_lr5e-5` cells vs their twins; script pattern in
+output/gen_inputs. Do not spend further compute on trajectory quality without a new mechanism.
+
+**Matched NFE at cfg 3.5–14 (48 new runs, `output/matched_nfe/20260914_191008`).** At equal
+compute DDPM-inv does NOT catch the ODE tail: MuQ 0.286 vs ODEInv+LoRA 0.308 at LPAPS ~5.3; the
+s100 near-merge was partly DDPM's per-point NFE advantage (2(100+t) vs 3t). Fronts split by
+regime: DDPM the preserved end, ODEInv±LoRA the aligned end, SDEdit the extreme tail. The LoRA's
+paired LPAPS gain persists at every guidance (−0.02..−0.08), shrinking slightly with cfg.
+
+**H1 figure** (`output/gen_inputs/20260914_222605/`): fronts + paired deltas, real vs generated.
+On generated inputs all fronts shift far left (easier preservation) but alignment ceilings DROP
+(dir-MuLan max ~0.20 vs ~0.35 real), and DDPM-inv saturates earliest — exact inversion is worth
+more on-manifold.
+
+**Ops hardening shipped this session** (all on audio_edit): SPLIT/CFG_TARS-parameterized grids
+with grid-owned `medleymd/stable_audio` subdir; eval split-leak fix; space-safe CFG_TARS through
+sbatch (colon form); `submit_edit_eval.sh` one-command pair submission with retries;
+`--skip_existing` support in the SAO edit driver (Fire rejected it only AFTER a full edit, so
+retries tripled work and exit codes lied); SRC/ARM_KIND/PROBE forwarded explicitly;
+`verify_trajectories.py` covers SAO plain + dense datasets.
+
+---
+
 ## 2026-09-14 (evening) — RESULT: H3 mostly closes, H1 finds a real but small distribution gap
 
 Scored runs: `output/all_methods/20260914_163319` (hparam, DDPM cfg 3.5–14) and
