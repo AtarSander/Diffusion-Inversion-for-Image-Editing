@@ -88,9 +88,9 @@ def main(runs_root: str, out_root: str = "output/matched_nfe") -> None:
     base = df[df.arm == "ODEInv (no LoRA)"].set_index(["tstart", "steps", "cfg_tar"])
     shared = lora.index.intersection(base.index)
     delta = pd.DataFrame({
-        "depth": lora.loc[shared, "depth"],
+        "depth": lora.loc[shared, "depth"].to_numpy(),
         "cfg_tar": [ix[2] for ix in shared],
-        **{m: lora.loc[shared, m] - base.loc[shared, m] for m in METRICS},
+        **{m: (lora.loc[shared, m] - base.loc[shared, m]).to_numpy() for m in METRICS},
     }).sort_values(["cfg_tar", "depth"])
     print("\nLoRA - no LoRA, paired at matched depth (LPAPS lower is better):")
     print(delta.to_string(index=False, float_format=lambda v: f"{v:+.4f}"))
