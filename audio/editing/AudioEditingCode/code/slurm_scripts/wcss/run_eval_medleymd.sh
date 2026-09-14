@@ -67,6 +67,10 @@ fi
 # SPLIT=hparam scores the hyperparameter sweep instead of these baselines. The grid lives in one
 # file that both the edit job and this one read, so the run directories are derived rather than
 # retyped -- there is no way for the two to disagree about which runs exist.
+# Remember whether the submission actually set SPLIT before defaulting it: the ARM=lora grid
+# file below reads ${SPLIT:-hparam}, and this script's baseline default of "full" must not leak
+# into it (that mis-derived every run directory as *_full_* and failed three eval arrays).
+SPLIT_FROM_ENV="${SPLIT:-}"
 SPLIT="${SPLIT:-full}"
 if [ "$SPLIT" != "full" ]; then
   source "editing/AudioEditingCode/code/slurm_scripts/wcss/hparam_sweep_configs.sh" || exit 1
@@ -82,7 +86,9 @@ fi
 if [ "${ARM:-}" = "lora" ]; then
   # Same two hooks as the edit job, so eval reads the identical grid: SWEEP_CONFIGS picks the file
   # and LORA_EDITS_SUBDIR the model's directory under the edits root (Stable Audio writes to
-  # medleymd/stable_audio).
+  # medleymd/stable_audio). The grid file must see the submission's SPLIT (possibly unset), not
+  # the baseline default applied above.
+  SPLIT="$SPLIT_FROM_ENV"
   source "${SWEEP_CONFIGS:-editing/AudioEditingCode/code/slurm_scripts/wcss/lora_sweep_configs.sh}" || exit 1
   RUNS=()
   while IFS='|' read -r ckpt tstart cfg steps; do
