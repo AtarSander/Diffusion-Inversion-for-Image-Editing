@@ -17,7 +17,55 @@ if str(AUDIO_ROOT) not in sys.path:
     sys.path.insert(0, str(AUDIO_ROOT))
 
 from src.inversion_lora.generate_trajectories import git_sha, load_captions  # noqa: E402
-from src.inversion_lora.stable_audio import StableAudioTeacher, load_teacher  # noqa: E402
+from src.inversion_lora.stable_audio import (  # noqa: E402
+    ExactDPMSolver,
+    StableAudioTeacher,
+    load_teacher,
+)
+
+
+def dense_coarse_pairs(
+    trajectory: torch.Tensor,
+    data: torch.Tensor,
+    coarse_solver: ExactDPMSolver,
+    stride: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Reduce a fine ODE trajectory to coarse-grid training rows with exact-coarse-step inputs.
+
+    The fine trajectory's states at the coarse grid points are higher quality than a coarse
+    trajectory's, but `stride` fine steps are not one coarse step, so the fine state at point
+    k+1 is NOT what the coarse inverse step will later have to undo. Each training input is
+    therefore formed as exactly one coarse reverse step from the fine state at point k: the row
+    then satisfies the same exact step invariant as a plain coarse dataset, while both sides of
+    the pair sit on the dense trajectory. The last coarse transition ends at sigma = 0 and is
+    dropped, as in the plain pipeline.
+
+    Args:
+        trajectory: Fine latents `[F + 1, C, L]`, noisiest first.
+        data: Data predictions `[F, C, L]`, `data[i]` at `(trajectory[i], fine timestep i)`.
+        coarse_solver: Solver over the coarse grid the LoRA trains and inverts on.
+        stride: Fine steps per coarse step; fine point `stride * k` is coarse point `k`.
+
+    Returns:
+        `(rows, targets, states, gap_rel)`: `rows[0]` is the initial latent and `rows[k + 1]`
+        the input of pair k `[K + 1, C, L]`; `targets[k]` the data prediction at `states[k]`
+        `[K, C, L]`; `states` the fine latents at every coarse point `[K + 1, C, L]`, kept for
+        verification; `gap_rel[k]` the relative distance between `rows[k + 1]` and the fine
+        state at coarse point k+1 — the dense-vs-coarse quality delta this dataset banks on.
+    """
+    n_coarse = len(coarse_solver.timesteps)
+    assert trajectory.shape[0] > stride * (n_coarse - 1), (trajectory.shape, stride, n_coarse)
+    states = trajectory[:: stride][:n_coarse]
+    targets = data[:: stride][: n_coarse - 1]
+    assert states.shape[0] == n_coarse and targets.shape[0] == n_coarse - 1
+
+    a, b = coarse_solver.coefficients_batch(torch.arange(n_coarse - 1))
+    inputs = a * states[:-1] + b * targets
+    rows = torch.cat([states[:1], inputs])
+
+    gap = inputs - states[1:]
+    gap_rel = gap.flatten(1).norm(dim=1) / states[1:].flatten(1).norm(dim=1)
+    return rows, targets, states, gap_rel
 
 
 def save_sample(
@@ -30,6 +78,7 @@ def save_sample(
     meta: dict,
     store_dtype: torch.dtype,
     uncond: torch.Tensor | None = None,
+    states: torch.Tensor | None = None,
 ) -> None:
     """Write one trajectory in the layout `AudioLDM2TrajectoryDataset` reads.
 
@@ -44,6 +93,8 @@ def save_sample(
         store_dtype: Dtype the tensors are cast to on disk.
         uncond: Unconditional predictions `[N, C, L]` when the trajectory was sampled with
             guidance; the dataset reads these as `uncond_eps` and the trainer recombines them.
+        states: Fine latents at the coarse grid points `[N + 1, C, L]` for a dense dataset;
+            training never reads them, verification recomputes the step invariant from them.
     """
     (sample_dir / "latents").mkdir(parents=True, exist_ok=True)
     (sample_dir / "targets").mkdir(parents=True, exist_ok=True)
@@ -55,6 +106,9 @@ def save_sample(
 
     torch.save(trajectory, sample_dir / "latents/trajectory.pt")
     torch.save(outputs, sample_dir / "targets/target_eps.pt")
+    if states is not None:
+        assert states.shape == trajectory.shape, (states.shape, trajectory.shape)
+        torch.save(states.to(store_dtype), sample_dir / "latents/states.pt")
     if uncond is not None:
         assert uncond.shape == outputs.shape, (uncond.shape, outputs.shape)
         torch.save(uncond.to(store_dtype), sample_dir / "targets/uncond_eps.pt")
@@ -158,6 +212,32 @@ def main(cfg: DictConfig) -> None:
     store_dtype = getattr(torch, str(cfg.store_dtype))
     guidance_scale = float(cfg.get("guidance_scale", 1.0))
     uncond_audio = teacher.encode_prompt("") if guidance_scale != 1.0 else None
+
+    # train_stride > 1: sample on a dense grid, train on the usual coarse one. The fine grid must
+    # nest the coarse grid exactly -- linspace ramps share points when F = stride * (K - 1) + 1,
+    # e.g. 991 fine points for a 100-point coarse grid at stride 10.
+    train_stride = int(cfg.get("train_stride", 1))
+    coarse_solver = None
+    if train_stride > 1:
+        assert guidance_scale == 1.0, "dense sampling is wired for the unguided objective only"
+        fine_steps = int(cfg.num_inference_steps)
+        assert (fine_steps - 1) % train_stride == 0, (
+            f"num_inference_steps={fine_steps} does not nest a coarse grid at stride "
+            f"{train_stride}; use stride * (coarse - 1) + 1 points (991 for 100 @ 10)"
+        )
+        coarse_steps = (fine_steps - 1) // train_stride + 1
+        coarse_scheduler = type(scheduler).from_config(scheduler.config)
+        coarse_scheduler.set_timesteps(coarse_steps, device=device)
+        coarse_solver = ExactDPMSolver(coarse_scheduler)
+        fine_sigmas = ExactDPMSolver(scheduler).sigmas
+        assert torch.allclose(
+            coarse_solver.sigmas[:-1], fine_sigmas[:-1][::train_stride], rtol=1e-5, atol=0
+        ), "the fine sigma grid does not nest the coarse one"
+        logger.info(
+            "dense sampling: {} fine steps -> {} coarse training pairs per trajectory",
+            fine_steps,
+            coarse_steps - 1,
+        )
     if guidance_scale != 1.0:
         logger.info(
             "guidance {}: the reverse step is driven by the combination, so both branches are "
@@ -171,11 +251,22 @@ def main(cfg: DictConfig) -> None:
         "solver": "first_order_ode",
         "pairing": "matched_timestep",
         "target_space": "data_prediction",
-        "num_inference_steps": int(cfg.num_inference_steps),
+        # The grid the training pairs live on; for a dense dataset that is the coarse grid.
+        "num_inference_steps": int(cfg.num_inference_steps)
+        if coarse_solver is None
+        else len(coarse_solver.timesteps),
         "duration_s": teacher.duration_s,
         "store_dtype": str(cfg.store_dtype),
         "git_sha": git_sha(),
     }
+    if coarse_solver is not None:
+        meta_base.update(
+            {
+                "input_space": "exact_coarse_step",
+                "train_stride": train_stride,
+                "fine_num_inference_steps": int(cfg.num_inference_steps),
+            }
+        )
 
     for offset, record in enumerate(tqdm(records, desc="samples")):
         sample_idx = start + offset
@@ -195,8 +286,25 @@ def main(cfg: DictConfig) -> None:
         # shifted one 0.0179 to 0.0474 -- see output/sao_schedules/REPORT.md.
         # The last transition ends at sigma = 0, where the reverse step discards the sample and has
         # no inverse, so it is dropped: trajectory[:-1] pairs with data[:-1].
-        trajectory, outputs, timesteps = trajectory[:-1], data[:-1], grid[1:]
-        uncond = uncond[:-1] if uncond is not None else None
+        states = None
+        sample_meta = {**meta_base, "sample_idx": sample_idx, "seed": seed}
+        if coarse_solver is None:
+            trajectory, outputs, timesteps = trajectory[:-1], data[:-1], grid[1:]
+            uncond = uncond[:-1] if uncond is not None else None
+        else:
+            trajectory, outputs, states, gap_rel = dense_coarse_pairs(
+                trajectory, data, coarse_solver, train_stride
+            )
+            timesteps = list(coarse_solver.timesteps)[1:]
+            sample_meta["dense_gap_rel_mean"] = float(gap_rel.mean())
+            sample_meta["dense_gap_rel_max"] = float(gap_rel.max())
+            if offset == 0:
+                logger.info(
+                    "dense-vs-coarse input gap (the signal this dataset adds): "
+                    "rel mean {:.3e}, max {:.3e}",
+                    float(gap_rel.mean()),
+                    float(gap_rel.max()),
+                )
 
         if offset == 0:
             log_first_sample(teacher, record, trajectory, outputs, timesteps, text_audio)
@@ -208,9 +316,10 @@ def main(cfg: DictConfig) -> None:
             timesteps,
             text_audio,
             record,
-            {**meta_base, "sample_idx": sample_idx, "seed": seed},
+            sample_meta,
             store_dtype,
             uncond=uncond,
+            states=states,
         )
 
     logger.success("Wrote trajectories for {} samples to {}", len(records), out_dir)

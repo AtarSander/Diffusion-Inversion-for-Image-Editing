@@ -1,0 +1,38 @@
+# Dense-sampled Stable Audio trajectories for the inversion LoRA (H2): the ODE runs 991 fine
+# steps so the states are closer to the true trajectory, but the saved training pairs live on
+# the usual 100-point coarse grid. Each input is one exact coarse step from the fine state at
+# the coarse point, so the pair keeps the exact step invariant the coarse inversion relies on
+# while both sides sit on the dense trajectory. Training and editing configs are unchanged.
+# Run:   uv run --python .venv/bin/python src/inversion_lora/generate_trajectories_stable_audio.py --config-name generate_trajectories_stable_audio_dense device=cuda:0
+# Smoke: ... num_samples=2 num_inference_steps=21 train_stride=10 output_dir=/tmp/sao_dense_smoke
+
+device: cpu # set to cuda:N explicitly; never auto-grab a shared GPU
+
+model_id: stabilityai/stable-audio-open-1.0
+schedule: cosine
+# stride * (coarse - 1) + 1 fine points nest a coarse grid exactly (linspace ramps share every
+# stride-th point); 991 @ stride 10 trains on the same 100-point grid as the baseline dataset.
+num_inference_steps: 991
+train_stride: 10
+duration_s: null
+# Dense sampling is wired for the unguided objective only (guidance would need the guided
+# combination inside the exact coarse step); the generator asserts this.
+
+captions_csv: editing/music_caps_dl/metadata/musiccaps-public.csv
+caption_column: caption
+
+# Same 1500 captions and same seeds as the baseline coarse dataset, so the two differ only in
+# sampling density. ~10x the generation compute of the coarse dataset; storage is 1.5x
+# (states.pt per sample, kept for verification) => ~118 GB. Check free space first.
+output_dir: ${oc.env:LORAINV_DATA_ROOT}/stable_audio_cosine_ode_fp32_dense991
+start_index: 0
+num_samples: 1500
+seed: 42
+
+store_dtype: float32
+overwrite: false
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
