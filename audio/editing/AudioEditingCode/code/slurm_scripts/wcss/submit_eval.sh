@@ -41,8 +41,11 @@ if ! .venv_eval/bin/python -V >/dev/null 2>&1; then
 fi
 
 if .venv_eval/bin/python -V >/dev/null 2>&1; then
+  # Non-fatal: a chained submission may be queued before the upstream job has built the
+  # reference (e.g. genhparam behind its generation job); each task then builds the cache itself.
   PYTHONPATH="$AUDIO_ROOT:$AUDIO_ROOT/editing/AudioEditingCode" \
-  .venv_eval/bin/python - "${SPLIT:-full}" "${UNIQUE_TRACKS:-}" <<'PYCODE'
+  .venv_eval/bin/python - "${SPLIT:-full}" "${UNIQUE_TRACKS:-}" <<'PYCODE' \
+    || echo "    reference cache not warmed (reference missing?); tasks will build it themselves"
 import sys
 from pathlib import Path
 
