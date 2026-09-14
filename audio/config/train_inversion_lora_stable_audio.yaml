@@ -80,6 +80,14 @@ lora:
 # frozen-teacher pass per generation step -- so k >= 2 needs a smaller batch_size (4) and more
 # accumulation to hold the effective batch at 32. Gradient checkpointing cannot buy that room
 # back; see the note in cycle_per_example.
+# Guidance the cached trajectories were driven by; the loss is formed at the same value, since
+# the target must be the prediction the reverse step actually consumed. 1.0 collapses to the
+# conditional branch and the single-forward loss. Above 1.0 the dataset must carry both branches
+# (uncond_eps.pt) and the student runs two forwards per step.
+# Declared here rather than added with `+` on the command line: the slurm grid passes a plain
+# override, which Hydra refuses for a key the config does not define.
+guidance_scale: 1.0
+
 cycle:
   enabled: false
   steps: 1 # k: how many inversion steps to chain before generating back
