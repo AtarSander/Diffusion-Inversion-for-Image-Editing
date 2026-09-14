@@ -153,6 +153,13 @@ CONFIGS=(
   # a chained edit sweep wait 24 h for a checkpoint that exists at 5.6 h. Saving every 500 gives
   # a four-point dose-response inside the run for free.
   "attn|8|4|5e-5|cfg35_r8_a4_lr5e-5|guidance_scale=3.5 data_root=\${oc.env:LORAINV_DATA_ROOT}/stable_audio_cosine_ode_cfg35_fp32 max_train_steps=2000 save_every_steps=500 eval_every_steps=500 batch_size=4 gradient_accumulation_steps=8"
+  # 36: EXPERIMENT H2, Stable Audio only. Same objective and grid as the baseline
+  # saocos_r8_a4_lr5e-5; the only difference is the dataset: trajectories sampled with 991 fine
+  # steps and reduced to the 100-point coarse grid with exact-coarse-step inputs
+  # (generate_trajectories_stable_audio_dense.yaml), so the inputs sit on a higher-quality
+  # trajectory. Needs CONFIG_NAME=generate_trajectories_stable_audio_dense first. 3000 steps:
+  # editing is flat from step 2000, and saving every 500 gives the dose-response for free.
+  "attn|8|4|5e-5|dense991_r8_a4_lr5e-5|data_root=\${oc.env:LORAINV_DATA_ROOT}/stable_audio_cosine_ode_fp32_dense991 max_train_steps=3000 save_every_steps=500 eval_every_steps=500"
 )
 
 # Fail before the 12 GB model load rather than after it: wandb only reports a bad credential
