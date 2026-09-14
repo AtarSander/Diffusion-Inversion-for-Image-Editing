@@ -61,7 +61,7 @@ def collect(runs_root: Path) -> pd.DataFrame:
                 row[f"{name}_sem"] = frame[column].sem()
             rows.append(row)
     assert rows, f"no scored matched-NFE runs under {runs_root}"
-    return pd.DataFrame(rows).sort_values(["arm", "depth"]).reset_index(drop=True)
+    return pd.DataFrame(rows).sort_values(["arm", "cfg_tar", "depth"]).reset_index(drop=True)
 
 
 def main(runs_root: str, out_root: str = "output/matched_nfe") -> None:
@@ -77,25 +77,29 @@ def main(runs_root: str, out_root: str = "output/matched_nfe") -> None:
     out.mkdir(parents=True, exist_ok=True)
 
     budgets = sorted(df["nfe"].unique())
-    print(f"{len(df)} runs, NFE {budgets}, n={df['n'].iloc[0]} edits each\n")
-    show = df[["arm", "depth", "tstart", "steps", "lpaps", "clap", "muq", "clap_dir"]]
+    cfgs = sorted(df["cfg_tar"].unique())
+    print(f"{len(df)} runs, NFE {budgets}, cfg_tar {cfgs}, n={df['n'].iloc[0]} edits each\n")
+    show = df[["arm", "cfg_tar", "depth", "tstart", "steps", "lpaps", "clap", "muq", "clap_dir"]]
     print(show.to_string(index=False, float_format=lambda v: f"{v:.4f}"))
 
-    # Paired LoRA delta at matched (tstart, steps): the only arm with an adapter is odeinv.
-    lora = df[df.arm == "ODEInv w/ LoRA bw"].set_index(["tstart", "steps"])
-    base = df[df.arm == "ODEInv (no LoRA)"].set_index(["tstart", "steps"])
+    # Paired LoRA delta at matched (tstart, steps, guidance): the only arm with an adapter is
+    # odeinv, and pairing must not mix operating points across guidances.
+    lora = df[df.arm == "ODEInv w/ LoRA bw"].set_index(["tstart", "steps", "cfg_tar"])
+    base = df[df.arm == "ODEInv (no LoRA)"].set_index(["tstart", "steps", "cfg_tar"])
     shared = lora.index.intersection(base.index)
     delta = pd.DataFrame({
         "depth": lora.loc[shared, "depth"],
+        "cfg_tar": [ix[2] for ix in shared],
         **{m: lora.loc[shared, m] - base.loc[shared, m] for m in METRICS},
-    }).sort_values("depth")
+    }).sort_values(["cfg_tar", "depth"])
     print("\nLoRA - no LoRA, paired at matched depth (LPAPS lower is better):")
     print(delta.to_string(index=False, float_format=lambda v: f"{v:+.4f}"))
 
     fig, axes = plt.subplots(1, 3, figsize=(15.5, 4.8))
     fig.suptitle(
         f"Stable Audio Open at a matched budget of ~{budgets[0]} denoiser calls — MedleyMD hparam "
-        f"split, {df['n'].iloc[0]} edits, cfg_tar {df['cfg_tar'].iloc[0]}",
+        f"split, {df['n'].iloc[0]} edits, cfg_tar pooled: {', '.join(f'{c:g}' for c in cfgs)} "
+        "— points labelled depth/w",
         fontsize=13, fontweight="bold", y=1.02,
     )
     for ax, (metric, name) in zip(axes, [("clap", "CLAP to target caption"),
@@ -106,7 +110,8 @@ def main(runs_root: str, out_root: str = "output/matched_nfe") -> None:
             ax.errorbar(sub["lpaps"], sub[metric], xerr=sub["lpaps_sem"], yerr=sub[f"{metric}_sem"],
                         marker="o", ms=6, lw=1.6, capsize=2.5, color=COLORS.get(arm), label=arm)
             for _, r in sub.iterrows():
-                ax.annotate(f"{r['depth']}%", (r["lpaps"], r[metric]), fontsize=7.5,
+                label = f"{r['depth']}%" if len(cfgs) == 1 else f"{r['depth']}%/{r['cfg_tar']:g}"
+                ax.annotate(label, (r["lpaps"], r[metric]), fontsize=7,
                             textcoords="offset points", xytext=(4, 4), color=COLORS.get(arm))
         ax.set(xlabel="LPAPS to source (lower = better preserved)", ylabel=name, title=name)
         ax.grid(alpha=0.3)
@@ -117,7 +122,8 @@ def main(runs_root: str, out_root: str = "output/matched_nfe") -> None:
 
     df.to_csv(out / "matched_nfe_runs.csv", index=False)
     lines = [f"# Stable Audio Open at matched NFE (~{budgets[0]} denoiser calls)\n",
-             f"{len(df)} runs, {df['n'].iloc[0]} edits each, cfg_tar {df['cfg_tar'].iloc[0]}. "
+             f"{len(df)} runs, {df['n'].iloc[0]} edits each, cfg_tar pooled "
+             f"({', '.join(f'{c:g}' for c in cfgs)}). "
              f"Points are labelled by inversion depth = tstart/steps.\n",
              "Figure: `matched_nfe_front.png`.\n", "## All runs\n",
              show.to_markdown(index=False, floatfmt=".4f"), "\n## LoRA - no LoRA, paired\n",

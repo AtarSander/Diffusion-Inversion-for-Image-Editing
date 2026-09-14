@@ -11,10 +11,16 @@
 # weights, so ours costs no more than the no-LoRA arm.
 BUDGET=300
 LORA_MODE="${METHOD:?set METHOD=odeinv, ddpm or sdedit}"
-LORA_CFG_TAR=(3.5)
+# The guidance value changes no NFE: both CFG branches are computed per call whatever the scale,
+# so one budget's (tstart, steps) points stay valid across CFG_TARS.
+LORA_CFG_TAR=(${CFG_TARS:-3.5})
 LORA_CFG_SRC=1.0
 LORA_SPLIT=hparam
 LORA_STEPS=100  # per-row steps override this
+
+# The Stable Audio driver appends dataset_name to a path already containing it, so its runs
+# live under medleymd/stable_audio relative to the edits root.
+LORA_EDITS_SUBDIR="${LORA_EDITS_SUBDIR:-medleymd/stable_audio}"
 
 # depth:tstart:steps, solved per method for BUDGET
 case "$LORA_MODE" in
