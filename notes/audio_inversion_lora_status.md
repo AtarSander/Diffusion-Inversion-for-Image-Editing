@@ -8,6 +8,37 @@ Most recent first. Keep this file current — it is the handover doc between ses
 
 ---
 
+## 2026-09-14 (evening) — RESULT: H3 mostly closes, H1 finds a real but small distribution gap
+
+Scored runs: `output/all_methods/20260914_163319` (hparam, DDPM cfg 3.5–14) and
+`20260914_163322` (genhparam). H2 (dense991) still training; dense-vs-coarse input gap measured
+at rel mean 1.4e-4 / max 4.3e-4 per step — real signal, chain left running.
+
+**H3: the MuQ/directional "ceiling" was mostly a guidance artifact.** DDPM keeps climbing past
+cfg 7: MuQ 0.242 → 0.272 (10.5) → 0.288 (14, t99); mulan_dir 0.278 → 0.314 → 0.334. At matched
+preservation the fronts now touch: DDPM cfg14/t50 (LPAPS 4.79, MuQ 0.275) slightly dominates
+ODEInv+LoRA cfg7/t50 (4.88, 0.273). ODEInv keeps only the extreme-alignment tail: its best MuQ
+0.306 / mulan_dir 0.349 (cfg7, t99, LPAPS 5.66) vs DDPM's 0.288 / 0.334 at LPAPS 5.25. CLAP
+saturates for both (~0.345–0.349). NFE identical per DDPM row across cfg; DDPM spends more NFE
+than ODEInv on this grid, so its residual shortfall at the tail is conservative.
+
+**H1: the real-vs-generated gap exists, doubles the adapter's effect, and still does not change
+the regime.** Paired LoRA@4000 − no-LoRA at cfg 3.5 on generated inputs: dLPAPS −0.138/−0.133/
+−0.114 at t50/75/99 (all p<0.001) with CLAP now positive (+0.004..+0.0075, p<0.01 at t75/99) —
+preservation and alignment improve together, ~2x the real-audio deltas (−0.062/−0.080/−0.077).
+So training on generations does cost transfer to real audio — but even fully in-distribution the
+adapter moves LPAPS by ~4% of the front. The editing ceiling is not a train/test artifact.
+Side observation: on generated inputs ODEInv dominates DDPM-inv outright (DDPM saturates at
+CLAP 0.269 / MuQ 0.175 where ODEInv reaches 0.30 / 0.25) — exact inversion is worth more when
+the input actually lies on the model's trajectory manifold.
+
+**Ops note.** Three eval-array failures before the numbers landed, both mine: the eval script's
+`SPLIT=full` default leaked into the now-parameterized grid files (fixed: grid sees the
+submission's SPLIT), and `LORA_EDITS_SUBDIR` was retyped as `stable_audio` instead of the doubled
+`medleymd/stable_audio` (fixed: SAO grid files own the value). Edits were never affected.
+
+---
+
 ## 2026-09-14 (later) — BUILT: three experiments (generated inputs / dense training data / DDPM high-cfg)
 
 **H3 partial answer from disk first.** The all-methods plot pinned cfg_tar to 3.5, but the hparam
