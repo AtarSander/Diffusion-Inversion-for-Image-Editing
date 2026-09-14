@@ -23,7 +23,12 @@ else
   LORA_CHECKPOINTS=("saocos_cfg35_r8_a4_lr5e-5/checkpoint_step_2000.pt")
 fi
 LORA_TSTART=(25 50 75 99)
-LORA_CFG_TAR=(3.5)
+# Both target guidances, so cfg_src=3.5 gets a full 2x2 against ARM_KIND: {no-LoRA, CFG adapter}
+# x {cfg_tar 3.5, 7.0}. cfg_tar 7.0 matters because the adapter's collapse at src=3.5 hit
+# preservation AND alignment together (LPAPS 5.22 / CLAP 0.21 at t50) -- if that is a diverging
+# latent rather than a bad trade, more target guidance will not rescue it, and the 2x2 says which.
+# The adapter x cfg_tar 3.5 cell already exists on disk; pass SKIP_EXISTING=1 to leave it alone.
+LORA_CFG_TAR=(3.5 7.0)
 LORA_STEPS=100
 LORA_CFG_SRC="$SRC"
 LORA_SPLIT=hparam
