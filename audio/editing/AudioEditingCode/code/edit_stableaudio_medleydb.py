@@ -70,6 +70,7 @@ def main(
     unique_tracks: bool = False,
     reconstruct: bool = False,
     split: str = "full",
+    skip_existing: bool = False,
 ):
     """
     Main function to edit audio files using Stable Audio methods.
@@ -99,6 +100,8 @@ def main(
             rows; "hparam" is the 115-row subset used for the sweeps). Outputs are named by the
             row's index in the full set whichever split is used, so the eval has to be given the
             same split.
+        skip_existing: Skip rows whose output wav already exists, so a resubmitted or retried
+            run resumes instead of re-editing everything (default: False)
 
     Returns:
         None
@@ -161,6 +164,9 @@ def main(
 
             # Create output path for this specific file
             output_wav_path = str(path_dir_outs / f"a{idx}.wav")
+            if skip_existing and Path(output_wav_path).exists():
+                pbar.update(1)
+                continue
 
             # Call the original run_stable_audio_edit function with save_edit_wav_path
             run_stable_audio_edit(

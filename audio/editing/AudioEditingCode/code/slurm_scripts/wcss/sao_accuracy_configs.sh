@@ -78,3 +78,7 @@ lora_sweep_run_name() {
   fi
   echo "stableaudio_acc_${tail}_$(dirname "$ckpt")_$(basename "$ckpt" .pt)"
 }
+
+# The Stable Audio driver appends dataset_name to a path already containing it, so its runs
+# live under medleymd/stable_audio relative to the edits root.
+LORA_EDITS_SUBDIR="${LORA_EDITS_SUBDIR:-medleymd/stable_audio}"

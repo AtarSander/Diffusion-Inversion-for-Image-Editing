@@ -72,7 +72,7 @@ echo "submitting from: $AUDIO_ROOT"
 EXPORT_ARGS=()
 FORWARD=()
 for var in RUN_DIRS UNIQUE_TRACKS EXPECTED_ROWS SPLIT ARM SWEEP_CONFIGS LORA_EDITS_SUBDIR \
-           METHOD CFG_TARS; do
+           METHOD CFG_TARS SRC ARM_KIND PROBE; do
   [ -n "${!var:-}" ] && FORWARD+=("$var=${!var}")
 done
 # Spaces do not survive sbatch's --export list, so multi-value CFG_TARS travels

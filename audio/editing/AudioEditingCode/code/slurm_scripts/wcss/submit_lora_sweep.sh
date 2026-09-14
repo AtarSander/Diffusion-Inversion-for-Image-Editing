@@ -94,6 +94,8 @@ EXPORTS=("SWEEP_CONFIGS=$SWEEP_CONFIGS")
 [ -n "${METHOD:-}" ] && EXPORTS+=("METHOD=$METHOD")
 # The grid file reads these, so the job must see the same values this preview used.
 [ -n "${SPLIT:-}" ] && EXPORTS+=("SPLIT=$SPLIT")
+[ -n "${SRC:-}" ] && EXPORTS+=("SRC=$SRC")
+[ -n "${ARM_KIND:-}" ] && EXPORTS+=("ARM_KIND=$ARM_KIND")
 # Spaces do not survive sbatch's --export list (the variable arrives truncated or not at all),
 # so multi-value CFG_TARS travels colon-separated; the grid files split on colons and spaces.
 [ -n "${CFG_TARS:-}" ] && EXPORTS+=("CFG_TARS=${CFG_TARS// /:}")
