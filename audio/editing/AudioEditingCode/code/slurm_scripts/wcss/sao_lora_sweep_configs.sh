@@ -23,10 +23,12 @@ LORA_CHECKPOINTS=(
 # tstart=100 / cfg_tar=3.5 cell reproduces the run already on disk and doubles as a sanity check.
 # 99 rather than 100: the last reverse step ends at sigma = 0 and has no inverse.
 LORA_TSTART=(25 50 75 99)
-LORA_CFG_TAR=(3.5 7.0)
+# CFG_TARS overrides the guidance grid (space-separated); SPLIT moves the grid onto another
+# benchmark split, e.g. SPLIT=genhparam for the generated-input rows.
+LORA_CFG_TAR=(${CFG_TARS:-3.5 7.0})
 LORA_STEPS=100
 LORA_CFG_SRC=1.0
-LORA_SPLIT=hparam
+LORA_SPLIT="${SPLIT:-hparam}"
 
 # Emits "checkpoint|tstart|cfg_tar" per line; the array index is the line number, so this
 # ordering must not change while a sweep is in flight.

@@ -92,6 +92,9 @@ EXPORTS=("SWEEP_CONFIGS=$SWEEP_CONFIGS")
 [ -n "${LORA_EDITS_SUBDIR:-}" ] && EXPORTS+=("LORA_EDITS_SUBDIR=$LORA_EDITS_SUBDIR")
 [ -n "${PROBE:-}" ] && EXPORTS+=("PROBE=$PROBE")
 [ -n "${METHOD:-}" ] && EXPORTS+=("METHOD=$METHOD")
+# The grid file reads these, so the job must see the same values this preview used.
+[ -n "${SPLIT:-}" ] && EXPORTS+=("SPLIT=$SPLIT")
+[ -n "${CFG_TARS:-}" ] && EXPORTS+=("CFG_TARS=$CFG_TARS")
 if [ -n "${SKIP_EXISTING:-}" ]; then
   echo "skip_existing: on (resuming)"
   EXPORTS+=("SKIP_EXISTING=$SKIP_EXISTING")
