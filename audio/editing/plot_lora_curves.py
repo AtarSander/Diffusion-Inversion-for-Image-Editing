@@ -68,17 +68,17 @@ MODELS = {
         "title": "Stable Audio Open (matched NFE)",
         "grid": "equal denoiser-call budget",
         "subdirs": ["stable_audio"],
-        "glob": "stableaudio_*hparam_nfe*",
+        "glob": "stableaudio_*_nfe*",
         # The matched-NFE grid spends one fixed budget per run, which pins tstart per method and
         # leaves the grid length free -- so `steps` is the axis here, not tstart. The name also
         # orders the fields differently from the hparam grid (nfe/t/s then cfgtar), which is why
         # this needs its own patterns rather than a widened version of the ones above.
         "base": re.compile(
-            r"stableaudio_(?:odeinv|(?P<mode>ddpm|sdedit))_nolora_hparam"
+            r"stableaudio_(?:odeinv|(?P<mode>ddpm|sdedit))_nolora_(?P<split>[a-z]+)"
             r"_nfe(?P<nfe>\d+)_t(?P<tstart>\d+)_s(?P<steps>\d+)_cfgtar(?P<cfg_tar>[\d.]+)$"
         ),
         "lora": re.compile(
-            r"stableaudio_odeinvlora_(?P<checkpoint>.+?)_hparam"
+            r"stableaudio_odeinvlora_(?P<checkpoint>.+?)_(?P<split>hparam|genhparam)"
             r"_nfe(?P<nfe>\d+)_t(?P<tstart>\d+)_s(?P<steps>\d+)_cfgtar(?P<cfg_tar>[\d.]+)$"
         ),
     },

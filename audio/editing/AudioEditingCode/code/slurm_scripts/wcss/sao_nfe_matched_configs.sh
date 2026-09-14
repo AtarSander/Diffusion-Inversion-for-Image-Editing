@@ -15,7 +15,8 @@ LORA_MODE="${METHOD:?set METHOD=odeinv, ddpm or sdedit}"
 # so one budget's (tstart, steps) points stay valid across CFG_TARS.
 LORA_CFG_TAR=($(tr ":," "  " <<< "${CFG_TARS:-3.5}"))
 LORA_CFG_SRC=1.0
-LORA_SPLIT=hparam
+# SPLIT=genhparam runs the same budget grid on the generated-input rows.
+LORA_SPLIT="${SPLIT:-hparam}"
 LORA_STEPS=100  # per-row steps override this
 
 # The Stable Audio driver appends dataset_name to a path already containing it, so its runs
@@ -55,7 +56,7 @@ lora_sweep_configs() {
 # odeinv and sdedit, so deriving it from tstart collapsed all four points onto one directory.
 lora_sweep_run_name() {
   local ckpt="${1?checkpoint}" tstart="${2:?tstart}" cfg="${3:?cfg_tar}" steps="${4:?steps}"
-  local tail="hparam_nfe${BUDGET}_t${tstart}_s${steps}_cfgtar${cfg}"
+  local tail="${LORA_SPLIT}_nfe${BUDGET}_t${tstart}_s${steps}_cfgtar${cfg}"
   if [ -z "$ckpt" ]; then
     echo "stableaudio_${LORA_MODE}_nolora_${tail}"
   else
