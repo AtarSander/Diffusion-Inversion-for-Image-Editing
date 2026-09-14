@@ -56,3 +56,8 @@ lora_sweep_run_name() {
   local stem="$(basename "$ckpt" .pt)"
   echo "stableaudio_odeinvlora_${LORA_SPLIT}_${config}_${stem}_cfgtar${cfg}_t${tstart}_s${LORA_STEPS}"
 }
+
+# The Stable Audio driver appends dataset_name to a path already containing it, so its runs
+# live under medleymd/stable_audio relative to the edits root. Owned here so an edit or eval
+# submission cannot pair this grid with the wrong directory.
+LORA_EDITS_SUBDIR="${LORA_EDITS_SUBDIR:-medleymd/stable_audio}"
