@@ -37,6 +37,15 @@ ARMS = {
                             r"_checkpoint_step_2000", "#d62728", "-"),
     "ODEInv + cycle k=3":  (r"stableaudio_odeinvlora_{split}_saocos_cyc_k3_g1\.0_r8_a4_lr5e-5"
                             r"_checkpoint_step_2000", "#e377c2", "-"),
+    # Experiment 1: trained on guided (w=3.5) targets, where the shift gap is 2.6x the w=1 one
+    # (LoRA-disabled val loss 6.891e-4 vs 2.630e-4). Deployed both ways, because the pipeline
+    # inverts unguided by default: src=3.5 matches training and is the test, src=1.0 is the
+    # like-for-like comparison against every other arm. src=3.5 runs both branches on the
+    # inversion pass, so it spends ~2x the inversion NFE of the other ODEInv arms.
+    "CFG adapter, src=1.0": (r"stableaudio_odeinvlora_{split}_saocos_cfg35_r8_a4_lr5e-5"
+                             r"_checkpoint_step_2000_cfgsrc1\.0", "#17becf", "-"),
+    "CFG adapter, src=3.5": (r"stableaudio_odeinvlora_{split}_saocos_cfg35_r8_a4_lr5e-5"
+                             r"_checkpoint_step_2000_cfgsrc3\.5", "#8c564b", "-"),
 }
 TAIL = r"_cfgtar(?P<cfg>[\d.]+)_t(?P<tstart>\d+)_s100$"
 
