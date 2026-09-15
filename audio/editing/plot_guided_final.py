@@ -72,12 +72,7 @@ def main(runs_root: str, cfg_tar: float = 3.5, out_root: str = "output/guided_fi
     fig, axes = plt.subplots(1, 2, figsize=(14.6, 5.4))
     fig.suptitle(
         f"Stable Audio — CFG vs no-CFG Inversion (CFG target = {cfg_tar:g})",
-        fontsize=14, fontweight="bold", y=1.04,
-    )
-    fig.text(
-        0.5, 0.985,
-        f"100-step grid, {int(df.n.iloc[0])} edits, MedleyMD hparam split — points labelled tstart",
-        ha="center", fontsize=9.5, color="#555",
+        fontsize=14, fontweight="bold", y=1.02,
     )
     for ax, (metric, name) in zip(axes, METRICS):
         for label, _, color, style, marker in ARMS:
