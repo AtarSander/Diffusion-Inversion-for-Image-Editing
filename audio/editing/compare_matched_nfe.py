@@ -19,7 +19,8 @@ sys.path.insert(0, str(AUDIO_ROOT / "editing"))
 from plot_lora_curves import MODELS  # noqa: E402
 from run_metrics import PER_EXAMPLE_CSV  # noqa: E402
 
-METRICS = {"lpaps": "lpaps", "clap": "clap", "muq": "muqt_sim_p0", "clap_dir": "clap_dir"}
+METRICS = {"lpaps": "lpaps", "clap": "clap", "muq": "muqt_sim_p0", "clap_dir": "clap_dir",
+           "mulan_dir": "mulan_dir"}
 LABELS = {"odeinv": "ODEInv", "ddpm": "DDPM-inv", "sdedit": "SDEdit"}
 COLORS = {"ODEInv w/ LoRA bw": "#d62728", "ODEInv (no LoRA)": "#1f77b4",
           "DDPM-inv": "#2ca02c", "SDEdit": "#ff7f0e"}
@@ -67,74 +68,97 @@ def collect(runs_root: Path, split: str) -> pd.DataFrame:
     return pd.DataFrame(rows).sort_values(["arm", "cfg_tar", "depth"]).reset_index(drop=True)
 
 
+SPLIT_LABEL = {"hparam": "real audio", "genhparam": "generated inputs"}
+PANELS = [("clap", "CLAP to target"), ("muq", "MuQ-MuLan to target"),
+          ("clap_dir", "Directional CLAP"), ("mulan_dir", "Directional MuLan")]
+
+
+def lora_delta(df: pd.DataFrame) -> pd.DataFrame:
+    """Paired LoRA - no-LoRA delta at matched (tstart, steps, guidance).
+
+    Pairing must not mix operating points across guidances; the only arm with an adapter is
+    odeinv.
+    """
+    lora = df[df.arm == "ODEInv w/ LoRA bw"].set_index(["tstart", "steps", "cfg_tar"])
+    base = df[df.arm == "ODEInv (no LoRA)"].set_index(["tstart", "steps", "cfg_tar"])
+    shared = lora.index.intersection(base.index)
+    return pd.DataFrame({
+        "depth": lora.loc[shared, "depth"].to_numpy(),
+        "cfg_tar": [ix[2] for ix in shared],
+        **{m: (lora.loc[shared, m] - base.loc[shared, m]).to_numpy() for m in METRICS},
+    }).sort_values(["cfg_tar", "depth"])
+
+
 def main(runs_root: str, out_root: str = "output/matched_nfe", split: str = "hparam") -> None:
     """Write the matched-NFE table, the paired LoRA delta, and the front figure.
 
     Args:
         runs_root: Directory holding `stable_audio/`, e.g. .../edits/medleymd/medleymd.
         out_root: Destination, relative to `audio/`.
-        split: Benchmark split the runs were produced with (`hparam` real audio, `genhparam`
-            generated inputs).
+        split: `hparam` (real audio), `genhparam` (generated inputs), or `both` for one figure
+            with the real front on top and the generated one below, axes shared per column.
     """
-    df = collect(Path(runs_root), split)
+    splits = ["hparam", "genhparam"] if split == "both" else [split]
+    frames = {s: collect(Path(runs_root), s) for s in splits}
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out = AUDIO_ROOT / out_root / stamp
     out.mkdir(parents=True, exist_ok=True)
 
-    budgets = sorted(df["nfe"].unique())
-    cfgs = sorted(df["cfg_tar"].unique())
-    print(f"{len(df)} runs, NFE {budgets}, cfg_tar {cfgs}, n={df['n'].iloc[0]} edits each\n")
-    show = df[["arm", "cfg_tar", "depth", "tstart", "steps", "lpaps", "clap", "muq", "clap_dir"]]
-    print(show.to_string(index=False, float_format=lambda v: f"{v:.4f}"))
+    reference = frames[splits[0]]
+    budgets = sorted(reference["nfe"].unique())
+    cfgs = sorted(reference["cfg_tar"].unique())
+    lines = [f"# Stable Audio Open at matched NFE (~{budgets[0]} denoiser calls), "
+             f"split={split}\n",
+             f"{sum(len(f) for f in frames.values())} runs, {reference['n'].iloc[0]} edits "
+             f"each, cfg_tar pooled ({', '.join(f'{c:g}' for c in cfgs)}). "
+             f"Points are labelled by inversion depth = tstart/steps.\n",
+             "Figure: `matched_nfe_front.png`.\n"]
 
-    # Paired LoRA delta at matched (tstart, steps, guidance): the only arm with an adapter is
-    # odeinv, and pairing must not mix operating points across guidances.
-    lora = df[df.arm == "ODEInv w/ LoRA bw"].set_index(["tstart", "steps", "cfg_tar"])
-    base = df[df.arm == "ODEInv (no LoRA)"].set_index(["tstart", "steps", "cfg_tar"])
-    shared = lora.index.intersection(base.index)
-    delta = pd.DataFrame({
-        "depth": lora.loc[shared, "depth"].to_numpy(),
-        "cfg_tar": [ix[2] for ix in shared],
-        **{m: (lora.loc[shared, m] - base.loc[shared, m]).to_numpy() for m in METRICS},
-    }).sort_values(["cfg_tar", "depth"])
-    print("\nLoRA - no LoRA, paired at matched depth (LPAPS lower is better):")
-    print(delta.to_string(index=False, float_format=lambda v: f"{v:+.4f}"))
-
-    fig, axes = plt.subplots(1, 3, figsize=(15.5, 4.8))
+    fig, axes = plt.subplots(len(splits), 4, figsize=(21.5, 5.2 * len(splits)),
+                             sharex="col", sharey="col", squeeze=False)
     fig.suptitle(
-        f"Stable Audio Open at a matched budget of ~{budgets[0]} denoiser calls — split={split}, "
-        f"{df['n'].iloc[0]} edits, cfg_tar pooled: {', '.join(f'{c:g}' for c in cfgs)} "
+        f"Stable Audio Open at a matched budget of ~{budgets[0]} denoiser calls — "
+        f"{reference['n'].iloc[0]} edits, cfg_tar pooled: {', '.join(f'{c:g}' for c in cfgs)} "
         "— points labelled depth/w",
-        fontsize=13, fontweight="bold", y=1.02,
+        fontsize=13, fontweight="bold", y=1.0,
     )
-    for ax, (metric, name) in zip(axes, [("clap", "CLAP to target caption"),
-                                         ("muq", "MuQ-MuLan to target"),
-                                         ("clap_dir", "Directional CLAP")]):
-        for arm, sub in df.groupby("arm"):
-            sub = sub.sort_values("lpaps")
-            ax.errorbar(sub["lpaps"], sub[metric], xerr=sub["lpaps_sem"], yerr=sub[f"{metric}_sem"],
-                        marker="o", ms=6, lw=1.6, capsize=2.5, color=COLORS.get(arm), label=arm)
-            for _, r in sub.iterrows():
-                label = f"{r['depth']}%" if len(cfgs) == 1 else f"{r['depth']}%/{r['cfg_tar']:g}"
-                ax.annotate(label, (r["lpaps"], r[metric]), fontsize=7,
-                            textcoords="offset points", xytext=(4, 4), color=COLORS.get(arm))
-        ax.set(xlabel="LPAPS to source (lower = better preserved)", ylabel=name, title=name)
-        ax.grid(alpha=0.3)
-    axes[0].legend(fontsize=9, loc="best")
-    fig.tight_layout()
+    for row, s in enumerate(splits):
+        df = frames[s]
+        print(f"\n=== split={s}: {len(df)} runs ===")
+        show = df[["arm", "cfg_tar", "depth", "tstart", "steps",
+                   "lpaps", "clap", "muq", "clap_dir", "mulan_dir"]]
+        print(show.to_string(index=False, float_format=lambda v: f"{v:.4f}"))
+        delta = lora_delta(df)
+        print("\nLoRA - no LoRA, paired at matched depth (LPAPS lower is better):")
+        print(delta.to_string(index=False, float_format=lambda v: f"{v:+.4f}"))
+        lines += [f"\n## All runs — {SPLIT_LABEL[s]}\n",
+                  show.to_markdown(index=False, floatfmt=".4f"),
+                  f"\n## LoRA - no LoRA, paired — {SPLIT_LABEL[s]}\n",
+                  delta.to_markdown(index=False, floatfmt="+.4f")]
+        df.to_csv(out / f"matched_nfe_runs_{s}.csv", index=False)
+
+        for ax, (metric, name) in zip(axes[row], PANELS):
+            for arm, sub in df.groupby("arm"):
+                sub = sub.sort_values("lpaps")
+                ax.errorbar(sub["lpaps"], sub[metric], xerr=sub["lpaps_sem"],
+                            yerr=sub[f"{metric}_sem"], marker="o", ms=6, lw=1.6, capsize=2.5,
+                            color=COLORS.get(arm), label=arm)
+                for _, r in sub.iterrows():
+                    label = (f"{r['depth']}%" if len(cfgs) == 1
+                             else f"{r['depth']}%/{r['cfg_tar']:g}")
+                    ax.annotate(label, (r["lpaps"], r[metric]), fontsize=7,
+                                textcoords="offset points", xytext=(4, 4),
+                                color=COLORS.get(arm))
+            if row == len(splits) - 1:
+                ax.set_xlabel("LPAPS to source (lower = better preserved)")
+            ax.set(ylabel=name, title=f"{name} — {SPLIT_LABEL[s]}")
+            ax.grid(alpha=0.3)
+    axes[0][0].legend(fontsize=9, loc="best")
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
     for ext in ("png", "svg"):
         fig.savefig(out / f"matched_nfe_front.{ext}", dpi=150, bbox_inches="tight")
 
-    df.to_csv(out / "matched_nfe_runs.csv", index=False)
-    lines = [f"# Stable Audio Open at matched NFE (~{budgets[0]} denoiser calls), "
-             f"split={split}\n",
-             f"{len(df)} runs, {df['n'].iloc[0]} edits each, cfg_tar pooled "
-             f"({', '.join(f'{c:g}' for c in cfgs)}). "
-             f"Points are labelled by inversion depth = tstart/steps.\n",
-             "Figure: `matched_nfe_front.png`.\n", "## All runs\n",
-             show.to_markdown(index=False, floatfmt=".4f"), "\n## LoRA - no LoRA, paired\n",
-             delta.to_markdown(index=False, floatfmt="+.4f"), ""]
-    (out / "REPORT.md").write_text("\n".join(lines))
+    (out / "REPORT.md").write_text("\n".join(lines) + "\n")
     print(f"\nwrote {out}")
 
 
