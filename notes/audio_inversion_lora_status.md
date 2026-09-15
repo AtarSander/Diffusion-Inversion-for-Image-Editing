@@ -105,6 +105,39 @@ measured round-trip error".
 
 ---
 
+## 2026-09-15 (night) — RESULT: the real-audio adapter moves editing 3x more than any before — along the front
+
+The forward-noise experiment ran end to end (dataset 1472 samples verified; training
+`saocos_realfn_r8_a4_lr5e-5`; sweep + eval; figures `output/real_pairs/20260915_214111/`).
+
+**The mechanism is real and large.** The LoRA-disabled baseline on forward-noised real states is
+**9.75e-2 — 370x the trajectory datasets'** (2.6e-4), concentrated at the noisy end
+(2.5e-1 -> 4e-3 across the schedule; independently recomputed locally, 9.4e-2). The adapter closes
+99.77% of it (final val 2.25e-4): on real off-manifold states it now matches the frozen teacher's
+on-trajectory accuracy.
+
+**Editing verdict: the largest adapter effect of the project, but mostly along the trade-off
+front.** Paired realfn - no-LoRA on real audio: **dLPAPS -0.15..-0.22 at t50-99 (p<0.001), ~3x
+the trajectory adapters'** -0.05..-0.08. The cost side splits by guidance: at cfg_tar 3.5 alignment
+pays (CLAP -0.007..-0.017, MuQ -0.021*** at t50) — an along-front move that locally overpays; at
+cfg_tar 7.0 alignment is flat (CLAP -0.001..-0.006 n.s.) and the t50 cell lands **~0.009 CLAP above
+the no-LoRA front** — a genuine, if modest, off-front gain. At t25 the realfn adapter is *worse*
+than the trajectory one (+0.02 LPAPS***): shallow inversion never visits the off-manifold states
+it fixes. DDPM-inv's front remains clearly ahead at the preserved end.
+
+**Reading.** Fixing the off-manifold prediction error makes ODE inversion carry source information
+through the round trip far better — the robustness mechanism transfers to editing, unlike every
+accuracy/quality lever before it — but most of what it buys is spent the way DDPM spends its
+robustness: preservation, traded along the same front. The pre-registered H1 bound (-0.06 LPAPS)
+was beaten ~3x, so the bound applied to distribution shift, not to this mechanism. Caveats:
+184-clip corpus (cookies would give 1650), checkpoint picked on loss, single seed.
+
+**Next candidates, in order of leverage:** (1) realfn at higher cfg_tar (10.5/14) — if the
+alignment cost stays flat as at 7.0, the off-front region grows; (2) mixed dataset
+(trajectory + realfn pairs) to recover the t25 regression; (3) full corpus via cookies.
+
+---
+
 ## 2026-09-15 (later) — RESULT: DDPM-inv's advantage is off-manifold robustness. NEXT: real-audio forward-noise pairs
 
 **The 128-run matched-NFE x input-distribution grid is complete** (4 methods x 4 depths x 4
