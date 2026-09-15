@@ -167,6 +167,11 @@ CONFIGS=(
   # trajectory. Needs CONFIG_NAME=generate_trajectories_stable_audio_dense first. 3000 steps:
   # editing is flat from step 2000, and saving every 500 gives the dose-response for free.
   "attn|8|4|5e-5|dense991_r8_a4_lr5e-5|data_root=\${oc.env:LORAINV_DATA_ROOT}/stable_audio_cosine_ode_fp32_dense991 max_train_steps=3000 save_every_steps=500 eval_every_steps=500"
+  # 37: real-audio forward-noise pairs, Stable Audio only. Same objective/grid/preset as the
+  # baseline; the dataset is MusicCaps clips forward-noised to every coarse sigma with exact
+  # coarse-step inputs (generate_real_pairs_stable_audio.yaml) — trained on the off-manifold
+  # states DDPM-inv's robustness advantage lives on. Needs the real-pairs dataset first.
+  "attn|8|4|5e-5|realfn_r8_a4_lr5e-5|data_root=\${oc.env:LORAINV_DATA_ROOT}/stable_audio_real_pairs_fp32 max_train_steps=3000 save_every_steps=500 eval_every_steps=500"
 )
 
 # Fail before the 12 GB model load rather than after it: wandb only reports a bad credential

@@ -105,6 +105,50 @@ measured round-trip error".
 
 ---
 
+## 2026-09-15 (later) — RESULT: DDPM-inv's advantage is off-manifold robustness. NEXT: real-audio forward-noise pairs
+
+**The 128-run matched-NFE x input-distribution grid is complete** (4 methods x 4 depths x 4
+guidances x {real, generated}, every point ~300 denoiser calls; figure
+`output/matched_nfe/20260915_123221/`, tables + paired deltas in its REPORT.md). Three results:
+
+1. **Reachability at equal compute, both input distributions:** CLAP's ceiling is effectively
+   shared (DDPM within 0.005-0.008 of ODEInv's, at better LPAPS). **MuQ is not**: DDPM caps at
+   0.285 vs ODEInv's 0.317 on real audio, 0.259 vs 0.314 on generated — the gap *widens*
+   on-manifold. Directional MuLan splits (unreachable on real, exceeded on generated). All
+   ceilings sit at cfg 14 with a flattening trend; cfg_src=1.0 is the one untuned DDPM knob.
+2. **DDPM-inv's front dominance on real audio is robustness, not editing quality.** On generated
+   (on-manifold) inputs its mid-front advantage over ODEInv vanishes — the fronts coincide —
+   while its operating range *ends* at LPAPS ~4.6 where ODEInv extends to 5.5 with higher
+   alignment. Reading: DDPM's per-step noise vectors absorb the model's inversion error on
+   off-manifold (real) inputs; on-manifold there is no error to absorb, and the same
+   source-anchoring caps its maximum edit strength everywhere.
+3. **tstart is grid-relative; the front is set by terminal sigma and guidance.** Pooling every
+   run at <= 300 calls: ODEInv's coarse-grid mid-tstart points coincide with fine-grid deep
+   points at matched depth (t50/s100 at 152 calls == t99/s198 at 300, deltas <= 0.003) — ODEInv
+   matches its own full-budget points at ~half the calls; DDPM structurally cannot go below
+   2(N+T). Partial inversion to 50-75% depth dominates full inversion for every method.
+
+**NEXT — real-audio forward-noise pairs (running).** If (2) is right, the ODE adapter's missing
+piece is exactly training on off-manifold states. New dataset
+(`generate_real_pairs_stable_audio.py` + `generate_real_pairs_stable_audio.yaml`): MusicCaps
+clips VAE-encoded (silence-padded to the window, seconds conditioning at true duration),
+forward-noised to every coarse sigma with an independent draw per level (`y_k = x0 + sigma_k
+eps_k` — the marginal the teacher itself was trained on), teacher queried once per state,
+inputs formed as one exact coarse step (the H2 machinery, so trainer/verifier/dataset are
+untouched; `states_source: real_audio_forward_noise` in meta). Sampling-free, so one clip gives
+`draws_per_clip` samples: 184 downloaded clips x 8 draws = 1472 samples ~ the trajectory corpus.
+**Seeds 500000+ reserved for this dataset.** Smoke-verified on GPU against real clips; exact-step
+invariant passes the verifier.
+
+Expectations, stated before the run: H1 bounds the naive gain (~ -0.06 LPAPS on real audio,
+CLAP -> slightly positive) — see the 2026-09-15 H2-null entry and [[input-distribution-axis-null]]
+in memory; the interesting outcome is whether robustness-targeted training beats that bound at
+the *preserved end on real audio*, the regime where DDPM currently wins. Corpus caveat: 184/1650
+clips until a cookies.txt clears YouTube's bot flag (the downloader supports `YTDLP_COOKIES`);
+diversity, not pair count, is the limit — 8 draws/clip restores the pair budget.
+
+---
+
 ## 2026-09-15 — RESULT: H2 is a clean null; the matched-NFE sweep restores ODEInv's tail advantage
 
 **H2 (dense training data): null.** The dense991 adapter (baseline 2.692e-4, val 2.72e-5 = 89.9%

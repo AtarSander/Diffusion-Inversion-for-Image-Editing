@@ -1,0 +1,35 @@
+# Real-audio training pairs for the inversion LoRA: MusicCaps clips VAE-encoded, forward-noised
+# to every coarse grid sigma, teacher queried there, inputs formed as one exact coarse step.
+# Motivation: DDPM-inv's real-audio advantage is robustness to off-manifold inputs; this trains
+# the ODE adapter on exactly those states. Sampling-free: one clip yields draws_per_clip samples.
+# Run:   uv run --python .venv/bin/python src/inversion_lora/generate_real_pairs_stable_audio.py device=cuda:0
+# Smoke: ... device=cuda:0 num_samples=2 num_inference_steps=20 output_dir=/tmp/real_pairs_smoke
+
+device: cpu # set to cuda:N explicitly; never auto-grab a shared GPU
+
+model_id: stabilityai/stable-audio-open-1.0
+schedule: cosine
+num_inference_steps: 100 # the grid the LoRA trains and the editing baselines run on
+
+captions_csv: editing/music_caps_dl/metadata/musiccaps-public.csv
+audio_dir: ${oc.env:MUSICCAPS_AUDIO_DIR}
+# The training slice of the caption file; clips missing from audio_dir are skipped, so the
+# sample count is (available clips) x draws_per_clip.
+num_captions: 1650
+# Independent noise per (draw, sigma level): the forward marginal the teacher was trained on.
+draws_per_clip: 8
+
+output_dir: ${oc.env:LORAINV_DATA_ROOT}/stable_audio_real_pairs_fp32
+start_index: 0
+num_samples: null # null => all samples from start_index; shards slice [start, start+num)
+# Reserved for the real-pairs dataset: trajectories use 42..1541, eval inputs 314159..314233.
+seed_base: 500000
+forward_batch_size: 16
+
+store_dtype: float32
+overwrite: false
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
