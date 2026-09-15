@@ -114,8 +114,7 @@ def main(runs_root: str, out_root: str = "output/matched_nfe", split: str = "hpa
              f"Points are labelled by inversion depth = tstart/steps.\n",
              "Figure: `matched_nfe_front.png`.\n"]
 
-    fig, axes = plt.subplots(len(splits), 4, figsize=(21.5, 5.2 * len(splits)),
-                             sharex="col", sharey="col", squeeze=False)
+    fig, axes = plt.subplots(len(splits), 4, figsize=(21.5, 5.2 * len(splits)), squeeze=False)
     fig.suptitle(
         f"Stable Audio Open at a matched budget of ~{budgets[0]} denoiser calls — "
         f"{reference['n'].iloc[0]} edits, cfg_tar pooled: {', '.join(f'{c:g}' for c in cfgs)} "

@@ -54,8 +54,8 @@ def main(runs_root: str, out_root: str = "output/gen_inputs") -> None:
     root = Path(runs_root)
 
     # One front figure: rows are the splits (real on top, generated below), columns the
-    # alignment metrics; per-column shared axes make the distribution shift directly readable.
-    fig, axes = plt.subplots(2, 4, figsize=(24, 11), sharex="col", sharey="col")
+    # alignment metrics; each panel spans its own data range.
+    fig, axes = plt.subplots(2, 4, figsize=(24, 11))
     fig.suptitle(
         "H1 — the same methods on real audio (top) and on model generations (bottom) "
         "(cfg_tar 3.5, 100-step grid, 115 paired rows)", fontsize=17, fontweight="bold", y=0.99,
