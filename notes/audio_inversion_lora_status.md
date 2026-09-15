@@ -8,6 +8,52 @@ Most recent first. Keep this file current — it is the handover doc between ses
 
 ---
 
+## 2026-09-16 — RESULT: pair-branch is the best adapter we have, but does not rescue guided inversion
+
+All 16 cells scored (`ARM_KIND=pair`, cfg_src 1.0/3.5 x cfg_tar 3.5/7.0, real-audio hparam).
+
+**It beats every other adapter at cfg_src=1.0**, and unlike them it moves preservation and
+alignment together:
+
+| cfg_tar 3.5, t75 | LPAPS | CLAP |
+|---|---|---|
+| no LoRA | 5.3422 | 0.3155 |
+| w=1 adapter | 5.2632 | 0.3203 |
+| shared-CFG | 5.2848 | 0.3195 |
+| **pair-branch** | **5.2573** | **0.3210** |
+
+Best LPAPS and best CLAP of the four. The margin over the w=1 adapter is small (0.006 LPAPS) but
+it is the first variant to win on both axes at once, and at cfg_tar 7.0 it beats no-LoRA by
+0.062-0.067 LPAPS with CLAP also up (0.3323 -> 0.3366 at t50).
+
+**It does not fix guided inversion.** At cfg_src=3.5 it stays with the collapsed group: LPAPS
+5.05 / CLAP 0.228 at t50 against no-LoRA's 5.19 / 0.220 and the unguided front's 4.44 / 0.309.
+It is the best of the three guided arms -- it repairs about a third of shared-CFG's extra damage
+(5.2163 -> 5.0529) -- but the collapse is ~0.6 LPAPS deep and pair-branch removes ~0.14 of it.
+
+**So the guidance-amplification mechanism was real but minor.** Giving the empty prompt its own
+adapter measurably helps, which means a shared adapter *was* being pulled between two objectives
+(consistent with loss_uncond running ~2x loss_cond throughout training). It is not what breaks
+guided inversion: the no-LoRA control collapses with no adapter to amplify anything.
+
+**Conclusion for the CFG line.** Guided ODE inversion is unstable on this solver independently of
+any adapter, so experiment 1's hypothesis remains untestable in its matched configuration. The
+next step, if this is pursued, is a solver diagnostic rather than another training run: round-trip
+error at cfg_src 1.0/2.0/3.5 with no adapter, to find whether the divergence is gradual or a cliff.
+
+**What to carry forward.** Pair-branch is now the default adapter recipe -- it is the only variant
+that improved both metrics -- but it does not change the regime: ~1-2% of the front, against
+DDPM-inversion sitting on a different front entirely. The ceiling result stands with four nulls
+(cycle k=1, cycle k=2/3, 10x training, shared-CFG).
+
+**Bug that nearly cost the run.** PEFT filters state dicts by adapter name with string matching,
+so `inversion_uncond` next to `inversion` wrote BOTH adapters into the conditional checkpoint
+(768 keys, not 384) and inference rejected it. Training was fine; `repair_pair_checkpoint.py`
+strips the leak without retraining. Names must not share a prefix -- now asserted at injection
+and at save. My own two-adapter tests missed it because they used `cond`/`uncond`.
+
+---
+
 ## 2026-09-15 (later) — BUILD: pair-branch loss and its inference path, on the guided dataset
 
 **Why.** `output/guided_inversion/` showed the shared-CFG adapter and its no-LoRA control
