@@ -23,6 +23,12 @@ ARMS = [
     ("ODE Inv. (cfgs = 1)", r"stableaudio_odeinv_nolora_hparam" + TAIL, "#7f7f7f", "--", "s"),
     ("ODE Inv. (cfgs = 3.5)", r"stableaudio_odeinv_nolora_hparam_cfgsrc3\.5" + TAIL,
      "#d62728", "--", "s"),
+    # The adapter in the regime it is actually deployed in. Step 4000 rather than 2000 because
+    # only 4000 was scored at both target guidances, and the ladder makes them interchangeable
+    # (LPAPS 4.4371 vs 4.4374 at t50). At cfg_src=1.0 this is a single conditional call per step.
+    ("LoRA Inv. (cfgs = 1)",
+     r"stableaudio_odeinvlora_hparam_saocos_r8_a4_lr5e-5_checkpoint_step_4000" + TAIL,
+     "#1f77b4", "-", "o"),
     ("LoRA Inv. (shared_cfg, cfgs = 3.5)",
      r"stableaudio_odeinvlora_hparam_saocos_cfg35_r8_a4_lr5e-5_checkpoint_step_2000_cfgsrc3\.5"
      + TAIL, "#8c564b", "-", "o"),
