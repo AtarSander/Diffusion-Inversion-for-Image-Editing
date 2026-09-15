@@ -183,6 +183,19 @@ if [ -z "${WANDB_API_KEY:-}" ] && ! grep -qs "api.wandb.ai" "$HOME/.netrc"; then
 fi
 
 TASK_ID="${SLURM_ARRAY_TASK_ID:?This script must run as a SLURM array job}"
+# PRESET_NAME selects a config by its run_name instead of by array index: two sessions append to
+# this shared table, so an index chosen at submit time can point at a different entry by the
+# time the job runs (an inserted preset shifted dense991 from 36 to 37 and retrained the wrong
+# adapter). Submit with --array=0 and PRESET_NAME=<run_name>.
+if [ -n "${PRESET_NAME:-}" ]; then
+  TASK_ID=""
+  for i in "${!CONFIGS[@]}"; do
+    IFS='|' read -r _ _ _ _ name _ <<< "${CONFIGS[$i]}"
+    if [ "$name" = "$PRESET_NAME" ]; then TASK_ID=$i; break; fi
+  done
+  : "${TASK_ID:?PRESET_NAME=$PRESET_NAME not found in CONFIGS}"
+  echo "PRESET_NAME=$PRESET_NAME resolved to index $TASK_ID"
+fi
 if [ "$TASK_ID" -ge "${#CONFIGS[@]}" ]; then
   echo "array index $TASK_ID exceeds ${#CONFIGS[@]} configs" >&2
   exit 2
