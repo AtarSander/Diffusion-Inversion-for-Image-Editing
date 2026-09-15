@@ -8,6 +8,43 @@ Most recent first. Keep this file current — it is the handover doc between ses
 
 ---
 
+## 2026-09-15 — CORRECTION: experiment 1 is untested, not refuted. Guided inversion is broken.
+
+I previously wrote that the CFG-aware adapter fails and therefore "the w=1/w=3.5 mismatch is not
+what was holding the adapter back". That was over-claimed. The no-LoRA control at cfg_src=3.5,
+which had never been run, collapses exactly the same way.
+
+cfg_src=3.5, cfg_tar=3.5, real-audio hparam split, 115 edits:
+
+| tstart | no LoRA LPAPS / CLAP | CFG adapter LPAPS / CLAP | cfg_src=1.0 reference |
+|---|---|---|---|
+| 50 | 5.187 / 0.220 | 5.216 / 0.211 | 4.500 / 0.309 |
+| 75 | 5.974 / 0.160 | 6.039 / 0.129 | 5.342 / 0.316 |
+| 99 | 6.078 / 0.141 | 6.111 / 0.119 | 5.431 / 0.310 |
+
+**The two arms are within 0.07 LPAPS of each other everywhere**, while both sit ~0.7 LPAPS and
+~0.16 CLAP worse than unguided inversion. It is guided inversion that breaks, not the adapter.
+The matched configuration the experiment was built to test cannot be run at all on this solver,
+so the hypothesis stands untested — the earlier "experiment 1 fails" entry should be read with
+that correction.
+
+cfg_tar=7.0 partially rescues alignment for both arms (adapter CLAP 0.129 -> 0.285 at t75) but
+not preservation, and the adapter still never beats its control. Raising target guidance
+compensates for a degraded latent rather than repairing it.
+
+**What this does and does not change.** The ceiling result is untouched: the four nulls that
+support it (cycle k=1, cycle k=2/3, 10x training, and the CFG adapter at cfg_src=1.0) all stand.
+What changes is that "CFG-aware training does not help" is no longer one of them — it was never
+tested in its matched configuration. Testing it needs guided ODE inversion to work first, which
+is its own investigation: the failure signature (preservation AND alignment degrading together,
+worsening with tstart) looks like a diverging latent rather than a bad operating point.
+
+**Still owed:** the reconstruction ladder, 0/12, never submitted across four attempts. It remains
+the measurement that would turn "editing is flat against training step" into "flat against
+measured round-trip error".
+
+---
+
 ## 2026-09-15 — RESULT: H2 is a clean null; the matched-NFE sweep restores ODEInv's tail advantage
 
 **H2 (dense training data): null.** The dense991 adapter (baseline 2.692e-4, val 2.72e-5 = 89.9%
