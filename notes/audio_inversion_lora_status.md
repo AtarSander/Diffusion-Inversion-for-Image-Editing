@@ -234,6 +234,21 @@ denoise, saving that trajectory; 2x cost) is the only construction that guarante
 If the real-audio direction continues (SAO or AudioLDM2), it continues there. Always gate on
 reconstruction before reading editing numbers.
 
+**MECHANISM PINNED DOWN (2026-09-16, local diagnostic with the actual checkpoint,
+`scratchpad/diag_realfn.py`).** Prompted by "there must be an error" — there wasn't, in the eval;
+there was one in my first diagnostic. Findings: (a) deployment-matched latent round-trip (invert
+w/ adapter, denoise w/ frozen teacher) reproduces the collapse — realfn rel error 0.586 vs
+no-LoRA 0.149, consistent with 15.6 vs 22.2 dB, so the eval is sound. (b) My first round-trip
+looked fine only because I enabled the adapter symmetrically (both passes) — a consistent
+perturbation cancels; not deployment. (c) The precise mechanism is a GAP-MAGNITUDE MISMATCH, not
+non-composition: per-step on the real inversion trajectory the shift gap is tiny (no-adapter err
+0.033/0.005/0.001 at k=60/30/5 — consecutive ODE predictions nearly identical), while the realfn
+adapter over-corrects it ~10x (err 0.32 at k=60). Forward-noising with INDEPENDENT per-level
+noise manufactures a phantom 9.75e-2 gap that does not exist at deployment; the adapter learns to
+correct the phantom. This is why invert-then-denoise is the fix: its states sit on a real
+trajectory, so the gap it teaches IS the (small) deployment gap. "Off-manifold" was right;
+"doesn't compose" was the wrong articulation.
+
 ---
 
 ## 2026-09-15 (later) — RESULT: DDPM-inv's advantage is off-manifold robustness. NEXT: real-audio forward-noise pairs
