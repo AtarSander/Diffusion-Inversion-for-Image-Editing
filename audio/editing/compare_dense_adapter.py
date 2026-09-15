@@ -90,8 +90,8 @@ def main(runs_root: str, out_root: str = "output/dense_pairs") -> None:
     # Verification views: the editing fronts with all three arms overlaid, and per-example
     # dense-vs-coarse scatters pooled over the 8 cells (points on the identity line = the null).
     fig2, axes_fronts = plt.subplots(1, 2, figsize=(13.5, 6.0))
-    fig2.suptitle("H2 verification on editing: dense- and coarse-trained adapters coincide",
-                  fontsize=FS + 3, fontweight="bold")
+    fig2.suptitle(r"Comparing $\bf{dense}$ (991-step) vs $\bf{coarse}$ (100-step) sampling "
+                  "for LoRA trainset", fontsize=FS + 3)
     fig3, axes_scatter = plt.subplots(1, 2, figsize=(13.5, 6.0))
     fig3.suptitle("Per-example agreement of the two adapters", fontsize=FS + 3,
                   fontweight="bold")
@@ -111,7 +111,6 @@ def main(runs_root: str, out_root: str = "output/dense_pairs") -> None:
                     alpha=0.9)
         ax.set_xlabel("LPAPS to source", fontsize=FS)
         ax.set_ylabel(name, fontsize=FS)
-        ax.set_title(f"Front: {name}", fontsize=FS + 1)
         ax.tick_params(labelsize=FS - 1)
         ax.grid(True, linestyle="--", alpha=0.2)
     axes_fronts[0].legend(fontsize=FS - 1, loc="lower right")
