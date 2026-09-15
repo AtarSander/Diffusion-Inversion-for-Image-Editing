@@ -8,6 +8,66 @@ Most recent first. Keep this file current — it is the handover doc between ses
 
 ---
 
+## 2026-09-15 (later) — BUILD: pair-branch loss and its inference path, on the guided dataset
+
+**Why.** `output/guided_inversion/` showed the shared-CFG adapter and its no-LoRA control
+collapsing *together* at cfg_src=3.5, so guided inversion is what breaks, not the adapter. One
+concrete mechanism survives that: with a shared adapter, whatever error it introduces enters the
+edit through `w * (cond - uncond)` and is amplified by w. Pair-branch removes that coupling by
+giving the empty prompt its own adapter.
+
+**The loss** (training config 36, `saocos_cfg35pair_r8_a4_lr5e-5`):
+
+```
+L = ||D_phi(x_{i+1}, c)     - D_theta(x_i, c)||^2
+  + ||D_nu (x_{i+1}, empty) - D_theta(x_i, empty)||^2
+```
+
+Each branch against its own frozen teacher, **no w in the loss at all**. The guided dataset is
+used because its trajectories visit the latents guided inversion actually reaches, and because it
+already caches both branches — not because the loss needs a guidance value.
+
+In the taxonomy we were comparing: the earlier cfg35 run is **Shared CFG Loss** (one adapter,
+guided combination on both sides), which is also what AudioLDM2 config 28 does despite being
+named "pair-branch" in its comment. True Pair Branch did not exist before this.
+
+**Two traps, both now guarded by tests.**
+
+1. PEFT's `set_adapter` FREEZES the adapters it deactivates. A naive per-branch switch leaves the
+   unconditional adapter with no gradient and it silently never trains, while parameter counts and
+   loss curves look healthy. `requires_grad` is restored after every switch;
+   `tests/test_pair_branch_adapters.py` asserts both adapters receive gradient AND that
+   `set_adapter` alone would starve one, so the guard cannot be deleted unnoticed.
+2. Adapters must be injected BEFORE the base trainer reads trainable parameters and builds the
+   optimiser, hence the `inject_extra_adapters` hook. Confirmed by the count doubling to
+   8,257,536 across 768 tensors.
+
+**Inference cannot use the merge trick.** `attach_inversion_lora` folds the adapter into the base
+weights for speed, but a guided step needs *different* weights for its two calls, and
+merging/unmerging twice per step across every module costs more than the side branch does. So
+`attach_pair_inversion_lora` keeps both adapters unfused and routes with `set_adapter`; these runs
+are therefore slower than the merged single-adapter arms, which matters for wall-clock comparisons
+but not for NFE. Detection is automatic on the sibling `<stem>_uncond.pt`, so single-adapter
+checkpoints keep the cheaper path.
+
+**Also added:** the w=1 adapter's missing cfg_tar=7.0 cells at step 2000
+(`sao_w1_cfgtar7_configs.sh`), so the two adapters can be compared at both target guidances rather
+than only at 3.5; and the no-LoRA control at cfg_src=3.5, which is what produced the correction
+above.
+
+**Standing decision:** train to 3000 steps with checkpoints every 500. The ladder put saturation
+at 2000 but only sampled every 2000, so 3000 keeps a margin past the knee and the finer cadence
+will show whether the knee is actually below 2000.
+
+**Next:** score config 36 at cfg_src 1.0 and 3.5 when it lands. If the pair-branch adapter also
+collapses at cfg_src=3.5, the guidance-amplification mechanism is dead and the remaining
+explanation is that guided ODE inversion is unstable on this solver independently of any adapter
+— which is its own diagnostic (round-trip error at cfg_src 1.0/2.0/3.5, no adapter).
+
+**Still owed, sixth attempt:** the reconstruction ladder, 0/12.
+
+---
+
 ## 2026-09-15 — CORRECTION: experiment 1 is untested, not refuted. Guided inversion is broken.
 
 I previously wrote that the CFG-aware adapter fails and therefore "the w=1/w=3.5 mismatch is not
