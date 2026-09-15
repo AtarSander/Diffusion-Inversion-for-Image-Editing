@@ -17,11 +17,18 @@ LORA_MODE=odeinv
 # cfg_src=3.5 has never been run without one: without this control, the CFG adapter's collapse at
 # src=3.5 (LPAPS 5.22 / CLAP 0.21 at t50, against 4.44 / 0.31) cannot be told apart from guided
 # inversion simply being unstable on this solver.
-if [ "${ARM_KIND:-adapter}" = "control" ]; then
-  LORA_CHECKPOINTS=("")
-else
-  LORA_CHECKPOINTS=("saocos_cfg35_r8_a4_lr5e-5/checkpoint_step_2000.pt")
-fi
+# ARM_KIND picks what rides on the inversion pass, everything else held fixed:
+#   control  no adapter at all -- the reference guided inversion needs and never had
+#   adapter  the shared-CFG adapter (one adapter, guided combination on both sides)
+#   pair     the pair-branch adapter (phi for c, nu for the empty prompt, no w in the loss)
+# The pair checkpoint is loaded unfused and routed per branch, so it is slower per edit than the
+# merged shared one; the NFE is identical, only wall-clock differs.
+case "${ARM_KIND:-adapter}" in
+  control) LORA_CHECKPOINTS=("") ;;
+  adapter) LORA_CHECKPOINTS=("saocos_cfg35_r8_a4_lr5e-5/checkpoint_step_2000.pt") ;;
+  pair)    LORA_CHECKPOINTS=("saocos_cfg35pair_r8_a4_lr5e-5/checkpoint_step_2000.pt") ;;
+  *) echo "unknown ARM_KIND=$ARM_KIND (control|adapter|pair)" >&2; return 1 ;;
+esac
 LORA_TSTART=(25 50 75 99)
 # Both target guidances, so cfg_src=3.5 gets a full 2x2 against ARM_KIND: {no-LoRA, CFG adapter}
 # x {cfg_tar 3.5, 7.0}. cfg_tar 7.0 matters because the adapter's collapse at src=3.5 hit

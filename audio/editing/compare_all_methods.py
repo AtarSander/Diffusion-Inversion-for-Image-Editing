@@ -46,6 +46,14 @@ ARMS = {
                              r"_checkpoint_step_2000_cfgsrc1\.0", "#17becf", "-"),
     "CFG adapter, src=3.5": (r"stableaudio_odeinvlora_{split}_saocos_cfg35_r8_a4_lr5e-5"
                              r"_checkpoint_step_2000_cfgsrc3\.5", "#8c564b", "-"),
+    # Pair-branch: phi for the conditional branch, nu for the empty prompt, no w in the loss.
+    "pair-branch, src=1.0": (r"stableaudio_odeinvlora_{split}_saocos_cfg35pair_r8_a4_lr5e-5"
+                             r"_checkpoint_step_2000_cfgsrc1\.0", "#bcbd22", "-"),
+    "pair-branch, src=3.5": (r"stableaudio_odeinvlora_{split}_saocos_cfg35pair_r8_a4_lr5e-5"
+                             r"_checkpoint_step_2000_cfgsrc3\.5", "#e377c2", ":"),
+    # The no-LoRA control at guided inversion: without it the adapters' collapse at cfg_src=3.5
+    # cannot be told apart from guided inversion being unstable on its own.
+    "no LoRA, src=3.5":     (r"stableaudio_odeinv_nolora_{split}_cfgsrc3\.5", "#d62728", "--"),
 }
 TAIL = r"_cfgtar(?P<cfg>[\d.]+)_t(?P<tstart>\d+)_s100$"
 
