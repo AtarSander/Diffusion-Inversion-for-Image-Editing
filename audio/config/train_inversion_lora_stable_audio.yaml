@@ -103,7 +103,9 @@ guidance_scale: 1.0
 # collapse (output/guided_inversion/). Needs a dataset carrying both branches, which is what a
 # guidance_scale > 1 generation run produces. The loss itself uses no w.
 pair_branch: false
-uncond_adapter_name: inversion_uncond
+# Must not share a prefix with adapter_name; PEFT's state-dict helper filters by
+# name and would otherwise write both adapters into one file.
+uncond_adapter_name: uncondbranch
 
 cycle:
   enabled: false

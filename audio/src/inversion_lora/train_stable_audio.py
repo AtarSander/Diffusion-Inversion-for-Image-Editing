@@ -147,7 +147,18 @@ class StableAudioInversionTrainer(AudioLDM2InversionTrainer):
             lora_cfg["target_modules"] = OmegaConf.to_container(
                 cfg.lora_target_presets, resolve=True
             )[preset]
-        self.uncond_adapter = str(cfg.get("uncond_adapter_name", "inversion_uncond"))
+        self.uncond_adapter = str(cfg.get("uncond_adapter_name", "uncondbranch"))
+        primary = str(cfg.adapter_name)
+        # Neither name may be a prefix of the other. PEFT's state-dict helper filters by adapter
+        # name with string matching, so `inversion` + `inversion_uncond` made
+        # get_peft_model_state_dict("inversion") return BOTH adapters -- 768 keys instead of 384,
+        # which the inference loader then rejected as unexpected keys.
+        assert not self.uncond_adapter.startswith(primary) and not primary.startswith(
+            self.uncond_adapter
+        ), (
+            f"adapter names {primary!r} and {self.uncond_adapter!r} share a prefix; "
+            "get_peft_model_state_dict filters by name and would mix the two adapters"
+        )
         inject_adapter_in_model(LoraConfig(**lora_cfg), self.unet, adapter_name=self.uncond_adapter)
         logger.info("pair-branch ON: second adapter {!r} for the empty prompt", self.uncond_adapter)
 
@@ -213,8 +224,12 @@ class StableAudioInversionTrainer(AudioLDM2InversionTrainer):
         if not getattr(self, "pair_branch", False):
             return path
         uncond_path = path.with_name(f"{path.stem}_uncond{path.suffix}")
-        torch.save(
-            get_peft_model_state_dict(self.unet, adapter_name=self.uncond_adapter), uncond_path
+        uncond_state = get_peft_model_state_dict(self.unet, adapter_name=self.uncond_adapter)
+        torch.save(uncond_state, uncond_path)
+        cond_state = torch.load(path, map_location="cpu", weights_only=False)
+        assert len(cond_state) == len(uncond_state), (
+            f"{path.name} holds {len(cond_state)} keys but the unconditional branch has "
+            f"{len(uncond_state)}; the two adapters have leaked into one file"
         )
         meta = json.loads(path.with_suffix(".json").read_text())
         meta["adapter_name"] = self.uncond_adapter
