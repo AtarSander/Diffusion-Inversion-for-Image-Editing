@@ -162,6 +162,28 @@ roughly proportional and small everywhere: **the input-distribution axis is not 
 ceiling lives.** Runs: `saocos_dense991_r8_a4_lr5e-5` cells vs their twins; script pattern in
 output/gen_inputs. Do not spend further compute on trajectory quality without a new mechanism.
 
+**H2 verification pack (added 2026-09-15 evening, `editing/compare_dense_adapter.py`, figures in
+`output/dense_pairs/20260915_185922` + `_181528`).** Three granularities, all saying the same:
+
+- *Fronts*: the coarse and dense adapter curves are point-coincident on CLAP and MuQ at all 8
+  cells, both the same small offset above no-LoRA (`dense_fronts.png` — the paper figure).
+- *Per example*: pooled over 8 cells (n=920 paired edits), dense-vs-coarse r = 0.9998 (LPAPS)
+  and 0.9995 (CLAP) on the identity line — the adapters produce near-identical edits per row,
+  not just equal averages (`dense_scatter.png`).
+- *Per cell*: paired-delta bars vs the shared no-LoRA twin overlap in CI everywhere
+  (`dense_vs_coarse.png`).
+
+**The null is not "same data twice", checked directly on the cluster:** same prompts, seeds and
+coarse timesteps per sample; row 0 (initial noise) bit-identical; later rows diverge exactly as
+discretization predicts — rel diff 1e-6 at row 10, ~3-7e-4 at row 50, **4.2e-2 at row 99** and
+4.7e-2 on targets. The lever was real (~4-5% different pairs at the clean end, where the shift
+gap lives) and editing did not respond.
+
+**Loss comparison at matched steps** (val on each dataset's own held-out split, so indicative
+only): coarse 2.60/2.52/2.44e-5 at steps 2/3/4k (90.1/90.4/90.7% closed) vs dense
+3.43->2.66e-5 over 500->3000 (87.2->90.1%). Within 0.3 points of fractional closure at every
+checkpoint — the two runs learned the same objective equally well.
+
 **Matched NFE at cfg 3.5–14 (48 new runs, `output/matched_nfe/20260914_191008`).** At equal
 compute DDPM-inv does NOT catch the ODE tail: MuQ 0.286 vs ODEInv+LoRA 0.308 at LPAPS ~5.3; the
 s100 near-merge was partly DDPM's per-point NFE advantage (2(100+t) vs 3t). Fronts split by
