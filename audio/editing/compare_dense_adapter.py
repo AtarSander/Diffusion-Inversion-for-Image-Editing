@@ -86,6 +86,53 @@ def main(runs_root: str, out_root: str = "output/dense_pairs") -> None:
     (out / "plots").mkdir(parents=True, exist_ok=True)
     for ext in ("png", "svg"):
         fig.savefig(out / "plots" / f"dense_vs_coarse.{ext}", dpi=150, bbox_inches="tight")
+
+    # Verification views: the editing fronts with all three arms overlaid, and per-example
+    # dense-vs-coarse scatters pooled over the 8 cells (points on the identity line = the null).
+    fig2, axes2 = plt.subplots(2, 2, figsize=(13.5, 11.5))
+    fig2.suptitle("H2 verification on editing: dense- and coarse-trained adapters coincide",
+                  fontsize=FS + 3, fontweight="bold")
+    front_arms = {"no LoRA": (NOLORA, "#7f7f7f", "--"),
+                  "coarse LoRA @4000": (ARMS["coarse (100-step trajectories)"][0], "#4c72b0", "-"),
+                  "dense LoRA @3000": (ARMS["dense (991-step trajectories)"][0], "#c44e52", "-")}
+    for ax, (metric, name) in zip(axes2[0], [("clap", "Alignment = CLAP"),
+                                             ("muqt_sim_p0", "Alignment = MuQ")]):
+        for arm, (pattern, color, style) in front_arms.items():
+            pts = []
+            for c, t in CELLS:
+                df = frame(pattern, c, t)
+                pts.append((df["lpaps"].mean(), df[metric].mean()))
+            pts.sort()
+            ax.plot([p[0] for p in pts], [p[1] for p in pts], style, marker="o", ms=8, lw=1.8,
+                    color=color, label=arm, markeredgecolor="black", markeredgewidth=0.8,
+                    alpha=0.9)
+        ax.set_xlabel("LPAPS to source", fontsize=FS)
+        ax.set_ylabel(name, fontsize=FS)
+        ax.set_title(f"Front: {name}", fontsize=FS + 1)
+        ax.tick_params(labelsize=FS - 1)
+        ax.grid(True, linestyle="--", alpha=0.2)
+    axes2[0][0].legend(fontsize=FS - 1, loc="lower right")
+
+    for ax, (metric, name) in zip(axes2[1], [("lpaps", "LPAPS"), ("clap", "CLAP")]):
+        xs, ys = [], []
+        for c, t in CELLS:
+            coarse = frame(ARMS["coarse (100-step trajectories)"][0], c, t)
+            dense = frame(ARMS["dense (991-step trajectories)"][0], c, t)
+            xs += list(coarse[metric])
+            ys += list(dense[metric])
+        r = pd.Series(xs).corr(pd.Series(ys))
+        lo, hi = min(xs + ys), max(xs + ys)
+        ax.plot([lo, hi], [lo, hi], color="black", lw=1.2)
+        ax.scatter(xs, ys, s=12, alpha=0.35, color="#55a868", edgecolor="black", linewidth=0.3)
+        ax.set_xlabel(f"{name} with coarse-trained LoRA", fontsize=FS)
+        ax.set_ylabel(f"{name} with dense-trained LoRA", fontsize=FS)
+        ax.set_title(f"Per example, all 8 cells (n=920): r = {r:.4f}", fontsize=FS + 1)
+        ax.tick_params(labelsize=FS - 1)
+        ax.grid(True, linestyle="--", alpha=0.2)
+    fig2.tight_layout(rect=(0, 0, 1, 0.96))
+    for ext in ("png", "svg"):
+        fig2.savefig(out / "plots" / f"dense_fronts_scatter.{ext}", dpi=150,
+                     bbox_inches="tight")
     deltas.to_csv(out / "paired_deltas.csv", index=False)
     (out / "REPORT.md").write_text(
         "# H2: coarse- vs dense-trained adapter, paired vs the shared no-LoRA twin\n\n"
