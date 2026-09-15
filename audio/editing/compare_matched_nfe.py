@@ -68,8 +68,10 @@ def collect(runs_root: Path, split: str) -> pd.DataFrame:
     return pd.DataFrame(rows).sort_values(["arm", "cfg_tar", "depth"]).reset_index(drop=True)
 
 
-SPLIT_LABEL = {"hparam": "real audio", "genhparam": "generated inputs"}
-PANELS = [("clap", "CLAP to target"), ("muq", "MuQ-MuLan to target")]
+SPLIT_LABEL = {"hparam": "Real audio from MedleyMD",
+               "genhparam": "Generated audio from MedleyMD prompts"}
+PANELS = [("clap", "Alignment = CLAP"), ("muq", "Alignment = MuQ")]
+FS = 16
 
 
 def lora_delta(df: pd.DataFrame) -> pd.DataFrame:
@@ -114,12 +116,9 @@ def main(runs_root: str, out_root: str = "output/matched_nfe", split: str = "hpa
              "Figure: `matched_nfe_front.png`.\n"]
 
     fig, axes = plt.subplots(len(splits), len(PANELS),
-                             figsize=(5.6 * len(PANELS), 5.2 * len(splits)), squeeze=False)
-    fig.suptitle(
-        f"Stable Audio Open at a matched budget of ~{budgets[0]} denoiser calls — "
-        f"{reference['n'].iloc[0]} edits, cfg_tar pooled: {', '.join(f'{c:g}' for c in cfgs)}",
-        fontsize=13, fontweight="bold", y=1.0,
-    )
+                             figsize=(6.4 * len(PANELS), 5.6 * len(splits)), squeeze=False)
+    fig.suptitle("Audio editing with Stable Audio at matched NFEs",
+                 fontsize=19, fontweight="bold", y=1.0)
     for row, s in enumerate(splits):
         df = frames[s]
         print(f"\n=== split={s}: {len(df)} runs ===")
@@ -138,13 +137,19 @@ def main(runs_root: str, out_root: str = "output/matched_nfe", split: str = "hpa
         for ax, (metric, name) in zip(axes[row], PANELS):
             for arm, sub in df.groupby("arm"):
                 sub = sub.sort_values("lpaps")
-                ax.plot(sub["lpaps"], sub[metric], marker="o", ms=6, lw=1.6,
+                ax.plot(sub["lpaps"], sub[metric], marker="o", ms=7, lw=1.8,
                         color=COLORS.get(arm), label=arm)
             if row == len(splits) - 1:
-                ax.set_xlabel("LPAPS to source (lower = better preserved)")
-            ax.set(ylabel=name, title=f"{name} — {SPLIT_LABEL[s]}")
+                ax.set_xlabel("LPAPS to source", fontsize=FS)
+            ax.set_ylabel(name, fontsize=FS)
+            ax.set_title(SPLIT_LABEL[s], fontsize=FS + 1)
+            ax.tick_params(labelsize=FS - 2)
+            # The ideal corner: perfectly preserved and perfectly aligned.
+            ax.text(0.035, 0.955, "★", transform=ax.transAxes, fontsize=26, color="#f1c40f",
+                    ha="center", va="center",
+                    path_effects=None)
             ax.grid(alpha=0.3)
-    axes[0][0].legend(fontsize=9, loc="best")
+    axes[0][0].legend(fontsize=FS - 3, loc="lower right")
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     for ext in ("png", "svg"):
         fig.savefig(out / f"matched_nfe_front.{ext}", dpi=150, bbox_inches="tight")
