@@ -181,11 +181,23 @@ information through the round trip), but what it buys is preservation paid in al
 front's own rate or worse — the same currency as DDPM's robustness, which likewise dominates
 nothing at matched compute. The H1 bound was beaten in paired-delta terms only.
 
-**Verdict for the project:** every lever on the inversion-accuracy/state-distribution axis is now
-measured: quality (dense — null), eval distribution (H1 — small), training distribution (realfn —
-large paired effect, front-bound). None expands the achievable trade-off region on real audio.
-Follow-ups (realfn @ cfg 10.5/14; mixed dataset; full corpus) would refine, not overturn, this.
-Caveats: 184-clip corpus, checkpoint on loss, single seed.
+**RETRACTION (2026-09-16, reconstruction gate): the realfn construction is mis-specified and its
+editing numbers are artifact.** Four-arm real-audio reconstruction (35 tracks, t99, cfg 1.0,
+`stableaudio_acc_recon_tracks_s100_*`): DDPM 23.32 dB / LPAPS 2.86 (exact by construction);
+no-LoRA 22.22 / 3.51; trajectory LoRA 22.30 / 3.43; **realfn 15.58 dB / 5.34 / CLAP-to-source
+0.076** — the adapter destroys multi-step inversion (−6.6 dB vs no-LoRA). Chainless pairs
+(independent forward noise per level) certify single steps but do not compose over 99 inverse
+iterations; per-step exactness is necessary, not sufficient. The editing deltas are re-explained:
+under realfn, editing-LPAPS (~5.2) ~= recon-LPAPS (5.34) — outputs barely depend on the caption;
+the "preservation gain" was degraded, caption-indifferent inversion, which is also why it sat
+below the front. The 370x off-manifold teacher gap stands as a *teacher* property; the 99.8%
+closure stands as objective fit; the deployment claim is withdrawn.
+
+**Lesson, standing:** any real-anchored training data must be CHAIN-consistent, not just
+step-consistent — the documented invert-then-denoise recipe (real x0 -> ODE-invert -> teacher
+denoise, saving that trajectory; 2x cost) is the only construction that guarantees composition.
+If the real-audio direction continues (SAO or AudioLDM2), it continues there. Always gate on
+reconstruction before reading editing numbers.
 
 ---
 
