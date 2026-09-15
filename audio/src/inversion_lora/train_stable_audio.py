@@ -3,6 +3,7 @@
 
 import json
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,7 @@ import torch
 from dotenv import load_dotenv
 from loguru import logger
 from omegaconf import DictConfig, OmegaConf
+from peft import LoraConfig, get_peft_model_state_dict, inject_adapter_in_model
 from torch.utils.data import DataLoader, Subset
 
 AUDIO_ROOT = Path(__file__).resolve().parents[2]
@@ -128,6 +130,100 @@ class StableAudioInversionTrainer(AudioLDM2InversionTrainer):
         )
         return unconditional + self.guidance_scale * (conditional - unconditional)
 
+    def inject_extra_adapters(self, cfg: DictConfig) -> None:
+        """Inject the unconditional-branch adapter when the pair-branch loss is on.
+
+        Pair-branch gives the unconditional branch its OWN adapter, so the conditional one is
+        never asked to also repair `eps(., .)` at the empty prompt. That matters at guidance:
+        a shared adapter's error enters the edit through `w * (cond - uncond)` and is amplified
+        by w, which is the leading suspect for the cfg_src=3.5 collapse.
+        """
+        self.pair_branch = bool(cfg.get("pair_branch", False))
+        if not self.pair_branch:
+            return
+        lora_cfg = OmegaConf.to_container(cfg.lora, resolve=True)
+        preset = cfg.get("lora_preset")
+        if preset:
+            lora_cfg["target_modules"] = OmegaConf.to_container(
+                cfg.lora_target_presets, resolve=True
+            )[preset]
+        self.uncond_adapter = str(cfg.get("uncond_adapter_name", "inversion_uncond"))
+        inject_adapter_in_model(LoraConfig(**lora_cfg), self.unet, adapter_name=self.uncond_adapter)
+        logger.info("pair-branch ON: second adapter {!r} for the empty prompt", self.uncond_adapter)
+
+    @contextmanager
+    def active_adapter(self, name: str):
+        """Route the forward through one named adapter, leaving every LoRA tensor trainable.
+
+        `set_adapter` freezes the adapters it deactivates, which would leave the unconditional
+        adapter with no gradient at all, so requires_grad is restored after every switch.
+        """
+        layers = [m for m in self.unet.modules() if hasattr(m, "lora_A")]
+        for module in layers:
+            module.set_adapter(name)
+        for parameter_name, parameter in self.unet.named_parameters():
+            parameter.requires_grad_("lora" in parameter_name.lower())
+        try:
+            yield
+        finally:
+            for module in layers:
+                module.set_adapter(str(self.cfg.adapter_name))
+            for parameter_name, parameter in self.unet.named_parameters():
+                parameter.requires_grad_("lora" in parameter_name.lower())
+
+    def branch_prediction(self, batch: dict[str, Any], conditioning: torch.Tensor) -> torch.Tensor:
+        """The student's data prediction for one branch, under whichever adapter is active."""
+        x_clean = batch["x_clean"].to(device=self.device, dtype=self.unet.dtype)
+        timestep = batch["timestep"].to(device=self.device, dtype=torch.float32)
+        sigmas = self.solver.sigma_for(timestep).to(dtype=x_clean.dtype)
+        raw = self.ldm.forward(
+            self.solver.model_input_batch(x_clean, sigmas), timestep, conditioning
+        )
+        return self.solver.data_prediction_batch(x_clean, raw, sigmas)
+
+    def pair_branch_loss(self, batch: dict[str, Any]) -> tuple[torch.Tensor, torch.Tensor]:
+        """Each branch distilled against its own frozen teacher, with no guidance combination.
+
+        Returns:
+            `(per_example_conditional_loss, unconditional_loss)`. The conditional term is kept
+            per-example so the band breakdown means the same thing as in every other arm.
+        """
+        assert "uncond_eps" in batch, "pair_branch needs a dataset built with both branches"
+        text_audio = batch["text_audio"].to(device=self.device, dtype=self.unet.dtype)
+        uncond = self.uncond.expand(text_audio.shape[0], -1, -1)
+        target_c = batch["target_eps"].to(device=self.device, dtype=self.unet.dtype)
+        target_u = batch["uncond_eps"].to(device=self.device, dtype=self.unet.dtype)
+
+        with self.active_adapter(str(self.cfg.adapter_name)):
+            student_c = self.branch_prediction(batch, text_audio)
+        with self.active_adapter(self.uncond_adapter):
+            student_u = self.branch_prediction(batch, uncond)
+
+        per_example = ((student_c.float() - target_c.float()) ** 2).flatten(1).mean(dim=1)
+        return per_example, ((student_u.float() - target_u.float()) ** 2).flatten(1).mean()
+
+    def save_checkpoint(self, filename: str, save_training_state: bool = False) -> Path:
+        """Save the conditional adapter as usual, and the unconditional one beside it.
+
+        A separate `<stem>_uncond.pt` with its own sidecar rather than one combined file: every
+        existing loader reads a single-adapter checkpoint, so the conditional file stays exactly
+        what it always was and the extra branch is opt-in at inference.
+        """
+        path = super().save_checkpoint(filename, save_training_state=save_training_state)
+        if not getattr(self, "pair_branch", False):
+            return path
+        uncond_path = path.with_name(f"{path.stem}_uncond{path.suffix}")
+        torch.save(
+            get_peft_model_state_dict(self.unet, adapter_name=self.uncond_adapter), uncond_path
+        )
+        meta = json.loads(path.with_suffix(".json").read_text())
+        meta["adapter_name"] = self.uncond_adapter
+        meta["branch"] = "unconditional"
+        with uncond_path.with_suffix(".json").open("w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=2)
+        logger.info("saved the unconditional branch to {}", uncond_path.name)
+        return path
+
     def build_uncond(self, ldm) -> torch.Tensor:
         """Stable Audio's unconditional cross-attention states `[1, S, D]`.
 
@@ -242,6 +338,14 @@ class StableAudioInversionTrainer(AudioLDM2InversionTrainer):
         self, batch: dict[str, Any]
     ) -> tuple[torch.Tensor, torch.Tensor, dict[str, float]]:
         """Inversion loss, plus the adaptively weighted cycle loss when it is enabled."""
+        if getattr(self, "pair_branch", False):
+            per_example, uncond_loss = self.pair_branch_loss(batch)
+            return (
+                per_example.mean() + uncond_loss,
+                per_example,
+                {"train/loss_cond": float(per_example.mean()),
+                 "train/loss_uncond": float(uncond_loss)},
+            )
         student = self.predict_noise(batch)
         target = self.target_noise(batch)
         assert student.shape == target.shape, (student.shape, target.shape)

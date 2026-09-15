@@ -95,6 +95,16 @@ lora:
 # override, which Hydra refuses for a key the config does not define.
 guidance_scale: 1.0
 
+# Pair-branch loss: give the unconditional branch its OWN adapter and distil each branch against
+# its own frozen teacher, with no guidance combination in the loss at all.
+#   L = ||D_phi(x_{i+1}, c) - D_theta(x_i, c)||^2 + ||D_nu(x_{i+1}, empty) - D_theta(x_i, empty)||^2
+# The shared-CFG variant makes one adapter repair both branches, so its error reaches the edit
+# through w * (cond - uncond) and is amplified by w -- the leading suspect for the cfg_src=3.5
+# collapse (output/guided_inversion/). Needs a dataset carrying both branches, which is what a
+# guidance_scale > 1 generation run produces. The loss itself uses no w.
+pair_branch: false
+uncond_adapter_name: inversion_uncond
+
 cycle:
   enabled: false
   steps: 1 # k: how many inversion steps to chain before generating back

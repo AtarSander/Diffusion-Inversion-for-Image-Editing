@@ -153,6 +153,13 @@ CONFIGS=(
   # a chained edit sweep wait 24 h for a checkpoint that exists at 5.6 h. Saving every 500 gives
   # a four-point dose-response inside the run for free.
   "attn|8|4|5e-5|cfg35_r8_a4_lr5e-5|guidance_scale=3.5 data_root=\${oc.env:LORAINV_DATA_ROOT}/stable_audio_cosine_ode_cfg35_fp32 max_train_steps=2000 save_every_steps=500 eval_every_steps=500 batch_size=4 gradient_accumulation_steps=8"
+  # 36: EXPERIMENT 1b, Stable Audio only. Pair-branch loss on the SAME guided dataset: the
+  # unconditional branch gets its own adapter and each branch is distilled against its own frozen
+  # teacher, with no guidance combination in the loss. Motivated by output/guided_inversion/,
+  # where the shared-CFG adapter and its no-LoRA control collapse together at cfg_src=3.5 -- a
+  # shared adapter's error reaches the edit through w * (cond - uncond) and is amplified by w.
+  # Two adapters, so ~2x the trainable parameters and two student forwards per step.
+  "attn|8|4|5e-5|cfg35pair_r8_a4_lr5e-5|guidance_scale=3.5 pair_branch=true data_root=\${oc.env:LORAINV_DATA_ROOT}/stable_audio_cosine_ode_cfg35_fp32 batch_size=4 gradient_accumulation_steps=8"
   # 36: EXPERIMENT H2, Stable Audio only. Same objective and grid as the baseline
   # saocos_r8_a4_lr5e-5; the only difference is the dataset: trajectories sampled with 991 fine
   # steps and reduced to the 100-point coarse grid with exact-coarse-step inputs

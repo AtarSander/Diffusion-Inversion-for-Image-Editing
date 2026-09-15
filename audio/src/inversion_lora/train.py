@@ -189,6 +189,7 @@ class AudioLDM2InversionTrainer:
             self.unet,
             adapter_name=str(cfg.adapter_name),
         )
+        self.inject_extra_adapters(cfg)
         for name, param in self.unet.named_parameters():
             param.requires_grad_("lora" in name.lower())
         for param in self.unet.parameters():
@@ -222,6 +223,13 @@ class AudioLDM2InversionTrainer:
                 float(cfg.ema_decay),
                 1.0 / (1.0 - float(cfg.ema_decay)),
             )
+
+    def inject_extra_adapters(self, cfg: DictConfig) -> None:
+        """Hook for injecting further adapters, before trainable params and the optimizer are read.
+
+        Args:
+            cfg: The resolved training config.
+        """
 
     def build_uncond(self, ldm):
         """The unconditional conditioning the guided loss needs, in this model's own format.
