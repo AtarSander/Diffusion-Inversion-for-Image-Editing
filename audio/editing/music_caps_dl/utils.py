@@ -7,6 +7,7 @@ import time
 import pandas as pd
 from tqdm import tqdm
 from yt_dlp import YoutubeDL
+from yt_dlp.utils import download_range_func
 
 
 # code from https://github.com/keunwoochoi/audioset-downloader/blob/master/audioset_dl/__init__.py
@@ -55,10 +56,14 @@ def _download_audio(x):
         end,
         out_dir,
     ) = x
-    start_dt, end_dt = dt.timedelta(milliseconds=start), dt.timedelta(milliseconds=end)
     ydl_opts = {
         "outtmpl": f"{out_dir}/[{ytid}]-[{start//1000}-{end//1000}].%(ext)s",
         "format": "bestaudio[ext=webm]/bestaudio/best",
+        # The API ignores the CLI-style download_sections string set below via ydl.params, which
+        # silently downloads the FULL video; download_ranges is the API-native form and
+        # force_keyframes re-encodes the cut so the section is sample-accurate.
+        "download_ranges": download_range_func([], [(start / 1000, end / 1000)]),
+        "force_keyframes_at_cuts": True,
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
@@ -77,13 +82,10 @@ def _download_audio(x):
         "prefer_free_formats": True,
     }
     yturl = f"https://youtube.com/watch?v={ytid}"
-    section_opt = f"*{start_dt}-{end_dt}"
     max_attempts = 2
     for attempt in range(max_attempts):
         try:
             with YoutubeDL(ydl_opts) as ydl:
-                # Use download_sections for precise time segment extraction
-                ydl.params['download_sections'] = section_opt
                 ydl.download([yturl])
             break  # Success, exit retry loop
         except KeyboardInterrupt:
