@@ -115,10 +115,17 @@ def main(runs_root: str, out_root: str = "output/matched_nfe", split: str = "hpa
              f"Points are labelled by inversion depth = tstart/steps.\n",
              "Figure: `matched_nfe_front.png`.\n"]
 
-    fig, axes = plt.subplots(len(splits), len(PANELS),
-                             figsize=(6.4 * len(PANELS), 5.6 * len(splits)), squeeze=False)
+    # One centered title per row, over both panels: a subfigure per split carries it.
+    fig = plt.figure(figsize=(6.4 * len(PANELS), 5.9 * len(splits)), layout="constrained")
     fig.suptitle("Audio editing with Stable Audio at matched NFEs",
-                 fontsize=19, fontweight="bold", y=1.0)
+                 fontsize=19, fontweight="bold")
+    subfigs = fig.subfigures(len(splits), 1)
+    subfigs = subfigs if isinstance(subfigs, (list, tuple)) or hasattr(subfigs, "__len__") \
+        else [subfigs]
+    axes = []
+    for row, s in enumerate(splits):
+        subfigs[row].suptitle(SPLIT_LABEL[s], fontsize=FS + 1)
+        axes.append(subfigs[row].subplots(1, len(PANELS)))
     for row, s in enumerate(splits):
         df = frames[s]
         print(f"\n=== split={s}: {len(df)} runs ===")
@@ -142,7 +149,6 @@ def main(runs_root: str, out_root: str = "output/matched_nfe", split: str = "hpa
             if row == len(splits) - 1:
                 ax.set_xlabel("LPAPS to source", fontsize=FS)
             ax.set_ylabel(name, fontsize=FS)
-            ax.set_title(SPLIT_LABEL[s], fontsize=FS + 1)
             ax.tick_params(labelsize=FS - 2)
             # The ideal corner: perfectly preserved and perfectly aligned.
             ax.text(0.035, 0.955, "★", transform=ax.transAxes, fontsize=26, color="#f1c40f",
@@ -150,7 +156,6 @@ def main(runs_root: str, out_root: str = "output/matched_nfe", split: str = "hpa
                     path_effects=None)
             ax.grid(alpha=0.3)
     axes[0][0].legend(fontsize=FS - 3, loc="lower right")
-    fig.tight_layout(rect=(0, 0, 1, 0.97))
     for ext in ("png", "svg"):
         fig.savefig(out / f"matched_nfe_front.{ext}", dpi=150, bbox_inches="tight")
 
