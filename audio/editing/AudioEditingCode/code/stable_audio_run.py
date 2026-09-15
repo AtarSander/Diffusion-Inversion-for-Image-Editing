@@ -15,7 +15,10 @@ from pathlib import Path as _Path
 _AUDIO_ROOT = _Path(__file__).resolve().parents[3]
 if str(_AUDIO_ROOT) not in _sys.path:
     _sys.path.insert(0, str(_AUDIO_ROOT))
-from src.inversion_lora.apply_lora import attach_inversion_lora  # noqa: E402
+from src.inversion_lora.apply_lora import (
+    attach_inversion_lora,
+    attach_pair_inversion_lora,
+)  # noqa: E402
 from src.inversion_lora.stable_audio import (  # noqa: E402
     ExactDPMSolver,
     ode_denoise,
@@ -194,6 +197,7 @@ def run_stable_audio_edit(
         ldm_stable_inverse = ldm_stable
 
     set_lora_enabled = None
+    select_lora_branch = None
     if lora_path is not None:
         if mode not in ("ddim", "odeinv"):
             raise ValueError(
@@ -205,7 +209,20 @@ def run_stable_audio_edit(
         # inversion, so attaching it there leaves the reverse pass on the frozen teacher without
         # toggling per pass. Enabled once, which merges it into the base weights: an unfused
         # adapter costs a side branch on every module for the same delta.
-        set_lora_enabled = attach_inversion_lora(ldm_stable_inverse.model.transformer, lora_path)
+        # A pair-branch checkpoint writes the unconditional adapter beside the conditional one.
+        # Its two branches need different weights inside one guided step, so it loads unfused and
+        # is routed per branch; a single-adapter checkpoint keeps the cheaper merge path.
+        select_lora_branch = None
+        _ckpt = _Path(lora_path)
+        if _ckpt.with_name(f"{_ckpt.stem}_uncond{_ckpt.suffix}").exists():
+            set_lora_enabled, select_lora_branch = attach_pair_inversion_lora(
+                ldm_stable_inverse.model.transformer, lora_path
+            )
+            print("pair-branch adapter: routing the conditional and unconditional branches apart")
+        else:
+            set_lora_enabled = attach_inversion_lora(
+                ldm_stable_inverse.model.transformer, lora_path
+            )
         if mode == "ddim":
             # ddim loads a second pipeline for inversion, so enabling it once confines the adapter
             # to the inversion pass. odeinv runs both passes on one model and toggles per pass.
@@ -326,9 +343,15 @@ def run_stable_audio_edit(
                 """
 
                 def predict(x, index):
+                    # With a pair-branch adapter the two calls must run through different
+                    # adapters; select_lora_branch is a no-op unless one is loaded and enabled.
+                    if select_lora_branch is not None:
+                        select_lora_branch("cond")
                     conditional = data_prediction(x, index, embeds, mask)
                     if scale == 1.0:
                         return conditional
+                    if select_lora_branch is not None:
+                        select_lora_branch("uncond")
                     unconditional = data_prediction(x, index, uncond_emb, uncond_mask)
                     return unconditional + scale * (conditional - unconditional)
 

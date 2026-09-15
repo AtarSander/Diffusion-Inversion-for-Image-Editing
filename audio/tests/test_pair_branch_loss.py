@@ -40,8 +40,13 @@ def write_sample(root: Path, idx: int, steps: int = 4, with_uncond: bool = True)
 
 
 def test_combination_collapses_to_the_conditional_branch_at_w_one():
+    # Seeded, and with an absolute tolerance: the identity is exact in algebra but not in
+    # float32. Subtracting a large eps_u and adding it back loses low bits, so for a draw where
+    # eps_c is near zero the residual (~1e-7) exceeds allclose's default rtol*|eps_c|. Unseeded,
+    # this passed or failed depending on whatever consumed the RNG before it.
+    torch.manual_seed(0)
     eps_u, eps_c = torch.randn(2, 4), torch.randn(2, 4)
-    assert torch.allclose(eps_u + 1.0 * (eps_c - eps_u), eps_c)
+    assert torch.allclose(eps_u + 1.0 * (eps_c - eps_u), eps_c, atol=1e-6)
 
 
 def test_combination_amplifies_the_branch_difference():

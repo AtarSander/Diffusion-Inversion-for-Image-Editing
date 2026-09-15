@@ -1,6 +1,7 @@
 # ABOUTME: Checks the two-adapter mechanism the pair-branch loss depends on: switching routes the
 # ABOUTME: forward, and BOTH adapters still receive gradient despite set_adapter freezing one.
 
+import pytest
 import torch
 from peft import LoraConfig, inject_adapter_in_model
 
@@ -73,3 +74,68 @@ def test_set_adapter_alone_would_starve_one_branch():
     frozen = [n for n, p in net.named_parameters() if "lora" in n and "cond" in n
               and "uncond" not in n and not p.requires_grad]
     assert frozen, "expected set_adapter to freeze the conditional adapter"
+
+
+def test_pair_loader_routes_and_restores(tmp_path):
+    """`attach_pair_inversion_lora` loads both branches, routes between them, and can be turned off.
+
+    The conditional and unconditional sidecars must name DIFFERENT adapters; if they shared a
+    name, the second load would overwrite the first and both branches would silently be the same
+    weights -- which the loader asserts against.
+    """
+    import json
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from peft import get_peft_model_state_dict
+
+    from src.inversion_lora.apply_lora import attach_pair_inversion_lora
+
+    torch.manual_seed(0)
+    lora = {"r": 2, "lora_alpha": 2, "target_modules": ["0", "1"], "init_lora_weights": True}
+    for suffix, name in (("", "inversion"), ("_uncond", "inversion_uncond")):
+        donor = torch.nn.Sequential(torch.nn.Linear(8, 8), torch.nn.Linear(8, 8))
+        inject_adapter_in_model(LoraConfig(**lora), donor, adapter_name=name)
+        for m in donor.modules():
+            if hasattr(m, "lora_B"):
+                torch.nn.init.normal_(m.lora_B[name].weight, std=0.7)
+        torch.save(get_peft_model_state_dict(donor, adapter_name=name),
+                   tmp_path / f"ckpt{suffix}.pt")
+        (tmp_path / f"ckpt{suffix}.json").write_text(
+            json.dumps({"adapter_name": name, "lora": lora})
+        )
+
+    net = torch.nn.Sequential(torch.nn.Linear(8, 8), torch.nn.Linear(8, 8))
+    set_enabled, select = attach_pair_inversion_lora(net, tmp_path / "ckpt.pt")
+    x = torch.randn(1, 8)
+
+    off = net(x)                      # injected disabled
+    set_enabled(True)
+    select("cond")
+    cond = net(x)
+    select("uncond")
+    uncond = net(x)
+    assert not torch.allclose(off, cond), "enabling the adapter changed nothing"
+    assert not torch.allclose(cond, uncond), "both branches produced identical output"
+    select("cond")
+    assert torch.allclose(net(x), cond), "routing is not stable"
+    set_enabled(False)
+    assert torch.allclose(net(x), off), "disabling did not restore the base model"
+
+
+def test_pair_loader_rejects_a_missing_unconditional_branch(tmp_path):
+    """A single-adapter checkpoint must not be loaded as a pair, silently running one branch."""
+    import json
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from src.inversion_lora.apply_lora import attach_pair_inversion_lora
+
+    lora = {"r": 2, "lora_alpha": 2, "target_modules": ["0"], "init_lora_weights": True}
+    torch.save({}, tmp_path / "solo.pt")
+    (tmp_path / "solo.json").write_text(json.dumps({"adapter_name": "inversion", "lora": lora}))
+    net = torch.nn.Sequential(torch.nn.Linear(8, 8))
+    with pytest.raises(FileNotFoundError, match="_uncond"):
+        attach_pair_inversion_lora(net, tmp_path / "solo.pt")
