@@ -125,16 +125,21 @@ the no-LoRA front** — a genuine, if modest, off-front gain. At t25 the realfn 
 than the trajectory one (+0.02 LPAPS***): shallow inversion never visits the off-manifold states
 it fixes. DDPM-inv's front remains clearly ahead at the preserved end.
 
-**Reading.** Fixing the off-manifold prediction error makes ODE inversion carry source information
-through the round trip far better — the robustness mechanism transfers to editing, unlike every
-accuracy/quality lever before it — but most of what it buys is spent the way DDPM spends its
-robustness: preservation, traded along the same front. The pre-registered H1 bound (-0.06 LPAPS)
-was beaten ~3x, so the bound applied to distribution shift, not to this mechanism. Caveats:
-184-clip corpus (cookies would give 1650), checkpoint picked on loss, single seed.
+**Reading — CORRECTED after the front check: not an editing win.** The paired deltas are large,
+but the front view (the decision-relevant one) says the movement does not beat the exchange rate
+already available from tstart/cfg: at cfg 3.5 the realfn points land BELOW the no-LoRA front
+(t50: CLAP 0.295 vs ~0.303 on-front at matched LPAPS; MuQ 0.212 vs ~0.229) — front-worse; at
+cfg 7 front-neutral with a single marginally-above point (t50, +0.009 CLAP); t25 regresses
+outright. So the off-manifold mechanism transfers to editing *dynamics* (carrying source
+information through the round trip), but what it buys is preservation paid in alignment at the
+front's own rate or worse — the same currency as DDPM's robustness, which likewise dominates
+nothing at matched compute. The H1 bound was beaten in paired-delta terms only.
 
-**Next candidates, in order of leverage:** (1) realfn at higher cfg_tar (10.5/14) — if the
-alignment cost stays flat as at 7.0, the off-front region grows; (2) mixed dataset
-(trajectory + realfn pairs) to recover the t25 regression; (3) full corpus via cookies.
+**Verdict for the project:** every lever on the inversion-accuracy/state-distribution axis is now
+measured: quality (dense — null), eval distribution (H1 — small), training distribution (realfn —
+large paired effect, front-bound). None expands the achievable trade-off region on real audio.
+Follow-ups (realfn @ cfg 10.5/14; mixed dataset; full corpus) would refine, not overturn, this.
+Caveats: 184-clip corpus, checkpoint on loss, single seed.
 
 ---
 
