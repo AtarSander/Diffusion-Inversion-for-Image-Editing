@@ -64,6 +64,14 @@ def _download_audio(x):
         # force_keyframes re-encodes the cut so the section is sample-accurate.
         "download_ranges": download_range_func([], [(start / 1000, end / 1000)]),
         "force_keyframes_at_cuts": True,
+        # YouTube extraction needs a JavaScript runtime since 2025; without one most videos fail
+        # with missing formats. YTDLP_NODE_PATH points at the binary when node is not on PATH.
+        "js_runtimes": {"node": {"path": os.environ["YTDLP_NODE_PATH"]}
+                        if os.environ.get("YTDLP_NODE_PATH") else {}},
+        # Datacenter IPs trip YouTube's bot check on part of the catalogue ("Sign in to
+        # confirm"); a browser-exported cookies.txt in YTDLP_COOKIES clears it.
+        **({"cookiefile": os.environ["YTDLP_COOKIES"]}
+           if os.environ.get("YTDLP_COOKIES") else {}),
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
