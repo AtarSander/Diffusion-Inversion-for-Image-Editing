@@ -8,6 +8,41 @@ Most recent first. Keep this file current — it is the handover doc between ses
 
 ---
 
+## 2026-09-16 (correction) — the cfg_src=1.0 "pair-branch" arm never used the second adapter
+
+`guided()` returns after the conditional call when `scale == 1.0`:
+
+```python
+conditional = data_prediction(x, index, embeds, mask)
+if scale == 1.0:
+    return conditional          # the unconditional branch is never reached
+```
+
+So every cfg_src=1.0 arm runs ONE model call per step, and the unconditional adapter `nu` is
+never invoked. The entry above calling pair-branch "the best adapter we have" on the strength of
+its cfg_src=1.0 numbers is wrong: that cell is the conditional adapter alone.
+
+**What the cfg_src=1.0 cell does measure**, and it is still worth having: a conditional adapter
+distilled against the conditional teacher with **no w-combination in its loss**, trained on
+guided trajectories. Against the w=1 adapter (unguided trajectories, no combination) and the
+shared-CFG adapter (guided combination on both sides), it isolates the training objective. Its
+edge is small -- 5.2573 vs 5.2632 LPAPS at t75 -- and should be described that way, not as a
+pair-branch result.
+
+**The only cell that tests pair-branch is cfg_src=3.5**, where both adapters are called. There it
+helps (5.0529 vs shared-CFG's 5.2163 at t50, repairing about a third of the extra damage) but
+stays in the collapsed group, ~0.45 LPAPS off the unguided front.
+
+So the corrected conclusion is narrower: **giving the empty prompt its own adapter measurably
+reduces the damage under guided inversion, and is untested anywhere else.** Whether it helps at
+all in the regime we actually deploy (cfg_src=1.0) is unknown, because that regime never calls it.
+
+Testing it would need a deployment that uses both branches without the collapse -- e.g. guided
+inversion at a lower cfg_src (2.0), if the solver survives it. That is the same diagnostic the
+CFG line already needs.
+
+---
+
 ## 2026-09-16 — RESULT: pair-branch is the best adapter we have, but does not rescue guided inversion
 
 All 16 cells scored (`ARM_KIND=pair`, cfg_src 1.0/3.5 x cfg_tar 3.5/7.0, real-audio hparam).

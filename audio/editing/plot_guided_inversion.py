@@ -24,12 +24,13 @@ ARMS = [
      r"_cfgtar(?P<tar>[\d.]+)_t(?P<t>\d+)_s100$", "#d62728", "--"),
     ("CFG adapter, src=3.5", r"stableaudio_odeinvlora_hparam_saocos_cfg35_r8_a4_lr5e-5"
      r"_checkpoint_step_2000_cfgsrc3\.5_cfgtar(?P<tar>[\d.]+)_t(?P<t>\d+)_s100$", "#8c564b", "-"),
-    # Pair-branch: its own adapter for the empty prompt, so the conditional one is never asked to
-    # repair both branches. Shown at both cfg_src, since it is the best adapter at 1.0 and the
-    # least-bad of the three collapsed arms at 3.5.
-    ("pair-branch, src=1.0", r"stableaudio_odeinvlora_hparam_saocos_cfg35pair_r8_a4_lr5e-5"
+    # Only the src=3.5 arm actually exercises pair-branch. At cfg_src=1.0 the guided() closure
+    # returns after the conditional call, so the unconditional adapter is never invoked and this
+    # is the conditional adapter alone -- it measures the training objective (no w-combination in
+    # the loss, guided trajectories), not the two-adapter idea.
+    ("pair-run cond adapter, src=1.0 (nu unused)", r"stableaudio_odeinvlora_hparam_saocos_cfg35pair_r8_a4_lr5e-5"
      r"_checkpoint_step_2000_cfgsrc1\.0_cfgtar(?P<tar>[\d.]+)_t(?P<t>\d+)_s100$", "#2ca02c", "-"),
-    ("pair-branch, src=3.5", r"stableaudio_odeinvlora_hparam_saocos_cfg35pair_r8_a4_lr5e-5"
+    ("pair-branch BOTH adapters, src=3.5", r"stableaudio_odeinvlora_hparam_saocos_cfg35pair_r8_a4_lr5e-5"
      r"_checkpoint_step_2000_cfgsrc3\.5_cfgtar(?P<tar>[\d.]+)_t(?P<t>\d+)_s100$", "#e377c2", "-"),
 ]
 
@@ -68,8 +69,8 @@ def main(runs_root: str, out_root: str = "output/guided_inversion") -> None:
     cfgs = sorted(df.cfg_tar.unique())
     fig, axes = plt.subplots(1, len(cfgs), figsize=(7.4 * len(cfgs), 5.2), squeeze=False)
     fig.suptitle(
-        "Pair-branch is the best adapter at cfg_src=1.0, and the least-bad at 3.5 — but "
-        "guided inversion collapses with or without any adapter",
+        "Only cfg_src=3.5 uses both adapters; at 1.0 the unconditional one is never called — "
+        "and guided inversion collapses with or without any adapter",
         fontsize=13.5, fontweight="bold", y=1.02,
     )
     for ax, cfg in zip(axes[0], cfgs):
