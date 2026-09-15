@@ -117,8 +117,7 @@ def main(runs_root: str, out_root: str = "output/matched_nfe", split: str = "hpa
     fig, axes = plt.subplots(len(splits), 4, figsize=(21.5, 5.2 * len(splits)), squeeze=False)
     fig.suptitle(
         f"Stable Audio Open at a matched budget of ~{budgets[0]} denoiser calls — "
-        f"{reference['n'].iloc[0]} edits, cfg_tar pooled: {', '.join(f'{c:g}' for c in cfgs)} "
-        "— points labelled depth/w",
+        f"{reference['n'].iloc[0]} edits, cfg_tar pooled: {', '.join(f'{c:g}' for c in cfgs)}",
         fontsize=13, fontweight="bold", y=1.0,
     )
     for row, s in enumerate(splits):
@@ -139,15 +138,8 @@ def main(runs_root: str, out_root: str = "output/matched_nfe", split: str = "hpa
         for ax, (metric, name) in zip(axes[row], PANELS):
             for arm, sub in df.groupby("arm"):
                 sub = sub.sort_values("lpaps")
-                ax.errorbar(sub["lpaps"], sub[metric], xerr=sub["lpaps_sem"],
-                            yerr=sub[f"{metric}_sem"], marker="o", ms=6, lw=1.6, capsize=2.5,
-                            color=COLORS.get(arm), label=arm)
-                for _, r in sub.iterrows():
-                    label = (f"{r['depth']}%" if len(cfgs) == 1
-                             else f"{r['depth']}%/{r['cfg_tar']:g}")
-                    ax.annotate(label, (r["lpaps"], r[metric]), fontsize=7,
-                                textcoords="offset points", xytext=(4, 4),
-                                color=COLORS.get(arm))
+                ax.plot(sub["lpaps"], sub[metric], marker="o", ms=6, lw=1.6,
+                        color=COLORS.get(arm), label=arm)
             if row == len(splits) - 1:
                 ax.set_xlabel("LPAPS to source (lower = better preserved)")
             ax.set(ylabel=name, title=f"{name} — {SPLIT_LABEL[s]}")
