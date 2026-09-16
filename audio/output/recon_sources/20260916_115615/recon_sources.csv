@@ -1,0 +1,8 @@
+,MusicCaps (realfn training audio),MedleyDB (benchmark)
+DDPM-inv,23.686,23.319
+"ODEInv
+no LoRA",23.001,22.216
+"ODEInv +
+trajectory LoRA",23.194,22.298
+"ODEInv +
+realfn LoRA",23.043,15.577
