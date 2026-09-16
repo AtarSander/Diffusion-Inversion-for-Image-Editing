@@ -1,0 +1,86 @@
+# ABOUTME: Build a single self-contained Colab notebook with base64-embedded mp3 audio players
+# ABOUTME: comparing real-audio reconstructions (source vs four inversion methods).
+
+import base64
+import json
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+MP3 = HERE / "mp3"
+
+EXAMPLES = {
+    "MedleyDB — benchmark audio (LoRA was NOT trained on this)": ["medley_a12", "medley_a129"],
+    "MusicCaps — train audio (LoRA WAS trained on this distribution)": ["musiccaps_a0",
+                                                                        "musiccaps_a1"],
+}
+METHODS = [("source", "Source (reference)"), ("ddpm", "DDPM Inv."), ("nolora", "ODE Inv."),
+           ("traj", "ODE Inv. w/ LoRA"), ("realfn", "ODE Inv. w/ Real-Audio-LoRA")]
+PSNR = {
+    "medley_a12": {"ddpm": 22.4, "nolora": 19.8, "traj": 21.1, "realfn": 17.7},
+    "medley_a129": {"ddpm": 21.6, "nolora": 21.2, "traj": 21.3, "realfn": 13.9},
+    "musiccaps_a0": {"ddpm": 26.7, "nolora": 26.0, "traj": 26.6, "realfn": 22.1},
+    "musiccaps_a1": {"ddpm": 22.6, "nolora": 22.9, "traj": 20.5, "realfn": 20.7},
+}
+
+
+def b64(stem: str, method: str) -> str:
+    """Base64-encode one mp3, or empty string if absent."""
+    p = MP3 / f"{stem}_{method}.mp3"
+    return base64.b64encode(p.read_bytes()).decode() if p.exists() else ""
+
+
+def build_html() -> str:
+    """One HTML block: a titled section per source, a labelled audio row per clip."""
+    css = (
+        "<style>"
+        ".rec{font-family:system-ui,sans-serif;max-width:760px}"
+        ".rec h2{margin:1.2em 0 .3em;border-bottom:2px solid #333;padding-bottom:.2em}"
+        ".rec .clip{margin:.8em 0 1.4em}.rec .clip b{font-size:1.05em}"
+        ".rec .row{display:flex;align-items:center;gap:10px;margin:.25em 0}"
+        ".rec .lab{width:230px;font-size:.9em}.rec .psnr{color:#666;font-size:.85em}"
+        ".rec .realfn .lab{color:#c0392b;font-weight:600}"
+        ".rec audio{height:32px}</style>"
+    )
+    out = [css, "<div class='rec'>",
+           "<h1>Real-audio reconstruction — listen</h1>",
+           "<p>Each row: invert the source, denoise back, compare to the source. "
+           "The <b>Real-Audio-LoRA</b> was trained only on MusicCaps; note how it degrades on "
+           "the MedleyDB benchmark it never saw (and is a touch worse even in-distribution).</p>"]
+    for title, stems in EXAMPLES.items():
+        out.append(f"<h2>{title}</h2>")
+        for stem in stems:
+            out.append(f"<div class='clip'><b>{stem}</b>")
+            for method, label in METHODS:
+                data = b64(stem, method)
+                if not data:
+                    continue
+                cls = "row realfn" if method == "realfn" else "row"
+                psnr = "" if method == "source" else \
+                    f"<span class='psnr'>PSNR {PSNR[stem][method]:.1f} dB</span>"
+                out.append(
+                    f"<div class='{cls}'><span class='lab'>{label} {psnr}</span>"
+                    f"<audio controls preload='none' "
+                    f"src='data:audio/mp3;base64,{data}'></audio></div>"
+                )
+            out.append("</div>")
+    out.append("</div>")
+    return "".join(out)
+
+
+cell_src = (
+    "# Real-audio reconstruction comparison — run this cell (Runtime > Run all).\n"
+    "# Self-contained: audio is embedded, nothing to download.\n"
+    "from IPython.display import HTML, display\n"
+    f"display(HTML({build_html()!r}))\n"
+)
+
+nb = {
+    "cells": [{"cell_type": "code", "metadata": {}, "execution_count": None,
+               "outputs": [], "source": cell_src}],
+    "metadata": {"colab": {"name": "reconstruction_comparison"},
+                 "kernelspec": {"name": "python3", "display_name": "Python 3"}},
+    "nbformat": 4, "nbformat_minor": 0,
+}
+out = HERE / "reconstruction_comparison.ipynb"
+out.write_text(json.dumps(nb))
+print(f"wrote {out} ({out.stat().st_size / 1e6:.1f} MB)")
