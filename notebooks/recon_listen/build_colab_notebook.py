@@ -84,3 +84,9 @@ nb = {
 out = HERE / "reconstruction_comparison.ipynb"
 out.write_text(json.dumps(nb))
 print(f"wrote {out} ({out.stat().st_size / 1e6:.1f} MB)")
+
+# Standalone HTML: opens in any browser by double-click, players work offline, nothing to run.
+html_out = HERE / "reconstruction_comparison.html"
+html_out.write_text("<!doctype html><meta charset='utf-8'>"
+                    "<title>Reconstruction comparison</title>" + build_html())
+print(f"wrote {html_out} ({html_out.stat().st_size / 1e6:.1f} MB)")
