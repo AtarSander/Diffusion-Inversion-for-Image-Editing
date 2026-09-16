@@ -15,13 +15,12 @@ import matplotlib.pyplot as plt  # noqa: E402
 AUDIO_ROOT = Path(__file__).resolve().parents[1]
 
 ARMS = {
-    "DDPM-inv": ("ddpm", "#2ca02c"),
-    "ODEInv\nno LoRA": ("nolora", "#7f7f7f"),
-    "ODEInv +\ntrajectory LoRA": ("saocos_r8_a4_lr5e-5_checkpoint_step_4000", "#4c72b0"),
-    "ODEInv +\nrealfn LoRA": ("saocos_realfn_r8_a4_lr5e-5_checkpoint_step_3000", "#c44e52"),
+    "DDPM Inv.": ("ddpm", "#2ca02c"),
+    "ODE Inv.": ("nolora", "#7f7f7f"),
+    "ODE Inv.\nw/ LoRA": ("saocos_r8_a4_lr5e-5_checkpoint_step_4000", "#4c72b0"),
+    "ODE Inv.\nw/ Real-Audio-LoRA": ("saocos_realfn_r8_a4_lr5e-5_checkpoint_step_3000", "#c44e52"),
 }
-SOURCES = {"MusicCaps (realfn training audio)": "recon_mcrecon_s100",
-           "MedleyDB (benchmark)": "recon_tracks_s100"}
+SOURCES = {"train audio": "recon_mcrecon_s100", "benchmark audio": "recon_tracks_s100"}
 FS = 14
 
 
@@ -58,9 +57,9 @@ def main(runs_root: str, out_root: str = "output/recon_sources") -> None:
     ax.set_xticks(list(xs))
     ax.set_xticklabels(list(ARMS), fontsize=FS - 1)
     ax.set_ylabel("mel PSNR (dB), higher = better", fontsize=FS)
-    ax.set_title("Real-audio reconstruction: the realfn adapter works on its training-audio\n"
-                 "distribution (MusicCaps) and fails only on the benchmark (MedleyDB)",
-                 fontsize=FS + 1, fontweight="bold")
+    fig.suptitle("LoRA trained on real audio fails to generalize on benchmark",
+                 fontsize=FS + 3, fontweight="bold", y=0.99)
+    ax.set_title("Real Audio Reconstruction (PSNR)", fontsize=FS, y=1.0)
     ax.tick_params(labelsize=FS - 1)
     ax.grid(True, linestyle="--", alpha=0.2, axis="y")
     ax.legend(fontsize=FS - 1, loc="lower left")

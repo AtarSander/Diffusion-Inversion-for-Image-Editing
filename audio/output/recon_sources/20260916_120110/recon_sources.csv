@@ -1,0 +1,7 @@
+,train audio,benchmark audio
+DDPM Inv.,23.686,23.319
+ODE Inv.,23.001,22.216
+"ODE Inv.
+w/ LoRA",23.194,22.298
+"ODE Inv.
+w/ Real-Audio-LoRA",23.043,15.577
