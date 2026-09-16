@@ -7,6 +7,8 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
 #SBATCH --time=00:30:00
+# The lem-gpu-short partition rejects jobs without a GPU gres, even for this CPU-only build.
+#SBATCH --gres=gpu:hopper:1
 #SBATCH --output=outputs/logs/slurm/mcrecon-%j.out
 #SBATCH --error=outputs/logs/slurm/mcrecon-%j.err
 #
