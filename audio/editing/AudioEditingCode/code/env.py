@@ -61,6 +61,13 @@ PATH_AUDIOS_MEDLEY_GEN = _resolve(
 # MusicCaps clips; only needed for real-audio-seeded inversion trajectories.
 PATH_MUSICCAPS = _resolve("MUSICCAPS_AUDIO_DIR", AUDIO_ROOT / "data/musiccaps/audio")
 
+# MusicCaps clips relaid as <root>/mc{idx}/mc{idx}_MIX.wav for the reconstruction benchmark
+# (realfn's own training-audio distribution). Built by build_musiccaps_recon.py; the `mcrecon`
+# split resolves here so the same recon pipeline runs on MusicCaps as on MedleyDB.
+PATH_AUDIOS_MCRECON = _resolve(
+    "MC_RECON_AUDIO_DIR", AUDIO_ROOT / "outputs/musiccaps_recon/audios"
+)
+
 # The only prompt CSV carrying all four columns the edit drivers read:
 # filename, source_captions, target_captions, edit.
 PATH_PROMPTS_MEDLEY = _resolve(
@@ -98,14 +105,19 @@ MEDLEY_SPLIT_CSVS = {
     # The hparam rows with generated source audio in place of the real mixes; built by
     # src/inversion_lora/generate_eval_inputs.py, which also writes the wavs the filenames name.
     "genhparam": "captions_gpt5_genhparam.csv",
+    # MusicCaps clips for the reconstruction benchmark (realfn's training-audio distribution),
+    # built by src/inversion_lora/build_musiccaps_recon.py.
+    "mcrecon": "captions_mcrecon.csv",
 }
 
 # Splits whose source audio is model-generated rather than real MedleyDB mixes.
 GENERATED_SPLITS = ("genhparam",)
+# Splits whose source audio is real MusicCaps clips, laid out under PATH_AUDIOS_MCRECON.
+MC_RECON_SPLITS = ("mcrecon",)
 
 
 def medley_audio_root(split: str) -> str:
-    """Source-audio root for one split: the real MedleyDB mixes, or the generated-input set.
+    """Source-audio root for one split: MedleyDB mixes, generated inputs, or MusicCaps clips.
 
     Args:
         split: Key of `MEDLEY_SPLIT_CSVS`.
@@ -115,7 +127,11 @@ def medley_audio_root(split: str) -> str:
     """
     if split not in MEDLEY_SPLIT_CSVS:
         raise ValueError(f"Unknown split {split!r}; expected one of {list(MEDLEY_SPLIT_CSVS)}")
-    return PATH_AUDIOS_MEDLEY_GEN if split in GENERATED_SPLITS else PATH_AUDIOS_MEDLEY
+    if split in GENERATED_SPLITS:
+        return PATH_AUDIOS_MEDLEY_GEN
+    if split in MC_RECON_SPLITS:
+        return PATH_AUDIOS_MCRECON
+    return PATH_AUDIOS_MEDLEY
 
 
 def medley_split_paths(split: str) -> tuple[str, str]:
