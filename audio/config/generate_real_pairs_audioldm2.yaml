@@ -9,7 +9,7 @@ device: cpu # set to cuda:N explicitly; never auto-grab a shared GPU
 
 model_id: cvssp/audioldm2-large
 num_inference_steps: 200 # the DDIM grid the editing baselines and trajectory dataset use
-audio_length_in_s: null # null uses the model's native length (~10.24 s, latent [8,256,16])
+audio_length_in_s: 10.24 # matches the trajectory dataset: MusicCaps 10 s clips, latent [8,256,16]
 
 captions_csv: editing/music_caps_dl/metadata/musiccaps-public.csv
 audio_dir: ${oc.env:MUSICCAPS_AUDIO_DIR}

@@ -213,9 +213,11 @@ def main(cfg: DictConfig) -> None:
         seed = int(cfg.seed_base) + sample_idx
         sample = real_pairs(ldm, x0, cond, seed)
         if first:
-            gap = (sample["trajectory"][1:] - sample["states"][1:]).flatten(1).norm(dim=1) / \
-                sample["states"][1:].flatten(1).norm(dim=1)
-            logger.info("First clip {!r}: latent {} noisiest-state RMS {:.3g} gap(clean-vs-state) "
+            # Each input (trajectory[i+1]) is one DDIM reverse step from its forward-noised state
+            # (states[i]); both arrays are length N, so compare them directly.
+            gap = (sample["trajectory"][1:] - sample["states"]).flatten(1).norm(dim=1) / \
+                sample["states"].flatten(1).norm(dim=1)
+            logger.info("First clip {!r}: latent {} noisiest-state RMS {:.3g} step(input-vs-state) "
                         "rel mean {:.3e}", record["prompt"][:70], tuple(x0.shape[1:]),
                         float(sample["states"][0].pow(2).mean().sqrt()), float(gap.mean()))
             first = False
