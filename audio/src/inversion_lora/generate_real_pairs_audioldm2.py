@@ -46,6 +46,7 @@ def encode_clip(ldm, path: Path, target_frames: int) -> torch.Tensor:
     fn_stft = ldm.get_fn_STFT()
     mel, _, _ = load_audio(str(path), fn_stft, device=ldm.device, stft=True, model_sr=ldm.get_sr())
     assert mel.ndim == 4, f"expected [1, 1, T, F] mel, got {tuple(mel.shape)}"
+    assert target_frames % ldm.model.vae_scale_factor == 0, target_frames
     frames = mel.shape[2]
     if frames < target_frames:
         pad = mel.new_full((1, 1, target_frames - frames, mel.shape[3]), float(mel.min()))
@@ -177,7 +178,10 @@ def main(cfg: DictConfig) -> None:
     logger.info("Loading {} ({} steps)", cfg.model_id, cfg.num_inference_steps)
     ldm = load_model(str(cfg.model_id), device, int(cfg.num_inference_steps), edit_method="ddim")
     ldm.model.unet.eval()
-    target_frames = latent_height(ldm.model, cfg.audio_length_in_s) * ldm.model.vae_scale_factor
+    # latent_height already returns the mel frame count the VAE consumes (1024 for 10.24 s); the
+    # VAE downsamples that by vae_scale_factor to the [8, 256, 16] latent the trajectory dataset
+    # uses. Do NOT multiply again -- that inflates the clip to ~40 s and the latent to [8,1024,16].
+    target_frames = latent_height(ldm.model, cfg.audio_length_in_s)
     logger.info("scheduler={} prediction_type={} steps={} target_mel_frames={}",
                 type(ldm.model.scheduler).__name__, ldm.model.scheduler.config.prediction_type,
                 len(ldm.model.scheduler.timesteps), target_frames)
