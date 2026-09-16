@@ -19,7 +19,7 @@ from src.inversion_lora.generate_real_pairs_stable_audio import (  # noqa: E402
 )
 from src.inversion_lora.stable_audio import ExactDPMSolver, load_teacher  # noqa: E402
 
-CKPT = "/tmp/claude-23830/-nas-lstanisz-code-lorainv/6d9625a0-3b6e-493e-a8b4-de96103506d4/scratchpad/checkpoint_step_3000.pt"
+CKPT = "PATH_TO/saocos_realfn_r8_a4_lr5e-5/checkpoint_step_3000.pt"  # set before running
 CLIPS = sorted(Path("/nas/lstanisz/data/musiccaps/audio").glob("*.wav"))[:6]
 FS = 14
 device = torch.device("cuda:7")
