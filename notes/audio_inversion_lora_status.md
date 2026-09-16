@@ -234,8 +234,23 @@ denoise, saving that trajectory; 2x cost) is the only construction that guarante
 If the real-audio direction continues (SAO or AudioLDM2), it continues there. Always gate on
 reconstruction before reading editing numbers.
 
-**MECHANISM PINNED DOWN (2026-09-16, local diagnostic with the actual checkpoint,
-`scratchpad/diag_realfn.py`).** Prompted by "there must be an error" — there wasn't, in the eval;
+**CORRECTION (2026-09-16, two-source reconstruction control — supersedes the retraction and the
+"phantom gap" mechanism below).** Ran the four-arm recon on BOTH sources with the proper eval
+(`output/recon_sources/20260916_115615/`, mel PSNR): realfn scores 23.04 dB on MusicCaps (its
+TRAINING-audio distribution) — tied with no-LoRA 23.00, trajectory 23.19, DDPM 23.69 — and
+collapses to 15.58 dB ONLY on MedleyDB. So the forward-noise construction is NOT fundamentally
+broken; realfn reconstructs the audio distribution it was trained on. The MedleyDB failure is an
+AUDIO-DISTRIBUTION generalization gap (MusicCaps-trained -> MedleyDB-tested), not the
+gap-magnitude/"phantom" mechanism claimed below. That mechanism is FALSIFIED (it predicted
+failure on MusicCaps too). It also means my local `diag_realfn.py` / `plot_realfn_diagnostic.py`
+(reporting realfn latent round-trip 0.598 on MusicCaps clips) has a bug — a 0.6 latent error
+cannot decode to 23 dB; those local figures are unreliable and the cluster eval is authoritative.
+Implication: forward-noise real-audio training is worth pursuing with target-matched / diverse
+audio; the editing result on MedleyDB was degraded because MedleyDB is out-of-distribution for a
+MusicCaps-only adapter. Do not cite the phantom-gap figures.
+
+**[SUPERSEDED, see correction above] MECHANISM (2026-09-16, local diagnostic with the actual
+checkpoint, `scratchpad/diag_realfn.py`).** Prompted by "there must be an error" — there wasn't, in the eval;
 there was one in my first diagnostic. Findings: (a) deployment-matched latent round-trip (invert
 w/ adapter, denoise w/ frozen teacher) reproduces the collapse — realfn rel error 0.586 vs
 no-LoRA 0.149, consistent with 15.6 vs 22.2 dB, so the eval is sound. (b) My first round-trip
