@@ -24,21 +24,28 @@ SOURCES = {"train audio": "recon_mcrecon_s100", "benchmark audio": "recon_tracks
 FS = 14
 
 
-def main(runs_root: str, out_root: str = "output/recon_sources") -> None:
-    """Draw grouped mel-PSNR bars, one group per method, two bars per source.
+METRICS = {
+    "psnr": ("psnr_ssim_per_file.csv", "psnr", "mel PSNR (dB), higher = better", False),
+    "lpaps": ("per_example_metrics.csv", "lpaps", "LPAPS to source, lower = better", True),
+}
+
+
+def main(runs_root: str, metric: str = "psnr", out_root: str = "output/recon_sources") -> None:
+    """Draw grouped reconstruction bars, one group per method, two bars per source.
 
     Args:
         runs_root: Directory holding the stable_audio run directories.
+        metric: `psnr` (mel PSNR) or `lpaps` (LPAPS to source).
         out_root: Destination, relative to `audio/`.
     """
+    csv_name, col, ylabel, _ = METRICS[metric]
     root = Path(runs_root)
     vals = {}
     for src, tag in SOURCES.items():
         vals[src] = {}
         for arm, (d, _) in ARMS.items():
-            ps = root / f"stableaudio_acc_{tag}_{d}" / "psnr_ssim_per_file.csv"
-            frame = pd.read_csv(ps)
-            vals[src][arm] = (frame.psnr.mean(), frame.psnr.sem())
+            frame = pd.read_csv(root / f"stableaudio_acc_{tag}_{d}" / csv_name)
+            vals[src][arm] = (frame[col].mean(), frame[col].sem())
 
     fig, ax = plt.subplots(figsize=(12, 6))
     width = 0.38
@@ -52,23 +59,25 @@ def main(runs_root: str, out_root: str = "output/recon_sources") -> None:
                color=[ARMS[a][1] for a in ARMS], edgecolor="black", linewidth=0.8,
                alpha=0.75 if s else 1.0, hatch=hatches[s], label=src)
         for x, m in zip(xs, means):
-            ax.annotate(f"{m:.1f}", (x + off, m), ha="center", va="bottom", fontsize=FS - 3,
+            ax.annotate(f"{m:.2f}" if metric == "lpaps" else f"{m:.1f}", (x + off, m),
+                        ha="center", va="bottom", fontsize=FS - 3,
                         xytext=(0, 3), textcoords="offset points")
     ax.set_xticks(list(xs))
     ax.set_xticklabels(list(ARMS), fontsize=FS - 1)
-    ax.set_ylabel("mel PSNR (dB), higher = better", fontsize=FS)
+    ax.set_ylabel(ylabel, fontsize=FS)
     fig.suptitle("LoRA trained on real audio fails to generalize on benchmark",
                  fontsize=FS + 3, fontweight="bold", y=0.99)
-    ax.set_title("Real Audio Reconstruction (PSNR)", fontsize=FS, y=1.0)
+    ax.set_title(f"Real Audio Reconstruction ({'LPAPS' if metric == 'lpaps' else 'PSNR'})",
+                 fontsize=FS, y=1.0)
     ax.tick_params(labelsize=FS - 1)
     ax.grid(True, linestyle="--", alpha=0.2, axis="y")
-    ax.legend(fontsize=FS - 1, loc="lower left")
+    ax.legend(fontsize=FS - 1, loc="lower left" if metric == "psnr" else "upper left")
     fig.tight_layout()
 
     out = AUDIO_ROOT / out_root / datetime.now().strftime("%Y%m%d_%H%M%S")
     (out / "plots").mkdir(parents=True, exist_ok=True)
     for ext in ("png", "svg"):
-        fig.savefig(out / "plots" / f"recon_sources.{ext}", dpi=150, bbox_inches="tight")
+        fig.savefig(out / "plots" / f"recon_sources_{metric}.{ext}", dpi=150, bbox_inches="tight")
     table = pd.DataFrame({src: {a: round(vals[src][a][0], 3) for a in ARMS} for src in SOURCES})
     table.to_csv(out / "recon_sources.csv")
     (out / "REPORT.md").write_text(
