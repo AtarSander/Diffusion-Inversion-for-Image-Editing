@@ -1,0 +1,32 @@
+# Real-audio forward-noise training pairs for the AudioLDM2 inversion LoRA. MusicCaps clips are
+# VAE-encoded, forward-noised to every DDIM timestep, the teacher predicts epsilon there, and the
+# training input is one exact DDIM reverse step (shifted-timestep pairing). Cross-model control
+# for the SAO result: does DDIM inversion change the forward-noise verdict?
+# Run:   uv run --python .venv/bin/python src/inversion_lora/generate_real_pairs_audioldm2.py device=cuda:0
+# Smoke: ... device=cuda:0 num_samples=2 num_inference_steps=20 output_dir=/tmp/aldm2_real_smoke
+
+device: cpu # set to cuda:N explicitly; never auto-grab a shared GPU
+
+model_id: cvssp/audioldm2-large
+num_inference_steps: 200 # the DDIM grid the editing baselines and trajectory dataset use
+audio_length_in_s: null # null uses the model's native length (~10.24 s, latent [8,256,16])
+
+captions_csv: editing/music_caps_dl/metadata/musiccaps-public.csv
+audio_dir: ${oc.env:MUSICCAPS_AUDIO_DIR}
+num_captions: 1650
+# Independent noise per (draw, timestep); one clip yields draws_per_clip samples.
+draws_per_clip: 8
+
+output_dir: ${oc.env:LORAINV_DATA_ROOT}/audioldm2_real_pairs_fp32
+start_index: 0
+num_samples: null # null => all; shards slice [start, start+num)
+# Reserved range for AudioLDM2 real-pairs; distinct from SAO's 500000 and the trajectory seeds.
+seed_base: 700000
+
+store_dtype: float32
+overwrite: false
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null

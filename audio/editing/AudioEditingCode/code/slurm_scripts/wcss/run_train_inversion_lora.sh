@@ -172,6 +172,13 @@ CONFIGS=(
   # coarse-step inputs (generate_real_pairs_stable_audio.yaml) — trained on the off-manifold
   # states DDPM-inv's robustness advantage lives on. Needs the real-pairs dataset first.
   "attn|8|4|5e-5|realfn_r8_a4_lr5e-5|data_root=\${oc.env:LORAINV_DATA_ROOT}/stable_audio_real_pairs_fp32 max_train_steps=3000 save_every_steps=500 eval_every_steps=500"
+  # 38: AUDIOLDM2 real-audio forward-noise pairs (default SCRIPT=train.py, NO RUN_PREFIX). The
+  # cross-model control: same shifted-denoiser objective on AudioLDM2's DDIM grid, trained on
+  # MusicCaps clips forward-noised to every timestep with exact-DDIM-step inputs
+  # (generate_real_pairs_audioldm2.yaml). Compared in reconstruction vs no-LoRA and a
+  # trajectory-trained attn adapter. 6000 steps, saving every 1000; recon eval off (its own
+  # recon fixtures are MedleyDB, scored separately).
+  "attn|8|4|5e-5|aldm2realfn_r8_a4_lr5e-5|data_root=\${oc.env:LORAINV_DATA_ROOT}/audioldm2_real_pairs_fp32 max_train_steps=6000 save_every_steps=1000 eval_every_steps=1000 recon_every_steps=0"
 )
 
 # Fail before the 12 GB model load rather than after it: wandb only reports a bad credential

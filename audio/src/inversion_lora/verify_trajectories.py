@@ -148,12 +148,23 @@ def check_sample(sample_dir: Path, scheduler_cache: dict, check_step: bool) -> l
         if [int(t) for t in sched.timesteps] != timesteps:
             problems.append(f"{sample_dir.name}: cached timesteps do not match the DDIM grid")
         else:
+            # A plain trajectory chains: step(traj[i]) -> traj[i+1]. A real-audio forward-noise
+            # dataset (input_space == "exact_ddim_step") anchors each step at the forward-noised
+            # states in latents/states.pt instead, since consecutive rows are not a real chain.
+            if meta.get("input_space") == "exact_ddim_step":
+                states_path = sample_dir / "latents/states.pt"
+                if not states_path.exists():
+                    return [f"{sample_dir.name}: forward-noise sample without latents/states.pt"]
+                base = _load(states_path)
+            else:
+                base = traj
             worst = 0.0
             for i, t in enumerate(sched.timesteps):
                 got = sched.step(
                     model_output=eps[i : i + 1].float(),
                     timestep=t,
-                    sample=traj[i : i + 1].float(),
+                    sample=base[i : i + 1].float(),
+                    eta=0,
                     return_dict=True,
                 ).prev_sample
                 worst = max(worst, (got - traj[i + 1 : i + 2].float()).abs().max().item())
