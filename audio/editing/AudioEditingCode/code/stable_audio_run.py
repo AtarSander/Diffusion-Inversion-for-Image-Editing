@@ -499,8 +499,10 @@ def run_stable_audio_edit(
                             f"Unconditional preserved: {hook_counter['unconditional_preserved']}"
                         )
 
-        # Create save path based on mode
-        if results_path is not None:
+        # Create save path based on mode. Only needed for the debug output branch below
+        # (save_edit_wav_path is None); building it otherwise makes a caption-named directory
+        # that overflows the filename limit on long captions (e.g. MusicCaps) for no reason.
+        if save_edit_wav_path is None and results_path is not None:
             if mode == "sdedit":
                 save_path = os.path.join(
                     f"./{results_path}/",
