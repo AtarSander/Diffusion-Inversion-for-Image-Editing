@@ -249,6 +249,23 @@ Implication: forward-noise real-audio training is worth pursuing with target-mat
 audio; the editing result on MedleyDB was degraded because MedleyDB is out-of-distribution for a
 MusicCaps-only adapter. Do not cite the phantom-gap figures.
 
+**REFINED (2026-09-16, same day, in-distribution paired tests) — audio-OOD is not the whole
+story; the OBJECTIVE is also miscalibrated.** On the TRAINING audio (MusicCaps), paired vs
+no-LoRA: realfn LPAPS 3.664 vs 3.420 (WORSE, +0.244, p=1.6e-7), PSNR 23.04 vs 23.00 (flat) —
+i.e. even in-distribution realfn improves neither metric, while the trajectory adapter improves
+BOTH (LPAPS 3.28, PSNR 23.19). Why: no-LoRA ODE inversion already reconstructs within 0.69 dB of
+DDPM (the exact reference), so the real-trajectory shift gap an adapter can recover is <1 dB —
+tiny. realfn trained to fit the LARGE forward-noise gap (9.75e-2) and applies a too-large
+correction where little is needed, perturbing more than it fixes even on familiar audio; on
+MedleyDB that miscalibration + OOD audio compound into the 15.6 dB collapse. So BOTH hold:
+objective miscalibration (visible in-distribution) AND audio-OOD (catastrophic on the benchmark).
+Consequence: target-matched audio ALONE will not rescue forward-noise (realfn is already
+in-distribution on MusicCaps and still doesn't help). The construction that helps in-distribution
+is the trajectory one (ODE-trajectory states, small gap); the correct real-audio recipe is
+therefore training on real-audio INVERSION-TRAJECTORY states (invert-then-denoise, 2x cost), not
+forward-noised states. This is the original chain-consistent recommendation, now supported by the
+in-distribution numbers rather than the (buggy) local phantom-gap diagnostic.
+
 **[SUPERSEDED, see correction above] MECHANISM (2026-09-16, local diagnostic with the actual
 checkpoint, `scratchpad/diag_realfn.py`).** Prompted by "there must be an error" — there wasn't, in the eval;
 there was one in my first diagnostic. Findings: (a) deployment-matched latent round-trip (invert
