@@ -12,9 +12,15 @@ EXAMPLES = {
     "MedleyDB (benchmark)": ["medley_a12", "medley_a129"],
     "MusicCaps (train audio)": ["musiccaps_a0", "musiccaps_a1"],
 }
-# Reconstruction mel PSNR on each source (from output/recon_sources), for reference.
-PSNR = {"MedleyDB (benchmark)": {"ddpm": 23.3, "nolora": 22.2, "traj": 22.3, "realfn": 15.6},
-        "MusicCaps (train audio)": {"ddpm": 23.7, "nolora": 23.0, "traj": 23.2, "realfn": 23.0}}
+# Per-CLIP reconstruction mel PSNR (dB) for exactly the examples below — not the split average,
+# which washes out realfn's per-clip variance (its 180-clip mean ties no-LoRA while individual
+# clips like a0/a1 sit well below it).
+PSNR = {
+    "medley_a12": {"ddpm": 22.4, "nolora": 19.8, "traj": 21.1, "realfn": 17.7},
+    "medley_a129": {"ddpm": 21.6, "nolora": 21.2, "traj": 21.3, "realfn": 13.9},
+    "musiccaps_a0": {"ddpm": 26.7, "nolora": 26.0, "traj": 26.6, "realfn": 22.1},
+    "musiccaps_a1": {"ddpm": 22.6, "nolora": 22.9, "traj": 20.5, "realfn": 20.7},
+}
 METHODS = {"source": "source (reference)", "ddpm": "DDPM Inv.", "nolora": "ODE Inv.",
            "traj": "ODE Inv. w/ LoRA", "realfn": "ODE Inv. w/ Real-Audio-LoRA"}
 
@@ -27,8 +33,7 @@ def player(stem: str, method: str):
     path = AUDIO_DIR / f"{stem}_{method}.wav"
     if not path.exists():
         return
-    src = next(s for s, stems in EXAMPLES.items() if stem in stems)
-    tag = "" if method == "source" else f"  —  recon PSNR {PSNR[src][method]:.1f} dB"
+    tag = "" if method == "source" else f"  —  this clip's PSNR {PSNR[stem][method]:.1f} dB"
     print(f"{METHODS[method]}{tag}")
     ipd.display(ipd.Audio(str(path)))
 
@@ -42,10 +47,13 @@ for source, stems in EXAMPLES.items():
 
 
 # %%
-# The headline A/B: realfn on MedleyDB (collapses to 15.6 dB) vs on MusicCaps (fine, ~23 dB).
-print("MedleyDB a12 — no-LoRA (22.2) vs Real-Audio-LoRA (15.6):")
+# The headline A/B: no-LoRA vs Real-Audio-LoRA, per clip. realfn is below no-LoRA on every clip
+# here (worse in-distribution too), and collapses hardest on MedleyDB (a129: 21.2 -> 13.9 dB).
+print("MedleyDB a129 — no-LoRA (21.2) vs Real-Audio-LoRA (13.9):")
 for m in ["nolora", "realfn"]:
-    player("medley_a12", m)
-print("\nMusicCaps a0 — same two, both ~23 dB (realfn fine in-distribution):")
+    player("medley_a129", m)
+print("\nMusicCaps a0 — no-LoRA (26.0) vs Real-Audio-LoRA (22.1):")
 for m in ["nolora", "realfn"]:
     player("musiccaps_a0", m)
+
+# %%
