@@ -10,16 +10,16 @@ MP3 = HERE / "mp3"
 
 EXAMPLES = {
     "MedleyDB — benchmark audio (LoRA was NOT trained on this)": ["medley_a12", "medley_a129"],
-    "MusicCaps — train audio (LoRA WAS trained on this distribution)": ["musiccaps_a0",
-                                                                        "musiccaps_a1"],
+    "MusicCaps — train audio (LoRA WAS trained on this distribution)": ["musiccaps_a81",
+                                                                        "musiccaps_a48"],
 }
 METHODS = [("source", "Source (reference)"), ("ddpm", "DDPM Inv."), ("nolora", "ODE Inv."),
            ("traj", "ODE Inv. w/ LoRA"), ("realfn", "ODE Inv. w/ Real-Audio-LoRA")]
 PSNR = {
     "medley_a12": {"ddpm": 22.4, "nolora": 19.8, "traj": 21.1, "realfn": 17.7},
     "medley_a129": {"ddpm": 21.6, "nolora": 21.2, "traj": 21.3, "realfn": 13.9},
-    "musiccaps_a0": {"ddpm": 26.7, "nolora": 26.0, "traj": 26.6, "realfn": 22.1},
-    "musiccaps_a1": {"ddpm": 22.6, "nolora": 22.9, "traj": 20.5, "realfn": 20.7},
+    "musiccaps_a81": {"ddpm": 25.7, "nolora": 26.2, "traj": 26.0, "realfn": 26.3},
+    "musiccaps_a48": {"ddpm": 27.1, "nolora": 26.6, "traj": 27.2, "realfn": 27.3},
 }
 
 
@@ -44,8 +44,9 @@ def build_html() -> str:
     out = [css, "<div class='rec'>",
            "<h1>Real-audio reconstruction — listen</h1>",
            "<p>Each row: invert the source, denoise back, compare to the source. "
-           "The <b>Real-Audio-LoRA</b> was trained only on MusicCaps; note how it degrades on "
-           "the MedleyDB benchmark it never saw (and is a touch worse even in-distribution).</p>"]
+           "The <b>Real-Audio-LoRA</b> was trained only on MusicCaps: on its own training-audio "
+           "distribution it matches the other methods (all four within ~0.3 dB below), but it "
+           "degrades sharply on the MedleyDB benchmark it never saw.</p>"]
     for title, stems in EXAMPLES.items():
         out.append(f"<h2>{title}</h2>")
         for stem in stems:
@@ -86,12 +87,12 @@ nb = {
                  "kernelspec": {"name": "python3", "display_name": "Python 3"}},
     "nbformat": 4, "nbformat_minor": 0,
 }
-out = HERE / "reconstruction_comparison.ipynb"
+out = HERE / "lorainv_20260916_reconstruction_comparison.ipynb"
 out.write_text(json.dumps(nb))
 print(f"wrote {out} ({out.stat().st_size / 1e6:.1f} MB)")
 
 # Standalone HTML: opens in any browser by double-click, players work offline, nothing to run.
-html_out = HERE / "reconstruction_comparison.html"
+html_out = HERE / "lorainv_20260916_reconstruction_comparison.html"
 html_out.write_text("<!doctype html><meta charset='utf-8'>"
                     "<title>Reconstruction comparison</title>" + build_html())
 print(f"wrote {html_out} ({html_out.stat().st_size / 1e6:.1f} MB)")
