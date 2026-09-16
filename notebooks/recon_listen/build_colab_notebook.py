@@ -67,16 +67,21 @@ def build_html() -> str:
     return "".join(out)
 
 
-cell_src = (
-    "# Real-audio reconstruction comparison — run this cell (Runtime > Run all).\n"
-    "# Self-contained: audio is embedded, nothing to download.\n"
-    "from IPython.display import HTML, display\n"
-    f"display(HTML({build_html()!r}))\n"
-)
+html_block = build_html()
 
+# The audio lives in the cell OUTPUT (rendered as a sandboxed HTML widget), not in the source.
+# Putting megabytes of base64 in an editable code cell freezes Colab's editor; the output
+# renderer handles it fine. Source stays tiny, so nothing to run — it's pre-rendered.
 nb = {
-    "cells": [{"cell_type": "code", "metadata": {}, "execution_count": None,
-               "outputs": [], "source": cell_src}],
+    "cells": [{
+        "cell_type": "code",
+        "metadata": {},
+        "execution_count": 1,
+        "outputs": [{"output_type": "display_data", "metadata": {},
+                     "data": {"text/html": html_block, "text/plain": ["<audio players>"]}}],
+        "source": ("# Real-audio reconstruction comparison — the players are rendered below.\n"
+                   "# Pre-rendered and self-contained; nothing to run.\n"),
+    }],
     "metadata": {"colab": {"name": "reconstruction_comparison"},
                  "kernelspec": {"name": "python3", "display_name": "Python 3"}},
     "nbformat": 4, "nbformat_minor": 0,
