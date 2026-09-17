@@ -208,9 +208,12 @@ def main(cfg: DictConfig) -> None:
             # For the unet forward; the dataset's own key names are set at save time below.
             cond = {"encoder_hidden_states": hidden, "class_labels": t5,
                     "encoder_attention_mask": mask}
-            save_cond = {"generated_prompt_embeds": hidden[0].cpu(),
-                         "t5_prompt_embeds": t5[0].cpu(),
-                         "t5_attention_mask": mask[0].cpu()}
+            # encode_text runs the text encoders outside no_grad, so the embeddings require grad
+            # and are non-leaf; detach before saving or the DataLoader workers cannot serialize
+            # them across process boundaries.
+            save_cond = {"generated_prompt_embeds": hidden[0].detach().cpu(),
+                         "t5_prompt_embeds": t5[0].detach().cpu(),
+                         "t5_attention_mask": mask[0].detach().cpu()}
             encoded = {clip_idx: (x0, cond, save_cond)}
         x0, cond, save_cond = encoded[clip_idx]
 
