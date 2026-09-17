@@ -136,7 +136,9 @@ class AudioLDM2TrajectoryDataset(Dataset):
             "x_clean": x_clean,
             "target_eps": eps,
             "timestep": torch.tensor(sample["timesteps"][step_idx], dtype=self.timestep_dtype),
-            **{key: conditioning[key] for key in self.conditioning_keys},
+            # .detach(): a generator that computed conditioning outside no_grad saves non-leaf
+            # grad tensors, which the DataLoader workers cannot serialize across processes.
+            **{key: conditioning[key].detach() for key in self.conditioning_keys},
             "sample_idx": sample["sample_idx"],
             "step_idx": step_idx,
         }
