@@ -756,6 +756,10 @@ class AudioLDM2Wrapper(PipelineWrapper):
         zero_out_resconns: Optional[Union[int, List]] = None,
     ) -> Tuple:
 
+        # NFE counter: every editing method's denoiser calls route through here, so this is the
+        # one place that reports compute honestly across methods (mirrors StableAudWrapper).
+        self.nfe = getattr(self, "nfe", 0) + 1
+
         # Translation
         encoder_hidden_states_1 = class_labels
         class_labels = None
