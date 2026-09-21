@@ -6,7 +6,7 @@
 LORA_MODE=ddim
 LORA_CHECKPOINTS=(
   ""
-  "attn_r8_a4_lr5e-5/checkpoint_step_8000.pt"
+  "attn_r8_a4_lr5e-5/checkpoint_step_4000.pt"
   "aldm2realfn_r8_a4_lr5e-5/checkpoint_step_3000.pt"
 )
 
