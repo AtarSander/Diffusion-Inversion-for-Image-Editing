@@ -78,9 +78,12 @@ def main(out_root: str = str(AUDIO_ROOT / "output/paper_figures"),
             ax.set_ylabel(f"{metric_name} $\\uparrow$", fontsize=FS)
             if row == 1:
                 ax.set_xlabel("LPAPS to source $\\downarrow$", fontsize=FS)
-            ax.set_title(f"{model}: {metric_name}", fontsize=FS)
         axes[row, 0].legend(fontsize=FS - 1, framealpha=0.9)
-    fig.tight_layout()
+    fig.tight_layout(h_pad=3.0)
+    for row, model in enumerate(MODELS):
+        y1 = max(ax.get_position().y1 for ax in axes[row])
+        fig.text(0.5, y1 + 0.012, model, ha="center", va="bottom",
+                 fontsize=FS + 2)
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = Path(out_root) / ts
