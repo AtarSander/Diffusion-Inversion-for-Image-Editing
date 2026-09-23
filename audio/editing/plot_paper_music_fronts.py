@@ -27,7 +27,6 @@ MODELS = {
     },
     "Stable Audio Open": {
         "csv": AUDIO_ROOT / "output/matched_nfe/20260915_120122/matched_nfe_runs_hparam.csv",
-        "cfgs": [3.5, 7.0],
         "labels": {
             "ODEInv (no LoRA)": "ODE Inv.",
             "ODEInv w/ LoRA bw": "ODE Inv. + LoRA",
@@ -51,7 +50,8 @@ METRICS = {"clap": "CLAP", "muq": "MuQ-MuLan"}
 
 def main(out_root: str = str(AUDIO_ROOT / "output/paper_figures"),
          paper_figures: str = str(AUDIO_ROOT.parent / "paper_tex/figures")) -> None:
-    """Plot preservation-adherence fronts (cfg_tar pooled per arm, sorted by LPAPS).
+    """Plot per-arm Pareto fronts over the pooled (depth, cfg_tar) grid, with all
+    operating points as faint markers behind each front.
 
     Args:
         out_root: Directory for the timestamped copy of the figure.
@@ -60,20 +60,19 @@ def main(out_root: str = str(AUDIO_ROOT / "output/paper_figures"),
     fig, axes = plt.subplots(2, 2, figsize=(11, 7.5), sharex="row")
     for row, (model, spec) in enumerate(MODELS.items()):
         df = pd.read_csv(spec["csv"])
-        if "cfgs" in spec:
-            df = df[df.cfg_tar.isin(spec["cfgs"])]
         for col, (metric, metric_name) in enumerate(METRICS.items()):
             ax = axes[row, col]
             for arm, label in spec["labels"].items():
                 color, marker = STYLE[label]
-                for i, (_, sub) in enumerate(df[df.arm == arm].groupby("cfg_tar")):
-                    sub = sub.sort_values("depth")
-                    ax.errorbar(sub.lpaps, sub[metric],
-                                xerr=sub.lpaps_sem, yerr=sub[f"{metric}_sem"],
-                                color=color, marker=marker, markersize=6,
-                                markeredgecolor="black", markeredgewidth=0.8,
-                                linewidth=1.6, elinewidth=0.9, capsize=2,
-                                label=label if i == 0 else None)
+                sub = df[df.arm == arm].sort_values("lpaps")
+                front = sub[sub[metric].cummax().eq(sub[metric])]
+                ax.scatter(sub.lpaps, sub[metric], color=color, marker=marker,
+                           s=22, alpha=0.35, linewidths=0)
+                ax.errorbar(front.lpaps, front[metric],
+                            xerr=front.lpaps_sem, yerr=front[f"{metric}_sem"],
+                            color=color, marker=marker, markersize=6,
+                            markeredgecolor="black", markeredgewidth=0.8,
+                            linewidth=1.6, elinewidth=0.9, capsize=2, label=label)
             ax.grid(True, linestyle="--", alpha=0.2)
             ax.tick_params(labelsize=FS)
             ax.set_ylabel(f"{metric_name} $\\uparrow$", fontsize=FS)
