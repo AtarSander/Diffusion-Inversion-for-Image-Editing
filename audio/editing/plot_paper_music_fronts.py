@@ -58,10 +58,10 @@ def main(out_root: str = str(AUDIO_ROOT / "output/paper_figures"),
         out_root: Directory for the timestamped copy of the figure.
         paper_figures: Paper figures directory receiving the stable-named copy.
     """
-    fig, axes = plt.subplots(2, 2, figsize=(11, 7.5), sharex="row")
-    for row, (model, spec) in enumerate(MODELS.items()):
+    fig, axes = plt.subplots(2, 2, figsize=(11, 7.5), sharex="col")
+    for col, (model, spec) in enumerate(MODELS.items()):
         df = pd.read_csv(spec["csv"])
-        for col, (metric, metric_name) in enumerate(METRICS.items()):
+        for row, (metric, metric_name) in enumerate(METRICS.items()):
             ax = axes[row, col]
             for arm, label in spec["labels"].items():
                 color, marker = STYLE[label]
@@ -84,12 +84,9 @@ def main(out_root: str = str(AUDIO_ROOT / "output/paper_figures"),
             ax.set_ylabel(f"{metric_name} $\\uparrow$", fontsize=FS)
             if row == 1:
                 ax.set_xlabel("LPAPS to source $\\downarrow$", fontsize=FS)
-        axes[row, 0].legend(fontsize=FS - 1, framealpha=0.9)
-    fig.tight_layout(h_pad=3.0)
-    for row, model in enumerate(MODELS):
-        y1 = max(ax.get_position().y1 for ax in axes[row])
-        fig.text(0.5, y1 + 0.012, model, ha="center", va="bottom",
-                 fontsize=FS + 2)
+        axes[0, col].set_title(model, fontsize=FS + 2)
+        axes[0, col].legend(fontsize=FS - 1, framealpha=0.9)
+    fig.tight_layout()
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = Path(out_root) / ts
