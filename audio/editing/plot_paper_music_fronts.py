@@ -29,8 +29,8 @@ MODELS = {
     "Stable Audio Open": {
         "csv": AUDIO_ROOT / "output/matched_nfe/20260915_120122/matched_nfe_runs_hparam.csv",
         "labels": {
-            "ODEInv (no LoRA)": "ODE Inv.",
-            "ODEInv w/ LoRA bw": "ODE Inv. + LoRA",
+            "ODEInv (no LoRA)": "DDIM Inv.",
+            "ODEInv w/ LoRA bw": "DDIM Inv. + LoRA",
             "DDPM-inv": "DDPM Inv.",
             "SDEdit": "SDEdit",
         },
@@ -39,9 +39,7 @@ MODELS = {
 
 STYLE = {
     "DDIM Inv.": ("#1f77b4", "o"),
-    "ODE Inv.": ("#1f77b4", "o"),
     "DDIM Inv. + LoRA": ("#d62728", "s"),
-    "ODE Inv. + LoRA": ("#d62728", "s"),
     "DDPM Inv.": ("#2ca02c", "^"),
     "SDEdit": ("#ff7f0e", "v"),
 }
@@ -85,9 +83,13 @@ def main(out_root: str = str(AUDIO_ROOT / "output/paper_figures"),
                 ax.set_ylabel(f"{metric_name} $\\uparrow$", fontsize=FS)
             if row == 1:
                 ax.set_xlabel("LPAPS to source $\\downarrow$", fontsize=FS)
+            else:
+                ax.tick_params(labelbottom=True)
         axes[0, col].set_title(model, fontsize=FS + 2)
-        axes[0, col].legend(fontsize=FS - 1, framealpha=0.9)
-    fig.tight_layout()
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.legend(handles, labels, ncol=len(labels), fontsize=FS,
+               loc="upper center", bbox_to_anchor=(0.5, 1.0), framealpha=0.9)
+    fig.tight_layout(rect=(0, 0, 1, 0.94))
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = Path(out_root) / ts
