@@ -21,7 +21,6 @@ MODELS = {
         "labels": {
             "DDIM Inv.": "DDIM Inv.",
             "DDIM Inv. + LoRA (Gen)": "DDIM Inv. + LoRA",
-            "DDIM Inv. + LoRA (Real)": "DDIM Inv. + LoRA (real)",
             "DDPM Inv.": "DDPM Inv.",
             "SDEdit": "SDEdit",
         },
@@ -43,7 +42,6 @@ STYLE = {
     "ODE Inv.": ("#1f77b4", "o"),
     "DDIM Inv. + LoRA": ("#d62728", "s"),
     "ODE Inv. + LoRA": ("#d62728", "s"),
-    "DDIM Inv. + LoRA (real)": ("#9467bd", "D"),
     "DDPM Inv.": ("#2ca02c", "^"),
     "SDEdit": ("#ff7f0e", "v"),
 }
