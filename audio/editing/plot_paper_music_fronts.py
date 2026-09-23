@@ -79,6 +79,7 @@ def main(out_root: str = str(AUDIO_ROOT / "output/paper_figures"),
             span = hi - lo
             ax.set_yticks(np.round(np.linspace(lo + 0.05 * span, hi - 0.05 * span, 4), 2))
             ax.yaxis.set_major_formatter(matplotlib.ticker.FormatStrFormatter("%.2f"))
+            ax.xaxis.set_major_formatter(matplotlib.ticker.FormatStrFormatter("%.1f"))
             ax.tick_params(labelsize=FS)
             ax.set_ylabel(f"{metric_name} $\\uparrow$", fontsize=FS)
             if row == 1:
