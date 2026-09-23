@@ -7,6 +7,7 @@ from pathlib import Path
 
 import fire
 import matplotlib
+import numpy as np
 import pandas as pd
 
 matplotlib.use("Agg")
@@ -45,7 +46,7 @@ STYLE = {
     "SDEdit": ("#ff7f0e", "v"),
 }
 
-METRICS = {"clap": "CLAP", "muq": "MuQ-MuLan"}
+METRICS = {"clap": "CLAP-T", "muq": "MuQ-T"}
 
 
 def main(out_root: str = str(AUDIO_ROOT / "output/paper_figures"),
@@ -74,6 +75,10 @@ def main(out_root: str = str(AUDIO_ROOT / "output/paper_figures"),
                             markeredgecolor="black", markeredgewidth=0.8,
                             linewidth=1.6, elinewidth=0.9, capsize=2, label=label)
             ax.grid(True, linestyle="--", alpha=0.2)
+            lo, hi = ax.get_ylim()
+            span = hi - lo
+            ax.set_yticks(np.round(np.linspace(lo + 0.05 * span, hi - 0.05 * span, 4), 2))
+            ax.yaxis.set_major_formatter(matplotlib.ticker.FormatStrFormatter("%.2f"))
             ax.tick_params(labelsize=FS)
             ax.set_ylabel(f"{metric_name} $\\uparrow$", fontsize=FS)
             if row == 1:
