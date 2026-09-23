@@ -21,7 +21,7 @@ MODELS = {
         "csv": AUDIO_ROOT / "output/matched_nfe_audioldm2/20260923_102222/matched_nfe_runs.csv",
         "labels": {
             "DDIM Inv.": "DDIM Inv.",
-            "DDIM Inv. + LoRA (Gen)": "DDIM Inv. + LoRA",
+            "DDIM Inv. + LoRA (Gen)": "DDIM Inv. + LoRA $\\mathbf{(ours)}$",
             "DDPM Inv.": "DDPM Inv.",
             "SDEdit": "SDEdit",
         },
@@ -30,7 +30,7 @@ MODELS = {
         "csv": AUDIO_ROOT / "output/matched_nfe/20260915_120122/matched_nfe_runs_hparam.csv",
         "labels": {
             "ODEInv (no LoRA)": "DDIM Inv.",
-            "ODEInv w/ LoRA bw": "DDIM Inv. + LoRA",
+            "ODEInv w/ LoRA bw": "DDIM Inv. + LoRA $\\mathbf{(ours)}$",
             "DDPM-inv": "DDPM Inv.",
             "SDEdit": "SDEdit",
         },
@@ -39,7 +39,7 @@ MODELS = {
 
 STYLE = {
     "DDIM Inv.": ("#1f77b4", "o"),
-    "DDIM Inv. + LoRA": ("#d62728", "s"),
+    "DDIM Inv. + LoRA $\\mathbf{(ours)}$": ("#d62728", "s"),
     "DDPM Inv.": ("#2ca02c", "^"),
     "SDEdit": ("#ff7f0e", "v"),
 }
