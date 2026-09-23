@@ -81,7 +81,8 @@ def main(out_root: str = str(AUDIO_ROOT / "output/paper_figures"),
             ax.yaxis.set_major_formatter(matplotlib.ticker.FormatStrFormatter("%.2f"))
             ax.xaxis.set_major_formatter(matplotlib.ticker.FormatStrFormatter("%.1f"))
             ax.tick_params(labelsize=FS)
-            ax.set_ylabel(f"{metric_name} $\\uparrow$", fontsize=FS)
+            if col == 0:
+                ax.set_ylabel(f"{metric_name} $\\uparrow$", fontsize=FS)
             if row == 1:
                 ax.set_xlabel("LPAPS to source $\\downarrow$", fontsize=FS)
         axes[0, col].set_title(model, fontsize=FS + 2)
