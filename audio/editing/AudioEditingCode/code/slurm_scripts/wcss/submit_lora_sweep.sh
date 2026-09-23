@@ -92,6 +92,7 @@ EXPORTS=("SWEEP_CONFIGS=$SWEEP_CONFIGS")
 [ -n "${LORA_EDITS_SUBDIR:-}" ] && EXPORTS+=("LORA_EDITS_SUBDIR=$LORA_EDITS_SUBDIR")
 [ -n "${PROBE:-}" ] && EXPORTS+=("PROBE=$PROBE")
 [ -n "${METHOD:-}" ] && EXPORTS+=("METHOD=$METHOD")
+[ -n "${BUDGET:-}" ] && EXPORTS+=("BUDGET=$BUDGET")
 # The grid file reads these, so the job must see the same values this preview used.
 [ -n "${SPLIT:-}" ] && EXPORTS+=("SPLIT=$SPLIT")
 [ -n "${SRC:-}" ] && EXPORTS+=("SRC=$SRC")

@@ -71,7 +71,7 @@ echo "submitting from: $AUDIO_ROOT"
 # check the checkpoint exists now, on the login node, rather than failing 12 tasks later.
 EXPORT_ARGS=()
 FORWARD=()
-for var in RUN_DIRS UNIQUE_TRACKS EXPECTED_ROWS SPLIT ARM SWEEP_CONFIGS LORA_EDITS_SUBDIR \
+for var in RUN_DIRS UNIQUE_TRACKS EXPECTED_ROWS SPLIT ARM SWEEP_CONFIGS LORA_EDITS_SUBDIR BUDGET \
            METHOD CFG_TARS SRC ARM_KIND PROBE; do
   [ -n "${!var:-}" ] && FORWARD+=("$var=${!var}")
 done
