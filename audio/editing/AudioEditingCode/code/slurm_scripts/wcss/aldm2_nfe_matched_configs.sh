@@ -10,17 +10,17 @@
 # At BUDGET=800 (the benchmark's N=200/T=200 DDIM cost), depth = T/N is the free front axis.
 BUDGET=800
 LORA_MODE="${METHOD:?set METHOD=ddim, ddpm or sdedit}"
-LORA_CFG_TAR=($(tr ":," "  " <<< "${CFG_TARS:-6.0 12.0}"))
+LORA_CFG_TAR=($(tr ":," "  " <<< "${CFG_TARS:-3.0 6.0 9.0 12.0 15.0}"))
 LORA_CFG_SRC=3.0
 LORA_SPLIT="${SPLIT:-hparam}"
 LORA_STEPS=200          # per-row steps override this
 LORA_EDITS_SUBDIR="${LORA_EDITS_SUBDIR:-audioldm2_ddim}"
 
-# depth% : tstart : steps, solved per method for BUDGET=800.
+# depth% : tstart : steps, 5 points per method solved for BUDGET=800 (every cell is exactly 800).
 case "$LORA_MODE" in
-  ddim)   POINTS=(100:200:200 50:200:400 25:200:800) ;;   # 4T=800, N free
-  ddpm)   POINTS=(100:200:200 50:133:267 25:80:320) ;;     # 2N+2T=800
-  sdedit) POINTS=(100:400:400 50:400:800) ;;               # 2T=800, N free (25% -> N1600 dropped)
+  ddim)   POINTS=(100:200:200 75:200:267 50:200:400 33:200:600 25:200:800) ;;   # 4T=800, N free
+  ddpm)   POINTS=(100:200:200 75:171:229 50:133:267 33:100:300 25:80:320) ;;     # 2N+2T=800
+  sdedit) POINTS=(100:400:400 75:400:533 50:400:800 33:400:1200 25:400:1600) ;;  # 2T=800, N free
   *) echo "unknown METHOD=$LORA_MODE" >&2; return 1 ;;
 esac
 
@@ -47,10 +47,10 @@ lora_sweep_configs() {
   done
 }
 
-# audioldm2_<mode>_nolora_hparam_nfe800_t<T>_s<N>_cfgtar<c>, or ..._<mode>lora_<run>_<stem>_...
+# audioldm2_<mode>_nolora_<split>_nfe800_t<T>_s<N>_cfgtar<c>, or ..._<mode>lora_<run>_<stem>_...
 lora_sweep_run_name() {
   local ckpt="${1?checkpoint}" tstart="${2:?tstart}" cfg="${3:?cfg_tar}" steps="${4:?steps}"
-  local tail="hparam_nfe${BUDGET}_t${tstart}_s${steps}_cfgtar${cfg}"
+  local tail="${LORA_SPLIT}_nfe${BUDGET}_t${tstart}_s${steps}_cfgtar${cfg}"
   if [ -z "$ckpt" ]; then
     echo "audioldm2_${LORA_MODE}_nolora_${tail}"
   else
