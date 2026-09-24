@@ -8,3 +8,9 @@ defaults:
 edit_method_list:
   - lora+pix2pix-zero
   - lora+directinversion+pix2pix-zero
+
+pix2pix_zero:
+  guidance_amount: 0.1
+  attention_loss_reduction: legacy_sum
+  attention_loss_scale: 1.0
+  attention_grad_clip_norm: null

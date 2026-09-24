@@ -1,0 +1,3 @@
+# One-call conditional endpoint inversion: z0 to the saved z50 latent.
+mode: conditional_endpoint
+guidance_scale: null

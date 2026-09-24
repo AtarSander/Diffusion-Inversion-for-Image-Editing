@@ -74,7 +74,22 @@ def main(cfg: DictConfig) -> None:
         str(OmegaConf.select(cfg, "lora.mode", default="single")),
         "--inversion_guidance_scale",
         str(OmegaConf.select(cfg, "guidance.inversion_scale", default=1.0)),
+        "--lora_inversion_mode",
+        str(OmegaConf.select(cfg, "lora.inversion_mode", default="iterative")),
+        "--pix2pix_guidance_amount",
+        str(OmegaConf.select(cfg, "pix2pix_zero.guidance_amount", default=0.1)),
+        "--pix2pix_attention_loss_reduction",
+        str(
+            OmegaConf.select(
+                cfg, "pix2pix_zero.attention_loss_reduction", default="legacy_sum"
+            )
+        ),
+        "--pix2pix_attention_loss_scale",
+        str(OmegaConf.select(cfg, "pix2pix_zero.attention_loss_scale", default=1.0)),
     ]
+    grad_clip_norm = OmegaConf.select(cfg, "pix2pix_zero.attention_grad_clip_norm", default=None)
+    if grad_clip_norm is not None:
+        cmd.extend(["--pix2pix_attention_grad_clip_norm", str(grad_clip_norm)])
     if bool(cfg.rerun_exist_images):
         cmd.append("--rerun_exist_images")
 

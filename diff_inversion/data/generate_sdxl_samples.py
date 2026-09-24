@@ -267,8 +267,16 @@ def save_latent_trajectory(
         torch.save(torch.stack(trajectory, dim=0), latents_dir / file_name)
         return latents_format
 
+    if latents_format == "endpoints_pt":
+        if len(trajectory) < 2:
+            raise ValueError("An endpoint trajectory requires at least two latent states.")
+        torch.save(trajectory[0], latents_dir / "initial_noise.pt")
+        torch.save(trajectory[-1], latents_dir / "final_latent.pt")
+        return latents_format
+
     raise ValueError(
-        f"Unsupported latents_format: {latents_format}. Expected one of: stacked_pt, per_step_pt."
+        "Unsupported latents_format: "
+        f"{latents_format}. Expected one of: stacked_pt, per_step_pt, endpoints_pt."
     )
 
 

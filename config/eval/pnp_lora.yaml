@@ -8,3 +8,6 @@ defaults:
 edit_method_list:
   - lora+pnp
   - lora+directinversion+pnp
+
+pnp:
+  reference_prompt_mode: empty

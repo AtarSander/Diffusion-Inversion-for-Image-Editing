@@ -1,0 +1,12 @@
+[
+  {
+    "sample": "sample_000000",
+    "plain_abs_error": 0.3282093405723572,
+    "non_plain_abs_error": 0.2921072840690613,
+    "plain_initial_noise_std": 0.9824392199516296,
+    "non_plain_initial_noise_std": 1.0324267148971558,
+    "plain_inverted_noise_std": 0.8909876942634583,
+    "non_plain_inverted_noise_std": 0.9618687033653259,
+    "plain_pixel_fraction": 0.6044921875
+  }
+]

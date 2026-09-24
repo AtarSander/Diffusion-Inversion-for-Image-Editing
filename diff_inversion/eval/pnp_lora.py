@@ -74,6 +74,10 @@ def main(cfg: DictConfig) -> None:
         str(OmegaConf.select(cfg, "lora.mode", default="single")),
         "--inversion_guidance_scale",
         str(OmegaConf.select(cfg, "guidance.inversion_scale", default=1.0)),
+        "--lora_inversion_mode",
+        str(OmegaConf.select(cfg, "lora.inversion_mode", default="iterative")),
+        "--pnp_reference_prompt_mode",
+        str(OmegaConf.select(cfg, "pnp.reference_prompt_mode", default="empty")),
     ]
     if bool(cfg.rerun_exist_images):
         cmd.append("--rerun_exist_images")

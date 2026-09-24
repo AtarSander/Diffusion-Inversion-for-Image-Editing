@@ -15,6 +15,15 @@ inversion_guidance_scale: 1.0
 edit_category_list: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
 rerun_exist_images: false
 
+pnp:
+  reference_prompt_mode: empty
+pix2pix_zero:
+  guidance_amount: 0.1
+  attention_loss_reduction: legacy_sum
+  attention_loss_scale: 1.0
+  attention_grad_clip_norm: null
+
+
 hydra:
   run:
     dir: ${oc.env:JOB_CACHE_ROOT}/hydra/generation/${backend}_${inversion}

@@ -20,6 +20,8 @@ class LatentTrajectoryDataset(Dataset):
         target_uncond_eps_file_name: str = "target_eps_uncond.pt",
         load_cfg_branch_targets: bool = False,
         require_training_cache: bool = True,
+        require_target_eps: bool = True,
+        sample_mode: str = "transition",
     ):
         if isinstance(root_dir, (str, Path)):
             self.root_dirs = [Path(root_dir)]
@@ -34,6 +36,12 @@ class LatentTrajectoryDataset(Dataset):
         self.target_uncond_eps_file_name = target_uncond_eps_file_name
         self.load_cfg_branch_targets = bool(load_cfg_branch_targets)
         self.require_training_cache = require_training_cache
+        self.require_target_eps = bool(require_target_eps)
+        self.sample_mode = str(sample_mode).strip().lower()
+        if self.sample_mode not in {"transition", "endpoint"}:
+            raise ValueError("sample_mode must be 'transition' or 'endpoint'.")
+        if self.sample_mode == "endpoint" and self.load_cfg_branch_targets:
+            raise ValueError("Endpoint samples support only a single conditional target.")
         self.samples: list[dict[str, Any]] = []
         self.cumulative_lengths: list[int] = []
 
@@ -147,35 +155,49 @@ class LatentTrajectoryDataset(Dataset):
     def __getitem__(self, idx: int) -> dict[str, Any]:
         sample, step_idx = self._locate(idx)
 
-        if sample["format"] == "stacked_pt":
-            trajectory = torch.load(sample["trajectory_path"], map_location="cpu")
-            x_clean = trajectory[step_idx + 1]
-        else:
-            x_clean = torch.load(sample["latent_paths"][step_idx + 1], map_location="cpu")
-
-        timestep = self._transition_timestep(
-            self._timesteps(sample),
-            step_idx,
-            sample["trajectory_length"],
-        )
         conditioning = torch.load(sample["conditioning_path"], map_location="cpu")
-        target_eps = torch.load(sample["target_eps_path"], map_location="cpu")[step_idx]
-
-        item = {
-            "x_clean": self._squeeze_latent(x_clean),
-            "timestep": torch.tensor(timestep, dtype=torch.long),
-            "prompt_embeds": self._squeeze_batch_dim(conditioning["prompt_embeds"]),
-            "target_eps": self._squeeze_latent(target_eps),
-            "sample_idx": sample["sample_idx"],
-            "step_idx": step_idx,
-        }
+        if self.sample_mode == "endpoint":
+            if sample["format"] == "stacked_pt":
+                trajectory = torch.load(sample["trajectory_path"], map_location="cpu")
+                x_clean, target_endpoint = trajectory[-1], trajectory[0]
+            else:
+                x_clean = torch.load(sample["latent_paths"][-1], map_location="cpu")
+                target_endpoint = torch.load(sample["latent_paths"][0], map_location="cpu")
+            timesteps = self._timesteps(sample)
+            item = {
+                "x_clean": self._squeeze_latent(x_clean),
+                "target_endpoint": self._squeeze_latent(target_endpoint),
+                "timestep": torch.tensor(int(timesteps[-1]), dtype=torch.long),
+                "terminal_timestep": torch.tensor(int(timesteps[0]), dtype=torch.long),
+                "prompt_embeds": self._squeeze_batch_dim(conditioning["prompt_embeds"]),
+                "sample_idx": sample["sample_idx"],
+                "step_idx": 0,
+            }
+        else:
+            if sample["format"] == "stacked_pt":
+                trajectory = torch.load(sample["trajectory_path"], map_location="cpu")
+                x_clean = trajectory[step_idx + 1]
+            else:
+                x_clean = torch.load(sample["latent_paths"][step_idx + 1], map_location="cpu")
+            timestep = self._transition_timestep(
+                self._timesteps(sample), step_idx, sample["trajectory_length"]
+            )
+            target_eps = torch.load(sample["target_eps_path"], map_location="cpu")[step_idx]
+            item = {
+                "x_clean": self._squeeze_latent(x_clean),
+                "timestep": torch.tensor(timestep, dtype=torch.long),
+                "prompt_embeds": self._squeeze_batch_dim(conditioning["prompt_embeds"]),
+                "target_eps": self._squeeze_latent(target_eps),
+                "sample_idx": sample["sample_idx"],
+                "step_idx": step_idx,
+            }
         if "pooled_prompt_embeds" in conditioning:
             item["pooled_prompt_embeds"] = self._squeeze_batch_dim(
                 conditioning["pooled_prompt_embeds"]
             )
         if "add_time_ids" in conditioning:
             item["add_time_ids"] = self._squeeze_batch_dim(conditioning["add_time_ids"])
-        if self.load_cfg_branch_targets:
+        if self.sample_mode == "transition" and self.load_cfg_branch_targets:
             item.update(self._cfg_branch_item(sample, conditioning, step_idx))
         return item
 
@@ -183,6 +205,17 @@ class LatentTrajectoryDataset(Dataset):
         """Return transition identity without loading trajectory or conditioning tensors."""
         sample, step_idx = self._locate(idx)
         num_transitions = int(sample["num_transitions"])
+        if self.sample_mode == "endpoint":
+            timesteps = self._timesteps(sample)
+            return {
+                "dataset_idx": int(idx),
+                "sample_idx": sample["sample_idx"],
+                "sample_dir": str(sample["sample_dir"]),
+                "sample_mode": "endpoint",
+                "num_transitions": num_transitions,
+                "input_timestep": int(timesteps[-1]),
+                "terminal_timestep": int(timesteps[0]),
+            }
         return {
             "dataset_idx": int(idx),
             "sample_idx": sample["sample_idx"],
@@ -276,7 +309,9 @@ class LatentTrajectoryDataset(Dataset):
     ) -> None:
         if not self.require_training_cache:
             return
-        required_paths = [conditioning_path, target_eps_path]
+        required_paths = [conditioning_path]
+        if self.require_target_eps:
+            required_paths.append(target_eps_path)
         if self.load_cfg_branch_targets:
             required_paths.append(target_uncond_eps_path)
         missing_paths = [str(path) for path in required_paths if not path.exists()]
@@ -293,10 +328,11 @@ class LatentTrajectoryDataset(Dataset):
             return
         sample["num_transitions"] = num_transitions
         self.samples.append(sample)
+        num_items = 1 if self.sample_mode == "endpoint" else num_transitions
         total = (
-            num_transitions
+            num_items
             if not self.cumulative_lengths
-            else (self.cumulative_lengths[-1] + num_transitions)
+            else (self.cumulative_lengths[-1] + num_items)
         )
         self.cumulative_lengths.append(total)
 

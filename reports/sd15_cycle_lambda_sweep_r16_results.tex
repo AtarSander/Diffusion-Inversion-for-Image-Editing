@@ -1,0 +1,54 @@
+\documentclass{article}
+\usepackage[margin=1.2cm]{geometry}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage[table]{xcolor}
+\definecolor{cyclebaseline}{RGB}{232,242,255}
+\begin{document}
+\begin{table*}[htbp]
+  \centering\scriptsize
+  \setlength{\tabcolsep}{3pt}
+  \renewcommand{\arraystretch}{0.90}
+  \caption{Cycle-loss LoRA+DirectInv r16 sweep across all editors. Paper DirectInv rows are published means without standard deviations; experimental rows are SD1.5 PIE-Bench mean $\pm$ standard deviation. Bold marks the best available value per editor and metric. Italics mark the best completed lambda value within each editor and metric. Underlining marks an experimental result better than Paper DirectInv. The shaded row is the previous $\lambda_{\mathrm{cycle}}=1$ run. Blank cells denote unfinished evaluations. Structure and LPIPS are scaled by $10^3$, MSE by $10^4$, and SSIM by $10^2$.}
+  \label{tab:sd15-cycle-lambda-r16-all-editors}
+  \resizebox{\textwidth}{!}{%
+  \begin{tabular}{lllrrrrrrr}
+    \toprule
+    Editor & Setup & $\lambda_{\mathrm{cycle}}$ & Structure ($\times 10^3$) $\downarrow$ & PSNR $\uparrow$ & LPIPS ($\times 10^3$) $\downarrow$ & MSE ($\times 10^4$) $\downarrow$ & SSIM ($\times 10^2$) $\uparrow$ & CLIP target $\uparrow$ & CLIP edit $\uparrow$ \tabularnewline
+    \midrule
+    P2P & Paper DirectInv & -- & $\mathbf{11.65}$ & $\mathbf{27.22}$ & $\mathbf{54.55}$ & $\mathbf{32.86}$ & $\mathbf{84.76}$ & $25.02$ & $22.10$ \tabularnewline
+    P2P & Cycle LoRA+DirectInv & 0.5 & $\mathit{14.00 \pm 11.58}$ & $\mathit{26.05 \pm 5.44}$ & $\mathit{71.76 \pm 49.30}$ & $\mathit{43.57 \pm 44.41}$ & $\mathit{83.60 \pm 12.15}$ & $\underline{25.28 \pm 3.84}$ & $\underline{22.31 \pm 4.87}$ \tabularnewline
+    \rowcolor{cyclebaseline} P2P & Cycle LoRA+DirectInv & 1 & $14.45 \pm 11.85$ & $25.92 \pm 5.39$ & $74.51 \pm 52.35$ & $45.37 \pm 46.89$ & $83.37 \pm 12.32$ & $\underline{25.27 \pm 3.84}$ & $\underline{22.31 \pm 4.84}$ \tabularnewline
+    P2P & Cycle LoRA+DirectInv & 2 & $14.41 \pm 11.89$ & $25.92 \pm 5.28$ & $74.10 \pm 51.96$ & $44.87 \pm 46.24$ & $83.39 \pm 12.29$ & $\underline{25.32 \pm 3.86}$ & $\underline{\mathbf{\mathit{22.36 \pm 4.86}}}$ \tabularnewline
+    P2P & Cycle LoRA+DirectInv & 4 & $14.23 \pm 12.06$ & $26.04 \pm 5.49$ & $73.38 \pm 52.78$ & $44.43 \pm 46.13$ & $83.44 \pm 12.36$ & $\underline{25.32 \pm 3.84}$ & $\underline{22.30 \pm 4.87}$ \tabularnewline
+    P2P & Cycle LoRA+DirectInv & 8 & $14.36 \pm 12.00$ & $25.95 \pm 5.33$ & $73.39 \pm 51.89$ & $44.87 \pm 46.98$ & $83.45 \pm 12.33$ & $\underline{\mathbf{\mathit{25.32 \pm 3.85}}}$ & $\underline{22.32 \pm 4.88}$ \tabularnewline
+    P2P & Cycle LoRA+DirectInv & 16 & $14.24 \pm 11.75$ & $26.01 \pm 5.30$ & $72.52 \pm 50.57$ & $43.61 \pm 43.88$ & $83.56 \pm 12.26$ & $\underline{25.31 \pm 3.89}$ & $\underline{22.31 \pm 4.84}$ \tabularnewline
+    \midrule
+    PnP & Paper DirectInv & -- & $\mathbf{24.29}$ & $\mathbf{22.46}$ & $\mathbf{106.06}$ & $\mathbf{80.45}$ & $79.68$ & $25.41$ & $22.62$ \tabularnewline
+    PnP & Cycle LoRA+DirectInv & 0.5 & $\mathit{24.38 \pm 20.66}$ & $22.36 \pm 4.48$ & $110.27 \pm 62.52$ & $81.87 \pm 60.30$ & $\underline{79.88 \pm 12.81}$ & $\underline{25.81 \pm 3.73}$ & $\underline{22.83 \pm 4.85}$ \tabularnewline
+    \rowcolor{cyclebaseline} PnP & Cycle LoRA+DirectInv & 1 & $24.38 \pm 20.67$ & $22.36 \pm 4.48$ & $110.28 \pm 62.53$ & $81.87 \pm 60.30$ & $\underline{79.88 \pm 12.81}$ & $\underline{25.81 \pm 3.74}$ & $\underline{\mathbf{\mathit{22.83 \pm 4.86}}}$ \tabularnewline
+    PnP & Cycle LoRA+DirectInv & 2 & $24.38 \pm 20.67$ & $22.36 \pm 4.47$ & $110.27 \pm 62.51$ & $81.87 \pm 60.30$ & $\underline{79.88 \pm 12.81}$ & $\underline{25.81 \pm 3.74}$ & $\underline{22.83 \pm 4.86}$ \tabularnewline
+    PnP & Cycle LoRA+DirectInv & 4 & $24.38 \pm 20.70$ & $22.36 \pm 4.48$ & $110.27 \pm 62.54$ & $81.87 \pm 60.30$ & $\underline{79.88 \pm 12.81}$ & $\underline{25.81 \pm 3.73}$ & $\underline{22.82 \pm 4.86}$ \tabularnewline
+    PnP & Cycle LoRA+DirectInv & 8 & $24.39 \pm 20.74$ & $22.36 \pm 4.48$ & $110.26 \pm 62.50$ & $81.86 \pm 60.30$ & $\underline{79.88 \pm 12.81}$ & $\underline{\mathbf{\mathit{25.82 \pm 3.74}}}$ & $\underline{22.83 \pm 4.86}$ \tabularnewline
+    PnP & Cycle LoRA+DirectInv & 16 & $24.39 \pm 20.81$ & $\mathit{22.36 \pm 4.47}$ & $\mathit{110.25 \pm 62.49}$ & $\mathit{81.85 \pm 60.29}$ & $\underline{\mathbf{\mathit{79.88 \pm 12.81}}}$ & $\underline{25.81 \pm 3.74}$ & $\underline{22.83 \pm 4.86}$ \tabularnewline
+    \midrule
+    MasaCtrl & Paper DirectInv & -- & $\mathbf{24.70}$ & $\mathbf{22.64}$ & $\mathbf{87.94}$ & $\mathbf{81.09}$ & $\mathbf{81.33}$ & $24.38$ & $21.35$ \tabularnewline
+    MasaCtrl & Cycle LoRA+DirectInv & 0.5 & $28.52 \pm 21.62$ & $21.89 \pm 4.91$ & $98.93 \pm 58.57$ & $99.02 \pm 84.59$ & $80.50 \pm 12.73$ & $\underline{24.61 \pm 3.64}$ & $\underline{21.47 \pm 4.66}$ \tabularnewline
+    \rowcolor{cyclebaseline} MasaCtrl & Cycle LoRA+DirectInv & 1 & $28.49 \pm 21.61$ & $21.89 \pm 4.89$ & $98.91 \pm 58.48$ & $98.95 \pm 84.46$ & $80.50 \pm 12.73$ & $\underline{24.63 \pm 3.64}$ & $\underline{21.48 \pm 4.67}$ \tabularnewline
+    MasaCtrl & Cycle LoRA+DirectInv & 2 & $28.53 \pm 21.67$ & $21.90 \pm 4.92$ & $98.83 \pm 58.41$ & $99.05 \pm 84.65$ & $80.50 \pm 12.72$ & $\underline{24.62 \pm 3.63}$ & $\underline{21.50 \pm 4.66}$ \tabularnewline
+    MasaCtrl & Cycle LoRA+DirectInv & 4 & $28.51 \pm 21.64$ & $\mathit{21.90 \pm 4.93}$ & $98.89 \pm 58.55$ & $98.91 \pm 84.48$ & $80.50 \pm 12.73$ & $\underline{24.62 \pm 3.64}$ & $\underline{\mathbf{\mathit{21.50 \pm 4.67}}}$ \tabularnewline
+    MasaCtrl & Cycle LoRA+DirectInv & 8 & $\mathit{28.47 \pm 21.61}$ & $21.90 \pm 4.92$ & $\mathit{98.77 \pm 58.31}$ & $98.91 \pm 84.56$ & $\mathit{80.52 \pm 12.71}$ & $\underline{24.59 \pm 3.65}$ & $\underline{21.47 \pm 4.67}$ \tabularnewline
+    MasaCtrl & Cycle LoRA+DirectInv & 16 & $28.49 \pm 21.59$ & $21.89 \pm 4.90$ & $98.88 \pm 58.50$ & $\mathit{98.91 \pm 84.38}$ & $80.50 \pm 12.72$ & $\underline{\mathbf{\mathit{24.63 \pm 3.65}}}$ & $\underline{21.50 \pm 4.66}$ \tabularnewline
+    \midrule
+    Pix2Pix-Zero & Paper DirectInv & -- & $\mathbf{49.22}$ & $\mathbf{21.53}$ & $\mathbf{138.98}$ & $\mathbf{127.32}$ & $77.05$ & $23.31$ & $21.05$ \tabularnewline
+    Pix2Pix-Zero & Cycle LoRA+DirectInv & 0.5 & $52.67 \pm 53.56$ & $21.26 \pm 5.47$ & $145.88 \pm 119.08$ & $138.21 \pm 156.15$ & $\underline{77.07 \pm 15.63}$ & $\underline{\mathbf{\mathit{23.43 \pm 4.43}}}$ & $21.04 \pm 4.69$ \tabularnewline
+    \rowcolor{cyclebaseline} Pix2Pix-Zero & Cycle LoRA+DirectInv & 1 & $52.16 \pm 52.08$ & $21.22 \pm 5.45$ & $147.00 \pm 121.01$ & $140.33 \pm 163.90$ & $76.95 \pm 15.75$ & $\underline{23.43 \pm 4.35}$ & $20.98 \pm 4.74$ \tabularnewline
+    Pix2Pix-Zero & Cycle LoRA+DirectInv & 2 & $53.06 \pm 53.93$ & $21.25 \pm 5.44$ & $146.22 \pm 119.24$ & $139.69 \pm 165.86$ & $76.97 \pm 15.66$ & $\underline{23.33 \pm 4.48}$ & $20.87 \pm 4.73$ \tabularnewline
+    Pix2Pix-Zero & Cycle LoRA+DirectInv & 4 & $52.06 \pm 52.28$ & $21.27 \pm 5.54$ & $146.70 \pm 120.31$ & $139.76 \pm 162.71$ & $77.02 \pm 15.68$ & $\underline{23.41 \pm 4.50}$ & $\underline{\mathbf{\mathit{21.08 \pm 4.76}}}$ \tabularnewline
+    Pix2Pix-Zero & Cycle LoRA+DirectInv & 8 & $52.38 \pm 52.38$ & $\mathit{21.29 \pm 5.53}$ & $146.18 \pm 118.33$ & $139.26 \pm 165.19$ & $77.03 \pm 15.59$ & $\underline{23.43 \pm 4.37}$ & $20.93 \pm 4.72$ \tabularnewline
+    Pix2Pix-Zero & Cycle LoRA+DirectInv & 16 & $\mathit{51.41 \pm 50.79}$ & $21.26 \pm 5.43$ & $\mathit{145.77 \pm 117.31}$ & $\mathit{137.38 \pm 157.21}$ & $\underline{\mathbf{\mathit{77.12 \pm 15.51}}}$ & $\underline{23.33 \pm 4.52}$ & $20.89 \pm 4.79$ \tabularnewline
+    \bottomrule
+  \end{tabular}%
+  }
+\end{table*}
+\end{document}

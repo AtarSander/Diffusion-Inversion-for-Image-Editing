@@ -29,10 +29,10 @@ def kl_div(dist1: torch.Tensor, dist2: torch.Tensor):
 
 def kl_div2(noise: torch.Tensor, latents: torch.Tensor):
     noise_mu = noise.mean(dim=0)
-    noise_sigma = noise.std(dim=0) + 1e-6  # Avoid zero variance
+    noise_sigma = noise.std(dim=0, unbiased=False).clamp_min(1e-6)
 
     latents_mu = latents.mean(dim=0)
-    latents_sigma = latents.std(dim=0) + 1e-6
+    latents_sigma = latents.std(dim=0, unbiased=False).clamp_min(1e-6)
 
     P = dist.Normal(noise_mu, noise_sigma)
     Q = dist.Normal(latents_mu, latents_sigma)

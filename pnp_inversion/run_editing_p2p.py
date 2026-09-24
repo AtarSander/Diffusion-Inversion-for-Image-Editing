@@ -96,6 +96,7 @@ if __name__ == "__main__":
     parser.add_argument('--lora_scale', type=float, default=1.0)
     parser.add_argument('--lora_mode', choices=["single", "branch_pair"], default="single")
     parser.add_argument('--inversion_guidance_scale', type=float, default=1.0)
+    parser.add_argument('--lora_inversion_mode', choices=['iterative', 'one_step_endpoint'], default='iterative')
     args = parser.parse_args()
     
     rerun_exist_images=args.rerun_exist_images
@@ -107,6 +108,8 @@ if __name__ == "__main__":
     use_lora = any(method in lora_methods for method in edit_method_list)
     if use_lora and args.lora_checkpoint is None:
         raise ValueError("--lora_checkpoint is required when using a LoRA edit method")
+    if args.lora_inversion_mode == "one_step_endpoint" and "lora+directinversion+p2p" in edit_method_list:
+        raise ValueError("One-step endpoint inversion supports lora+p2p only; Direct Inversion requires a full trajectory.")
     if args.lora_mode == "branch_pair" and "lora+p2p" in edit_method_list:
         raise ValueError(
             "Branch-pair LoRAs are supported only by lora+directinversion+p2p."
@@ -163,6 +166,7 @@ if __name__ == "__main__":
                                         quantile=0.75,
                                         use_inversion_guidance=True,
                                         inversion_guidance_scale=args.inversion_guidance_scale,
+                                        lora_inversion_mode=args.lora_inversion_mode,
                                         recon_lr=1,
                                         recon_t=400,
                                         )

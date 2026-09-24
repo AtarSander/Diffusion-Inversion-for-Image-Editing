@@ -71,6 +71,28 @@ def main(cfg: DictConfig) -> None:
         "--inversion_guidance_scale",
         str(cfg.inversion_guidance_scale),
     ]
+    if backend == "pnp":
+        cmd.extend(
+            [
+                "--pnp_reference_prompt_mode",
+                str(OmegaConf.select(cfg, "pnp.reference_prompt_mode", default="empty")),
+            ]
+        )
+    elif backend == "pix2pix_zero":
+        cmd.extend(
+            [
+                "--pix2pix_guidance_amount",
+                str(OmegaConf.select(cfg, "pix2pix_zero.guidance_amount", default=0.1)),
+                "--pix2pix_attention_loss_reduction",
+                str(OmegaConf.select(cfg, "pix2pix_zero.attention_loss_reduction", default="legacy_sum")),
+                "--pix2pix_attention_loss_scale",
+                str(OmegaConf.select(cfg, "pix2pix_zero.attention_loss_scale", default=1.0)),
+            ]
+        )
+        grad_clip_norm = OmegaConf.select(cfg, "pix2pix_zero.attention_grad_clip_norm", default=None)
+        if grad_clip_norm is not None:
+            cmd.extend(["--pix2pix_attention_grad_clip_norm", str(grad_clip_norm)])
+
 
     # PnP is already fixed to SD1.5. The other backends expose the model explicitly.
     if backend != "pnp":

@@ -338,10 +338,19 @@ class DirectInversion:
         guidance_scale,
         lora_branch_adapter_names=None,
         lora_adapter_scale=1.0,
+        lora_branch_mode="cfg",
     ):
+        if lora_branch_mode not in {"cfg", "unconditional", "conditional"}:
+            raise ValueError(
+                "lora_branch_mode must be cfg, unconditional, or conditional, "
+                f"got {lora_branch_mode!r}"
+            )
+        if lora_branch_mode != "cfg" and lora_branch_adapter_names is None:
+            raise ValueError("A branch-pair LoRA is required for single-branch inversion")
+
         uncond_embeddings, cond_embeddings = self.context.chunk(2)
-        uncond_embeddings=uncond_embeddings[[0]]
-        cond_embeddings=cond_embeddings[[0]]
+        uncond_embeddings = uncond_embeddings[[0]]
+        cond_embeddings = cond_embeddings[[0]]
         all_latent = [latent]
         latent = latent.clone().detach()
         for i in range(self.num_ddim_steps):
@@ -350,16 +359,33 @@ class DirectInversion:
                 from utils.lora_adapters import set_active_lora_adapter
 
                 uncond_adapter_name, cond_adapter_name = lora_branch_adapter_names
+
+            if lora_branch_mode == "unconditional":
                 set_active_lora_adapter(
                     self.model.unet, uncond_adapter_name, lora_adapter_scale
                 )
-            uncond_noise_pred = self.get_noise_pred_single(latent, t, uncond_embeddings)
-            if lora_branch_adapter_names is not None:
+                noise_pred = self.get_noise_pred_single(latent, t, uncond_embeddings)
+            elif lora_branch_mode == "conditional":
                 set_active_lora_adapter(
                     self.model.unet, cond_adapter_name, lora_adapter_scale
                 )
-            cond_noise_pred = self.get_noise_pred_single(latent, t, cond_embeddings)
-            noise_pred = uncond_noise_pred + guidance_scale * (cond_noise_pred - uncond_noise_pred)
+                noise_pred = self.get_noise_pred_single(latent, t, cond_embeddings)
+            else:
+                if lora_branch_adapter_names is not None:
+                    set_active_lora_adapter(
+                        self.model.unet, uncond_adapter_name, lora_adapter_scale
+                    )
+                uncond_noise_pred = self.get_noise_pred_single(
+                    latent, t, uncond_embeddings
+                )
+                if lora_branch_adapter_names is not None:
+                    set_active_lora_adapter(
+                        self.model.unet, cond_adapter_name, lora_adapter_scale
+                    )
+                cond_noise_pred = self.get_noise_pred_single(latent, t, cond_embeddings)
+                noise_pred = uncond_noise_pred + guidance_scale * (
+                    cond_noise_pred - uncond_noise_pred
+                )
             latent = self.next_step(noise_pred, t, latent)
             all_latent.append(latent)
         return all_latent
@@ -389,6 +415,7 @@ class DirectInversion:
         guidance_scale,
         lora_branch_adapter_names=None,
         lora_adapter_scale=1.0,
+        lora_branch_mode="cfg",
     ):
         latent = image2latent(self.model.vae, image)
         image_rec = latent2image(self.model.vae, latent)[0]
@@ -397,6 +424,7 @@ class DirectInversion:
             guidance_scale,
             lora_branch_adapter_names=lora_branch_adapter_names,
             lora_adapter_scale=lora_adapter_scale,
+            lora_branch_mode=lora_branch_mode,
         )
         return image_rec, ddim_latents
 
@@ -564,4 +592,3 @@ class DirectInversion:
         self.context = None
         self.num_ddim_steps=num_ddim_steps
         
-       

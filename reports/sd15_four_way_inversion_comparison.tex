@@ -1,0 +1,59 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{graphicx}
+
+\title{SD1.5 Four-Way Inversion Comparison on PIE-Bench}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{table*}[htbp]
+  \centering
+  \scriptsize
+  \caption{A single controlled comparison of four inversion choices in each
+  SD1.5 editor pipeline: DDIM, Direct Inversion, the r8 conditional
+  cycle-loss LoRA alone ($\lambda_{\mathrm{cycle}}=1$), and that same LoRA
+  followed by Direct Inversion. Thus the LoRA and LoRA+DirectInv rows in a
+  block use the identical adapter. Values are PIE-Bench mean $\pm$ population
+  standard deviation. Bold marks the best value among the four rows in an
+  editor block. Pix2Pix-Zero DDIM is unavailable because the reproduced
+  SD1.5 job timed out before producing images. Structure distance and LPIPS
+  are scaled by $\times 10^3$, MSE by $\times 10^4$, and SSIM by
+  $\times 10^2$.}
+  \label{tab:sd15-four-way-inversion}
+  \resizebox{\textwidth}{!}{%
+  \begin{tabular}{lll rrrrrrr}
+    \toprule
+    Editor & Inversion & Adapter &
+    Structure ($\times 10^3$) $\downarrow$ & PSNR $\uparrow$ &
+    LPIPS ($\times 10^3$) $\downarrow$ & MSE ($\times 10^4$) $\downarrow$ &
+    SSIM ($\times 10^2$) $\uparrow$ & CLIP target $\uparrow$ &
+    CLIP edit $\uparrow$ \tabularnewline
+    \midrule
+    P2P & DDIM & -- & $70.50 \pm 38.97$ & $17.84 \pm 3.93$ & $210.15 \pm 107.16$ & $220.28 \pm 145.34$ & $71.56 \pm 15.89$ & $25.19 \pm 3.68$ & $22.39 \pm 4.48$ \tabularnewline
+    P2P & DirectInv & -- & $31.35 \pm 25.29$ & $22.57 \pm 5.10$ & $125.51 \pm 82.42$ & $91.27 \pm 85.39$ & $78.54 \pm 14.04$ & $25.07 \pm 3.79$ & $22.22 \pm 4.79$ \tabularnewline
+    P2P & LoRA & r8 cycle & $70.40 \pm 38.78$ & $17.82 \pm 3.95$ & $211.23 \pm 106.60$ & $221.46 \pm 146.67$ & $71.35 \pm 15.81$ & $\mathbf{25.37 \pm 3.67}$ & $\mathbf{22.64 \pm 4.50}$ \tabularnewline
+    P2P & LoRA+DirectInv & r8 cycle & $\mathbf{14.01 \pm 11.38}$ & $\mathbf{26.03 \pm 5.43}$ & $\mathbf{72.35 \pm 49.47}$ & $\mathbf{43.83 \pm 45.13}$ & $\mathbf{83.56 \pm 12.16}$ & $25.32 \pm 3.83$ & $22.31 \pm 4.88$ \tabularnewline
+    \midrule
+    PnP & DDIM & -- & $27.32 \pm 24.59$ & $22.31 \pm 4.50$ & $112.76 \pm 64.87$ & $82.98 \pm 60.97$ & $79.58 \pm 12.90$ & $25.59 \pm 3.73$ & $22.57 \pm 4.86$ \tabularnewline
+    PnP & DirectInv & -- & $\mathbf{23.33 \pm 20.19}$ & $\mathbf{22.46 \pm 4.34}$ & $\mathbf{105.51 \pm 59.90}$ & $\mathbf{79.97 \pm 59.13}$ & $\mathbf{80.22 \pm 12.76}$ & $25.63 \pm 3.78$ & $22.67 \pm 4.89$ \tabularnewline
+    PnP & LoRA & r8 cycle & $27.17 \pm 24.47$ & $22.32 \pm 4.53$ & $113.87 \pm 65.57$ & $82.79 \pm 59.84$ & $79.50 \pm 12.90$ & $25.71 \pm 3.77$ & $22.77 \pm 4.86$ \tabularnewline
+    PnP & LoRA+DirectInv & r8 cycle & $24.19 \pm 19.84$ & $22.38 \pm 4.50$ & $110.03 \pm 62.50$ & $81.64 \pm 60.21$ & $79.92 \pm 12.80$ & $\mathbf{25.82 \pm 3.72}$ & $\mathbf{22.89 \pm 4.86}$ \tabularnewline
+    \midrule
+    MasaCtrl & DDIM & -- & $27.68 \pm 21.08$ & $22.32 \pm 4.52$ & $105.51 \pm 60.03$ & $84.69 \pm 66.87$ & $80.41 \pm 12.65$ & $24.16 \pm 3.86$ & $21.20 \pm 4.71$ \tabularnewline
+    MasaCtrl & DirectInv & -- & $\mathbf{23.57 \pm 19.02}$ & $\mathbf{22.82 \pm 4.87}$ & $\mathbf{86.83 \pm 51.98}$ & $\mathbf{79.19 \pm 67.20}$ & $\mathbf{82.02 \pm 12.22}$ & $24.51 \pm 3.66$ & $21.47 \pm 4.61$ \tabularnewline
+    MasaCtrl & LoRA & r8 cycle & $49.50 \pm 30.08$ & $19.96 \pm 4.43$ & $179.40 \pm 91.98$ & $141.84 \pm 105.95$ & $73.97 \pm 15.32$ & $20.62 \pm 4.45$ & $19.22 \pm 4.66$ \tabularnewline
+    MasaCtrl & LoRA+DirectInv & r8 cycle & $28.60 \pm 21.70$ & $21.91 \pm 4.93$ & $98.73 \pm 58.98$ & $98.95 \pm 85.02$ & $80.54 \pm 12.72$ & $\mathbf{24.60 \pm 3.65}$ & $\mathbf{21.50 \pm 4.62}$ \tabularnewline
+    \midrule
+    Pix2Pix-Zero & DDIM & -- & -- & -- & -- & -- & -- & -- & -- \tabularnewline
+    Pix2Pix-Zero & DirectInv & -- & $\mathbf{49.99 \pm 51.39}$ & $\mathbf{21.47 \pm 5.49}$ & $\mathbf{142.46 \pm 115.06}$ & $\mathbf{133.49 \pm 154.49}$ & $\mathbf{77.49 \pm 15.64}$ & $\mathbf{23.53 \pm 4.40}$ & $\mathbf{21.09 \pm 4.77}$ \tabularnewline
+    Pix2Pix-Zero & LoRA & r8 cycle & $62.95 \pm 47.81$ & $20.32 \pm 4.68$ & $179.04 \pm 114.37$ & $148.97 \pm 147.13$ & $74.83 \pm 15.52$ & $22.88 \pm 4.60$ & $20.78 \pm 4.85$ \tabularnewline
+    Pix2Pix-Zero & LoRA+DirectInv & r8 cycle & $51.19 \pm 50.86$ & $21.36 \pm 5.71$ & $145.33 \pm 118.31$ & $138.62 \pm 156.68$ & $77.12 \pm 15.63$ & $23.40 \pm 4.43$ & $20.97 \pm 4.72$ \tabularnewline
+    \bottomrule
+  \end{tabular}
+  }
+\end{table*}
+
+\end{document}

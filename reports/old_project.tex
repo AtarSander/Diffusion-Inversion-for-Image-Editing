@@ -1,0 +1,809 @@
+\documentclass[
+    left=2.5cm,
+    right=2.5cm,
+    top=2.5cm,
+    bottom=3cm,
+    bindingoffset=6mm,
+    nohyphenation=false
+]{szablon/eiti/sprawozdanie}
+
+\langpol
+\graphicspath{{rysunki/}}
+\addbibresource{bibliografia.bib}
+
+% Dodanie usuwa jedno z ostrzeżeń
+\usepackage{csquotes}
+\usepackage{xurl}
+% Dodanie tego wpływa na wyświetlanie zdjęć w odpowiedni sposób przy adnotacji [H]
+\usepackage{float}
+\usepackage{subfig}
+\usepackage{amsmath}
+\usepackage[most]{tcolorbox}
+\usepackage{xurl}
+\usepackage{hyperref}
+\usepackage{booktabs}
+
+\newtcolorbox{githubbox}{
+  colback=gray!5,
+  colframe=black!35,
+  arc=2mm,
+  boxrule=0.4pt,
+  left=2mm,
+  right=2mm,
+  top=1mm,
+  bottom=1mm
+}
+
+\begin{document}
+
+\input{rozdzialy/0-strona-tytulowa}
+
+\newpage
+\pagestyle{headings}
+
+\newpage
+\section{Opis rozwiązania}
+
+Celem projektu było ulepszenie procesu inwersji DDIM\cite{song2021denoising} dla modelu Stable
+Diffusion XL \cite{podell2024sdxl}. W klasycznym użyciu model dyfuzyjny zaczyna od losowego
+szumu i wykonuje kolejne kroki odszumiania, aż do otrzymania latentu
+odpowiadającego obrazowi. Inwersja wykonuje operację przeciwną: dla danego
+obrazu albo latentu obrazu próbuje odtworzyć taki latent szumowy, z którego
+ponowne próbkowanie wygeneruje możliwie podobny obraz. Problem polega na
+tym, że standardowa inwersja DDIM korzysta z przybliżenia lokalnego. Dla
+przejścia pomiędzy kolejnymi stanami trajektorii zakłada ona, że predykcja
+szumu obliczona dla czystszego latentu może zastąpić predykcję, którą model
+otrzymałby dla następnego, bardziej zaszumionego stanu. To przybliżenie jest
+wygodne obliczeniowo, ale powoduje błąd akumulujący się w kolejnych krokach
+inwersji.
+
+Zaimplementowane rozwiązanie uczy adapter LoRA\cite{hu2022lora} dla UNetu modelu SDXL tak,
+aby poprawić właśnie tę predykcję wykorzystywaną w inwersji. Bazowy model
+SDXL pozostaje zamrożony i pełni rolę nauczyciela, natomiast trenowane są
+wyłącznie niskowymiarowe macierze LoRA dodane do warstw uwagi UNetu. Celem
+uczenia nie jest bezpośrednie przewidywanie kolejnego latentu trajektorii,
+ale przewidywanie szumu nauczyciela dla następnego, bardziej zaszumionego
+stanu:
+\[
+    \varepsilon_{\phi}(x_{t-1}, t, c)
+    \approx
+    \varepsilon_{\theta}(x_t, t, c),
+\]
+gdzie $\theta$ oznacza zamrożony bazowy UNet SDXL, $\phi$ oznacza UNet z
+trenowanym adapterem LoRA, $x_{t-1}$ jest czystszym latentem dostępnym w
+trakcie inwersji, $x_t$ jest odpowiadającym mu bardziej zaszumionym latentem,
+a $c$ oznacza warunkowanie tekstowe SDXL.
+
+\subsection{Przygotowanie danych}
+
+Dane treningowe są budowane z promptów pochodzących ze zbioru Recap-COCO\cite{li2025what}.
+Dla każdego promptu uruchamiane jest próbkowanie modelem 
+\url{stabilityai/stable-diffusion-xl-base-1.0} z harmonogramem DDIM.
+Konfiguracja projektu używa obrazów $1024 \times 1024$, 50 kroków
+inferencji oraz skali guidance\cite{DBLP:journals/corr/abs-2207-12598} równej 1. Dla każdej próbki zapisywany jest
+obraz końcowy, treść promptu, metadane, lista timestepów oraz pełna
+trajektoria latentów w pliku \texttt{trajectory.pt}. Trajektoria zapisana
+jest w kolejności próbkowania: od początkowego szumu do coraz czystszych
+latentów prowadzących do obrazu.
+
+Oprócz samej trajektorii zapisywane są tensory potrzebne do treningu
+adaptera. Dla SDXL warunkowanie nie składa się wyłącznie z
+\url{prompt\_embeds} przekazywanego jako \url{encoder\_hidden\_states}.
+Model wymaga również dodatkowego warunkowania:
+\url{pooled\_prompt\_embeds} oraz \url{add\_time\_ids}, przekazywanych
+do UNetu przez \url{added\_cond\_kwargs}. Implementacja zapisuje więc dla
+każdej próbki plik \url{conditioning.pt} zawierający:
+\url{prompt\_embeds}, \url{pooled\_prompt\_embeds} i
+\url{add\_time\_ids}. Dzięki temu podczas treningu nie trzeba ponownie
+uruchamiać enkoderów tekstu.
+
+Drugim zapisanym elementem jest \texttt{target\_eps.pt}. Jest to stos
+predykcji szumu obliczonych przez zamrożony bazowy UNet SDXL dla kolejnych
+bardziej zaszumionych latentów trajektorii. Dla trajektorii zapisanej jako
+\[
+    z_0, z_1, \ldots, z_N,
+\]
+gdzie $z_0$ jest początkowym szumem, a $z_N$ najczystszym latentem obrazu,
+próbka treningowa o indeksie $i$ używa $z_{i+1}$ jako wejścia ucznia i
+predykcji nauczyciela dla $z_i$ jako celu. Ostatni latent trajektorii nie
+jest używany jako osobne wejście, ponieważ nie ma po nim kolejnego celu.
+
+\subsection{Zbiór treningowy i funkcja straty}
+
+Klasa \texttt{LatentTrajectoryDataset} traktuje każdą zapisaną trajektorię
+jako zbiór przejść pomiędzy kolejnymi latentami. Dla pojedynczego elementu
+zwracane są: czystszy latent \texttt{x\_clean}, timestep celu,
+\texttt{prompt\_embeds}, \texttt{pooled\_prompt\_embeds},
+\texttt{add\_time\_ids} oraz zapisany wcześniej \texttt{target\_eps}. Dzięki
+temu trening nie musi obliczać celu nauczyciela w każdej iteracji, co
+zmniejsza koszt pojedynczego kroku.
+
+Podczas treningu UNet z aktywnym adapterem LoRA dostaje czystszy latent oraz
+ten sam timestep i to samo warunkowanie, które odpowiadają celowi
+nauczyciela. Strata jest średnim błędem kwadratowym pomiędzy predykcją
+ucznia a zapisanym celem:
+\[
+    \mathcal{L}(\phi)
+    =
+    \left\|
+        \varepsilon_{\phi}(z_{i+1}, t_i, c)
+        -
+        \varepsilon_{\theta}(z_i, t_i, c)
+    \right\|_2^2.
+\]
+Jest to bezpośrednie dopasowanie do przybliżenia wykorzystywanego przez
+DDIM inversion: model ma lepiej estymować predykcję dla bardziej
+zaszumionego stanu, mając dostęp tylko do czystszego latentu.
+
+\subsection{Trening adaptera LoRA}
+
+Trening został zaimplementowany w klasie \texttt{SDXLInversionTrainer}.
+Pipeline SDXL jest ładowany w trybie \texttt{fp16}/\texttt{bf16}, a jego
+składniki są zamrażane. Adapter LoRA jest wstrzykiwany wyłącznie do UNetu,
+w warstwach uwagi \texttt{to\_q}, \texttt{to\_k}, \texttt{to\_v} oraz
+\texttt{to\_out.0}. Trenowane są tylko parametry LoRA, natomiast bazowe wagi
+modelu, VAE oraz enkodery tekstu pozostają niezmienione. Takie podejście
+ogranicza liczbę trenowanych parametrów i pozwala używać adaptera tylko w
+inwersji, bez wpływania na standardowe generowanie obrazów, jeśli adapter
+nie zostanie jawnie aktywowany.
+
+W projekcie przygotowano trzy warianty adaptera różniące się rzędem macierzy
+LoRA: $r=8$, $r=16$ oraz $r=32$. Dla nich ustawiono odpowiednio
+\texttt{lora\_alpha} równe 4, 8 i 16. Wspólna konfiguracja treningu używa
+optymalizatora AdamW\cite{DBLP:journals/corr/abs-1711-05101}, współczynnika uczenia $5 \cdot 10^{-5}$, zerowego
+weight decay, gradient clipping do wartości 1 oraz harmonogramu cosine z
+1000 krokami rozgrzewki. Checkpointy zapisywane są cyklicznie jako same wagi adaptera
+oraz, opcjonalnie, pełny stan treningu zawierający stan optymalizatora,
+schedulera i generatorów losowych.
+
+\subsection{Użycie adaptera w inwersji i ewaluacja}
+
+Wytrenowany adapter jest używany podczas etapu inwersji. Skrypt ewaluacyjny
+ładuje zapisany latent końcowy obrazu, koduje prompt, aktywuje LoRA w UNecie
+i wykonuje DDIM inverse scheduler, zapisując odtworzony latent szumowy
+\texttt{inverted\_noise.pt}. Następnie osobny etap rekonstrukcji startuje z
+tego latentu szumowego i wykonuje zwykłe próbkowanie DDIM do obrazu
+\texttt{reconstructed.png}. W konfiguracji ewaluacji rekonstrukcja może być
+uruchomiona z wyłączonym adapterem LoRA, aby odizolować wpływ adaptera na
+samą inwersję, a nie na standardowy proces generowania.
+
+Raport ewaluacyjny porównuje odtworzony szum z oryginalnym początkowym
+szumem trajektorii oraz obraz zrekonstruowany z obrazem końcowym zapisanym
+podczas generowania danych. Liczone są między innymi metryki MSE, RMSE, MAE,
+PSNR i SSIM dla obrazów, statystyki błędu latentów, podobieństwo
+odtworzonego szumu do rozkładu normalnego oraz wizualizacje błędów obrazu.
+Taka ewaluacja sprawdza więc dwa aspekty rozwiązania: czy LoRA poprawia
+odtworzenie latentnego szumu oraz czy po ponownym próbkowaniu zachowany jest
+obraz, od którego zaczęła się inwersja.
+\begin{githubbox}
+\textbf{Kod źródłowy projektu:}\\
+\href{https://github.com/AtarSander/Diffusion-Inversion-for-Image-Editing}{\nolinkurl{https://github.com/AtarSander/Diffusion-Inversion-for-Image-Editing}}
+\end{githubbox}
+
+\section{Wyniki eksperymentów}
+
+Celem eksperymentów było sprawdzenie, czy adapter LoRA uczony do korekty
+predykcji szumu może poprawić jakość inwersji DDIM. Ocena została
+przeprowadzona w trzech aspektach: podobieństwa odtworzonego szumu do
+rzeczywistego szumu początkowego, jakości rekonstrukcji obrazu oraz
+przydatności uzyskanych latentów w edycji tekstowej. Szczególnie istotne
+było sprawdzenie, czy poprawa własności latentów nie odbywa się kosztem
+rekonstrukcji obrazu.
+
+Zbiór ewaluacyjny obejmował 1522 próbki walidacyjne ze zbioru recap-coco przygotowane analogicznie
+do danych treningowych.
+
+Porównanie wykonano względem standardowej DDIM inversion. Dodatkowo
+uwzględniono warianty, w których adapter LoRA był aktywny tylko przez
+pierwsze kroki inwersji, ponieważ zgodnie z założeniami projektu największy
+błąd aproksymacji powinien pojawiać się na początku trajektorii.
+
+\subsection{Porównywane warianty}
+
+Porównano następujące konfiguracje inwersji:
+\begin{itemize}
+    \item \textbf{DDIM Inv.} -- standardowa inwersja DDIM bez adaptera LoRA.
+    \item \textbf{LoRA 1--5 kroków} -- adapter LoRA aktywny wyłącznie przez
+          pierwsze $1,\ldots,5$ kroków inwersji, czyli odpowiednio
+          $2\%,\ldots,10\%$ trajektorii.
+    \item \textbf{Pełna LoRA} -- adapter aktywny przez wszystkie 50 kroków
+          inwersji.
+\end{itemize}
+
+Adapter był aktywny tylko podczas inwersji. Rekonstrukcja obrazu oraz
+generowanie obrazu edytowanego były wykonywane bez LoRA. Dzięki temu
+porównanie mierzy jakość otrzymanego latentu, a nie zmianę samego procesu
+generacji.
+
+
+\subsection{Normalność latentów i jakość rekonstrukcji}
+
+Pierwszym celem było sprawdzenie, czy adapter zmniejsza odchylenie
+odtworzonego szumu od rzeczywistego szumu początkowego. Do opisu własności
+latentów wykorzystano średnią korelację Pearsona w patchach $8 \times 8$.
+Im niższa wartość tej korelacji, tym słabsze lokalne zależności przestrzenne
+w latencie, a więc tym bliżej zachowuje się on jak niezależnie próbkowany
+szum gaussowski. Drugą metryką normalności jest dywergencja KL liczona
+niezależnie dla każdej pozycji latentu i uśredniana po wymiarach.
+
+\subsubsection{Pełna aktywacja LoRA}
+
+Pierwszym porównaniem jest pełna aktywacja adaptera LoRA dla trzech
+wariantów rzędu: $r=8$, $r=16$ oraz $r=32$ z inwersją DDIM.
+
+\begin{table}[H]
+    \centering
+    \caption{Porównanie adapterów LoRA dla różnych rzędów z inwersją DDIM.}
+    \label{tab:lora-rank-comparison}
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{lrrrrrr}
+        \toprule
+        Metoda &
+        Corr. $\downarrow$ &
+        KL Div. $\times 10^2$ $\downarrow$ &
+        Recon. MAE $\downarrow$ &
+        LPIPS $\downarrow$ &
+        PSNR $\uparrow$ &
+        SSIM $\uparrow$ \\
+        \midrule
+        DDIM Inv. & 0.1601 & 0.8566 & 0.02663 & 0.09617 & 28.32 & 0.8112 \\
+        \midrule
+        $r=8$, $\alpha=4$   & 0.0999 & 0.0767 & 0.02063 & 0.05982 & 30.06 & 0.8654 \\
+        $r=16$, $\alpha=8$  & \underline{0.0989} & \underline{0.0671} & \underline{0.02028} & \underline{0.05774} & \underline{30.22} & \underline{0.8699} \\
+        $r=32$, $\alpha=16$ & \textbf{0.0972} & \textbf{0.0504} & \textbf{0.01970} &  \textbf{0.05538} & \textbf{30.40} & \textbf{0.8743} \\
+        \bottomrule
+    \end{tabular}}
+\end{table}
+
+Najlepsze wyniki dla pełnej aktywacji uzyskał adapter $r=32$. W porównaniu
+z $r=16$ zmniejsza on korelację z $0.0989$ do $0.0972$, KL Div.
+$\times 10^2$ z $0.0671$ do $0.0504$. Jednocześnie poprawia metryki rekonstrukcji: Recon. MAE spada do
+$0.01970$, LPIPS\cite{DBLP:journals/corr/abs-1801-03924} do $0.05538$, PSNR rośnie do $30.40$, a SSIM do $0.8743$.
+Wariant $r=16$ jest drugim najlepszym ustawieniem w większości metryk,
+natomiast $r=8$ daje najsłabszą, ale nadal wyraźną poprawę względem DDIM
+Inv.
+
+
+Rysunek~\ref{fig:qualitative-reconstruction} przedstawia przykładowe wyniki
+rekonstrukcji. W każdej grupie lewa kolumna pokazuje obraz źródłowy, środkowa
+kolumna rekonstrukcję po standardowej inwersji DDIM, a prawa kolumna
+rekonstrukcję po inwersji z adapterem LoRA $r=32$.
+
+\begin{figure}[H]
+    \centering
+    \subfloat{%
+        \includegraphics[width=0.31\textwidth]{images/1final.png}}
+    \hfill
+    \subfloat{%
+        \includegraphics[width=0.31\textwidth]{images/1baseline.png}}
+    \hfill
+    \subfloat{%
+        \includegraphics[width=0.31\textwidth]{images/1lora.png}}
+
+    \vspace{0.5em}
+
+    \subfloat{%
+        \includegraphics[width=0.31\textwidth]{images/2final.png}}
+    \hfill
+    \subfloat{%
+        \includegraphics[width=0.31\textwidth]{images/2baseline.png}}
+    \hfill
+    \subfloat{%
+        \includegraphics[width=0.31\textwidth]{images/2lora.png}}
+
+    \vspace{0.5em}
+
+    \subfloat{%
+        \includegraphics[width=0.31\textwidth]{images/3final.png}}
+    \hfill
+    \subfloat{%
+        \includegraphics[width=0.31\textwidth]{images/3baseline.png}}
+    \hfill
+    \subfloat{%
+        \includegraphics[width=0.31\textwidth]{images/3lora.png}}
+
+    \vspace{0.5em}
+
+    \subfloat{%
+        \includegraphics[width=0.31\textwidth]{images/4final.png}}
+    \hfill
+    \subfloat{%
+        \includegraphics[width=0.31\textwidth]{images/4baseline.png}}
+    \hfill
+    \subfloat{%
+        \includegraphics[width=0.31\textwidth]{images/4lora.png}}
+
+    \vspace{0.5em}
+
+    \makebox[0.31\textwidth][c]{\small Obraz źródłowy}\hfill
+    \makebox[0.31\textwidth][c]{\small DDIM Inv.}\hfill
+    \makebox[0.31\textwidth][c]{\small LoRA $r=32$}
+
+    \caption{Porównanie rekonstrukcji dla standardowej inwersji DDIM i LoRA $r=32$.}
+    \label{fig:qualitative-reconstruction}
+\end{figure}
+
+\subsubsection{Aktywacja LoRA w pierwszych krokach}
+
+Po pełnej aktywacji sprawdzono, czy adapter musi działać przez całą
+trajektorię inwersji. W tym eksperymencie LoRA była aktywna tylko na
+początku trajektorii, a następne kroki wykonywano już zwykłym modelem
+bazowym.
+Dla każdego rzędu adaptera dostępne są wyniki dla pierwszych pięciu kroków
+oraz dla pełnej aktywacji.
+
+\begin{table}[H]
+    \centering
+    \caption{DDIM Inv., aktywacja LoRA w pierwszych krokach oraz pełna
+    aktywacja LoRA dla adapterów $r=8$, $r=16$ oraz $r=32$.}
+    \label{tab:lora-rank-window-comparison}
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{lrrrrrrr}
+        \toprule
+        Adapter &
+        Kroki LoRA &
+        Corr. $\downarrow$ &
+        KL Div. $\times 10^2$ $\downarrow$ &
+        Recon. MAE $\downarrow$ &
+        LPIPS $\downarrow$ &
+        PSNR $\uparrow$ &
+        SSIM $\uparrow$ \\
+        \midrule
+        DDIM Inv. & 0 & 0.1601 & 0.8566 & 0.02663 & 0.09617 & 28.32 & 0.8112 \\
+        \midrule
+        $r=8$  & 1  & 0.1590 & 0.8499 & 0.02654 & 0.09546 & 28.34 & 0.8123 \\
+        $r=8$  & 2  & 0.1204 & 0.3891 & 0.02508 & 0.08507 & 28.65 & 0.8304 \\
+        $r=8$  & 3  & 0.1129 & 0.3007 & 0.02489 & 0.08416 & 28.70 & 0.8337 \\
+        $r=8$  & 4  & 0.1097 & 0.2582 & 0.02482 & 0.08391 & 28.71 & 0.8349 \\
+        $r=8$  & 5  & 0.1078 & 0.2327 & 0.02481 & 0.08393 & 28.71 & 0.8353 \\
+        $r=8$  & 50 & 0.0999 & 0.0767 & 0.02063 & 0.05982 & 30.06 & 0.8654 \\
+        \midrule
+        $r=16$ & 1  & 0.1588 & 0.8499 & 0.02654 & 0.09551 & 28.34 & 0.8122 \\
+        $r=16$ & 2  & 0.1180 & 0.3584 & 0.02508 & 0.08475 & 28.64 & 0.8312 \\
+        $r=16$ & 3  & 0.1105 & 0.2687 & 0.02486 & 0.08366 & 28.69 & 0.8347 \\
+        $r=16$ & 4  & 0.1076 & 0.2302 & 0.02479 & 0.08340 & 28.71 & 0.8359 \\
+        $r=16$ & 5  & 0.1059 & 0.2075 & 0.02478 & 0.08346 & 28.70 & 0.8363 \\
+        $r=16$ & 50 & \underline{0.0989} & \underline{0.0671} & \underline{0.02028} & \underline{0.05774} & \underline{30.22} & \underline{0.8699} \\
+        \midrule
+        $r=32$ & 1  & 0.1588 & 0.8486 & 0.02653 & 0.09536 & 28.34 & 0.8124 \\
+        $r=32$ & 2  & 0.1143 & 0.3397 & 0.02497 & 0.08402 & 28.67 & 0.8325 \\
+        $r=32$ & 3  & 0.1071 & 0.2502 & 0.02474 & 0.08283 & 28.72 & 0.8363 \\
+        $r=32$ & 4  & 0.1043 & 0.2096 & 0.02466 & 0.08250 & 28.74 & 0.8377 \\
+        $r=32$ & 5  & 0.1028 & 0.1861 & 0.02463 & 0.08249 & 28.74 & 0.8382 \\
+        $r=32$ & 50 & \textbf{0.0972} & \textbf{0.0504} & \textbf{0.01970} & \textbf{0.05538} & \textbf{30.40} & \textbf{0.8743} \\
+        \bottomrule
+    \end{tabular}}
+\end{table}
+
+Największy skok jakości pojawia się po przejściu z jednego do dwóch kroków.
+Jeden krok prawie nie zmienia wyniku DDIM Inv., natomiast dwa kroki wyraźnie
+zmniejszają korelację latentów i jednocześnie poprawiają rekonstrukcję.
+Najmocniej widać to dla $r=32$: korelacja spada z $0.1601$ do $0.1143$, KL
+Div. $\times 10^2$ z $0.8566$ do $0.3397$, a PSNR rośnie z $28.32$ do
+$28.67$. Dalsze zwiększanie liczby kroków z aktywną LoRA daje mniejsze,
+ale nadal stabilne zyski.
+Wariant $r=32$ aktywny przez pięć kroków osiąga Corr. $0.1028$, KL Div.
+$\times 10^2$ równe $0.1861$, PSNR $28.74$ i SSIM $0.8382$.
+
+Pełna aktywacja $r=32$ pozostaje najlepsza liczbowo w tym zestawieniu.
+W porównaniu z DDIM Inv. korelacja latentów spada o około $39\%$, KL Div.
+$\times 10^2$ o około $94\%$, Recon. MAE o około $26\%$, a LPIPS o około
+$42\%$. Równocześnie PSNR wzrasta z $28.32$ do $30.40$, a SSIM z $0.8112$
+do $0.8743$. Aktywacja tylko w pierwszych krokach jest jednak istotna
+praktycznie: już pierwsze dwa do pięciu kroków przejmują dużą część poprawy
+normalności latentów, bez pogorszenia metryk rekonstrukcji.
+
+\subsection{Porównanie z forward diffusion}
+
+Punktem odniesienia dla aktywacji LoRA w pierwszych krokach jest wariant,
+w którym pierwsze kroki inwersji zastępowane są zwykłą dyfuzją w przód.
+Zestawienie wykonano dla dwóch i pięciu kroków aktywnej LoRA oraz dla
+pełnej aktywacji każdego rzędu adaptera.
+
+\begin{table}[H]
+    \centering
+    \caption{Porównanie aktywacji LoRA w pierwszych krokach z wariantem forward diffusion.}
+    \label{tab:forward-reference}
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{lrrrrr}
+        \toprule
+        Metoda &
+        Corr. $\downarrow$ &
+        KL Div. $\times 10^2$ $\downarrow$ &
+        Recon. MAE $\downarrow$ &
+        LPIPS $\downarrow$ &
+        PSNR $\uparrow$ \\
+        \midrule
+        DDIM Inv.             & 0.1601 & 0.8566 & 0.02663 & 0.09617 & 28.32 \\
+        Forward 2\%           & 0.1400 & 0.7100 & 0.03000 & 0.10000 & 27.12 \\
+        Forward 4\%           & \textbf{0.0900} & 0.3800 & 0.04000 & 0.14000 & 25.68 \\
+        \midrule
+        LoRA $r=8$, 2 kroki   & 0.1204 & 0.3891 & 0.02508 & 0.08507 & 28.65 \\
+        LoRA $r=8$, 5 kroków  & 0.1078 & 0.2327 & 0.02481 & 0.08393 & 28.71 \\
+        Pełna LoRA $r=8$      & 0.0999 & 0.0767 & 0.02063 & 0.05982 & 30.06 \\
+        \midrule
+        LoRA $r=16$, 2 kroki  & 0.1180 & 0.3584 & 0.02508 & 0.08475 & 28.64 \\
+        LoRA $r=16$, 5 kroków & 0.1059 & 0.2075 & 0.02478 & 0.08346 & 28.70 \\
+        Pełna LoRA $r=16$     & 0.0989 & \underline{0.0671} & \underline{0.02028} & \underline{0.05774} & \underline{30.22} \\
+        \midrule
+        LoRA $r=32$, 2 kroki  & 0.1143 & 0.3397 & 0.02497 & 0.08402 & 28.67 \\
+        LoRA $r=32$, 5 kroków & 0.1028 & 0.1861 & 0.02463 & 0.08249 & 28.74 \\
+        Pełna LoRA $r=32$     & \underline{0.0972} & \textbf{0.0504} & \textbf{0.01970} & \textbf{0.05538} & \textbf{30.40} \\
+        \bottomrule
+    \end{tabular}}
+\end{table}
+
+Forward diffusion skutecznie zmniejsza lokalne korelacje w latencie, ale
+robi to przez dodanie losowości, co pogarsza rekonstrukcję. Dla wariantu
+Forward 4\% korelacja spada do $0.0900$, ale Recon. MAE rośnie do $0.04$,
+LPIPS do $0.14$, a PSNR spada do $25.68$. LoRA zachowuje korzystniejszy
+kompromis we wszystkich trzech rzędach adaptera: warianty pięciokrokowe
+zmniejszają korelację i KL, a jednocześnie utrzymują lepszą rekonstrukcję
+niż DDIM Inv. Pełna LoRA $r=32$ osiąga najlepsze metryki rekonstrukcyjne i
+najniższą dywergencję KL w tym zestawieniu, natomiast pełna LoRA $r=16$ jest
+drugim najlepszym wariantem w metrykach rekonstrukcji.
+
+\subsection{Znaczenie pierwszych kroków inwersji}
+
+Największy wpływ na jakość inwersji mają pierwsze kroki trajektorii.
+Wyniki dla wszystkich trzech rzędów adaptera pokazują, że pierwsze dwa
+kroki dają największą część poprawy względem DDIM Inv., natomiast aktywacja
+adaptera przez pięć pierwszych kroków przejmuje większość zysku pełnej LoRA
+w metrykach normalności latentów i edycji tekstowej.
+
+\begin{table}[H]
+    \centering
+    \caption{Udział poprawy pełnej LoRA uzyskany przez aktywację adaptera
+    w pierwszych pięciu krokach. Dla metryk minimalizowanych liczono spadek
+    wartości, a dla metryk maksymalizowanych wzrost wartości.}
+    \label{tab:first-steps-share}
+    \begin{tabular}{lrrrr}
+        \toprule
+        Metryka &
+        $r=8$ &
+        $r=16$ &
+        $r=32$ &
+        Średnia \\
+        \midrule
+        Corr. & $86.9\%$ & $88.4\%$ & $91.1\%$ & $88.8\%$ \\
+        KL Div. $\times 10^2$ & $80.0\%$ & $82.2\%$ & $83.2\%$ & $81.8\%$ \\
+        Recon. MAE & $30.4\%$ & $29.2\%$ & $28.8\%$ & $29.5\%$ \\
+        LPIPS & $33.7\%$ & $33.1\%$ & $33.6\%$ & $33.4\%$ \\
+        CLIP Source & $69.5\%$ & $70.7\%$ & $73.2\%$ & $71.1\%$ \\
+        CLIP Target & $81.7\%$ & $81.2\%$ & $82.7\%$ & $81.9\%$ \\
+        Directional CLIP & $88.4\%$ & $88.0\%$ & $91.9\%$ & $89.5\%$ \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Wariant pięciokrokowy przejmuje średnio $88.8\%$ poprawy pełnej LoRA dla
+korelacji oraz $81.8\%$ poprawy dla dywergencji KL. Podobny efekt widać w
+metrykach edycyjnych: średni udział poprawy wynosi $81.9\%$ dla CLIP\cite{DBLP:journals/corr/abs-2103-00020} Target
+oraz $89.5\%$ dla Directional CLIP\cite{DBLP:journals/corr/abs-2108-00946}.
+
+Udział poprawy dla metryk rekonstrukcyjnych jest niższy i wynosi średnio
+$29.5\%$ dla Recon. MAE oraz $33.4\%$ dla LPIPS. Oznacza to, że pierwsze
+kroki są kluczowe dla usuwania nienaturalnej struktury z odtworzonego szumu,
+natomiast późniejsze kroki nadal mają znaczenie dla dokładności
+rekonstrukcji obrazu. Ten wynik sugeruje praktyczny kompromis jakościowy:
+aktywacja LoRA tylko w pierwszych krokach może być wystarczająca, gdy
+priorytetem jest edytowalność i normalność latentów, natomiast pełna LoRA
+jest korzystniejsza, gdy najważniejsza jest maksymalna jakość rekonstrukcji.
+
+
+\subsection{Regiony jednorodne i niejednorodne}
+
+Dodatkowo sprawdzono, czy błąd inwersji różni się pomiędzy obszarami
+jednorodnymi wizualnie i obszarami zawierającymi więcej lokalnej struktury.
+W tym celu obraz podzielono na regiony \emph{plain} i \emph{non-plain}.
+Wyniki pokazują, że błąd w regionach jednorodnych jest większy, a odchylenie
+standardowe latentów jest tam niższe.
+
+\begin{table}[H]
+    \centering
+    \caption{Błąd i odchylenie standardowe odtworzonego szumu w regionach
+    jednorodnych i niejednorodnych.}
+    \label{tab:plain-nonplain}
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{lrrrr}
+        \toprule
+        Metoda &
+        Plain error $\downarrow$ &
+        Non-plain error $\downarrow$ &
+        Plain std. $\to 1$ &
+        Non-plain std. $\to 1$ \\
+        \midrule
+        DDIM Inv. & 0.1956 & 0.1682 & 0.8770 & 0.9573 \\
+        \midrule
+        LoRA $r=8$, 1 krok & 0.1937 & 0.1667 & 0.8773 & 0.9576 \\
+        LoRA $r=8$, 2 kroki & 0.1305 & 0.1204 & 0.9082 & 0.9750 \\
+        LoRA $r=8$, 3 kroki & 0.1196 & 0.1120 & 0.9162 & 0.9801 \\
+        LoRA $r=8$, 4 kroki & 0.1148 & 0.1083 & 0.9203 & 0.9830 \\
+        LoRA $r=8$, 5 kroków & 0.1121 & 0.1061 & 0.9230 & 0.9849 \\
+        Pełna LoRA $r=8$ & 0.1015 & 0.0970 & 0.9433 & \textbf{1.0022} \\
+        \midrule
+        LoRA $r=16$, 1 krok & 0.1937 & 0.1667 & 0.8773 & 0.9576 \\
+        LoRA $r=16$, 2 kroki & 0.1267 & 0.1175 & 0.9104 & 0.9764 \\
+        LoRA $r=16$, 3 kroki & 0.1155 & 0.1088 & 0.9188 & 0.9819 \\
+        LoRA $r=16$, 4 kroki & 0.1109 & 0.1052 & 0.9228 & 0.9847 \\
+        LoRA $r=16$, 5 kroków & 0.1083 & 0.1031 & 0.9252 & 0.9865 \\
+        Pełna LoRA $r=16$ & \underline{0.0982} & \underline{0.0944} & \underline{0.9442} & \underline{1.0029} \\
+        \midrule
+        LoRA $r=32$, 1 krok & 0.1934 & 0.1664 & 0.8774 & 0.9576 \\
+        LoRA $r=32$, 2 kroki & 0.1222 & 0.1140 & 0.9122 & 0.9776 \\
+        LoRA $r=32$, 3 kroki & 0.1107 & 0.1052 & 0.9208 & 0.9832 \\
+        LoRA $r=32$, 4 kroki & 0.1058 & 0.1014 & 0.9251 & 0.9862 \\
+        LoRA $r=32$, 5 kroków & 0.1031 & 0.0992 & 0.9278 & 0.9882 \\
+        Pełna LoRA $r=32$ & \textbf{0.0930} & \textbf{0.0906} & \textbf{0.9479} & 1.0055 \\
+        \bottomrule
+    \end{tabular}}
+\end{table}
+
+Adapter zmniejsza błąd w obu typach regionów oraz przesuwa odchylenie
+standardowe w kierunku wartości $1.0$. Największa poprawa ponownie pojawia
+się po przejściu z jednego do dwóch kroków aktywnej LoRA, niezależnie od
+rzędu adaptera. Najsilniejszy efekt daje $r=32$, natomiast $r=16$ jest
+bardzo bliski w wariancie pełnej aktywacji. Wynik ten jest
+spójny z obserwacjami przedstawionymi w pracy \emph{There and Back Again}\cite{staniszewski2026there},
+gdzie autorzy wskazują, że problem korelacji i przenoszenia struktury obrazu
+do odtworzonego szumu jest szczególnie widoczny w obszarach jednorodnych
+wizualnie. W naszym eksperymencie adapter częściowo ogranicza ten efekt,
+zmniejszając błąd zarówno w regionach \emph{plain}, jak i \emph{non-plain}.
+
+\subsection{Edycja tekstowa}
+
+Trzeci blok ewaluacji dotyczył przydatności latentów do edycji obrazów. W
+tym eksperymencie, po inwersji, obraz był generowany z promptem docelowym.
+Prompty docelowe utworzono przez cykliczne przesunięcie listy promptów
+źródłowych o jedną pozycję. Taki protokół pozwala porównać warianty inwersji
+w tych samych warunkach i sprawdzić, czy uzyskane latenty lepiej reagują na
+zmianę warunkowania tekstowego.
+
+\begin{table}[H]
+    \centering
+    \caption{Metryki CLIP dla edycji tekstowej.}
+    \label{tab:clip-editing}
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{lrrr}
+        \toprule
+        Metoda &
+        CLIP Source $\downarrow$ &
+        CLIP Target $\uparrow$ &
+        Directional CLIP $\uparrow$ \\
+        \midrule
+        DDIM Inv. & $35.08 \pm 11.73$ & $67.90 \pm 10.92$ & $29.85 \pm 7.46$ \\
+        \midrule
+        LoRA $r=8$, 1 krok & $35.09 \pm 11.73$ & $67.88 \pm 10.90$ & $29.85 \pm 7.46$ \\
+        LoRA $r=8$, 2 kroki & $33.84 \pm 11.77$ & $70.10 \pm 10.38$ & $31.22 \pm 7.22$ \\
+        LoRA $r=8$, 3 kroki & $33.45 \pm 11.79$ & $70.74 \pm 10.19$ & $31.53 \pm 7.18$ \\
+        LoRA $r=8$, 4 kroki & $33.12 \pm 11.76$ & $71.07 \pm 10.11$ & $31.71 \pm 7.11$ \\
+        LoRA $r=8$, 5 kroków & $32.99 \pm 11.72$ & $71.29 \pm 10.05$ & $31.80 \pm 7.10$ \\
+        Pełna LoRA $r=8$ & $32.07 \pm 11.82$ & $72.05 \pm 9.72$ & $32.05 \pm 7.01$ \\
+        \midrule
+        LoRA $r=16$, 1 krok & $35.07 \pm 11.73$ & $67.89 \pm 10.90$ & $29.86 \pm 7.45$ \\
+        LoRA $r=16$, 2 kroki & $33.75 \pm 11.80$ & $70.24 \pm 10.37$ & $31.29 \pm 7.20$ \\
+        LoRA $r=16$, 3 kroki & $33.35 \pm 11.76$ & $70.82 \pm 10.19$ & $31.59 \pm 7.16$ \\
+        LoRA $r=16$, 4 kroki & $33.07 \pm 11.75$ & $71.21 \pm 10.05$ & $31.77 \pm 7.14$ \\
+        LoRA $r=16$, 5 kroków & $32.93 \pm 11.74$ & $71.33 \pm 10.06$ & $31.82 \pm 7.11$ \\
+        Pełna LoRA $r=16$ & $\underline{32.04 \pm 11.75}$ & $\underline{72.13 \pm 9.71}$ & $\mathbf{32.09 \pm 7.04}$ \\
+        \midrule
+        LoRA $r=32$, 1 krok & $35.09 \pm 11.74$ & $67.89 \pm 10.89$ & $29.85 \pm 7.45$ \\
+        LoRA $r=32$, 2 kroki & $33.75 \pm 11.77$ & $70.24 \pm 10.38$ & $31.29 \pm 7.21$ \\
+        LoRA $r=32$, 3 kroki & $33.24 \pm 11.74$ & $70.92 \pm 10.13$ & $31.64 \pm 7.12$ \\
+        LoRA $r=32$, 4 kroki & $33.02 \pm 11.72$ & $71.29 \pm 10.08$ & $31.80 \pm 7.09$ \\
+        LoRA $r=32$, 5 kroków & $32.83 \pm 11.69$ & $71.42 \pm 10.00$ & $31.89 \pm 7.06$ \\
+        Pełna LoRA $r=32$ & $\mathbf{32.00 \pm 11.76}$ & $\mathbf{72.16 \pm 9.76}$ & $\underline{32.07 \pm 7.03}$ \\
+        \bottomrule
+    \end{tabular}}
+\end{table}
+
+Wyniki są spójne z wcześniejszymi obserwacjami.
+Warianty LoRA od dwóch kroków wzwyż zwiększają CLIP Target oraz Directional
+CLIP, co oznacza silniejsze dopasowanie do kierunku edycji tekstowej. Pełna
+LoRA dla wszystkich trzech rzędów osiąga bardzo zbliżone wyniki: najwyższy
+CLIP Target uzyskuje $r=32$, a najwyższy Directional CLIP uzyskuje $r=16$.
+Jednoczesny spadek CLIP Source wskazuje, że obraz wynikowy w większym
+stopniu odchodzi od warunkowania źródłowego. W połączeniu ze wzrostem CLIP
+Target i Directional CLIP sugeruje to większą podatność uzyskanych latentów
+na zmianę promptu docelowego.
+
+
+\section{Wyniki dla różnych cfg}
+
+\begin{table}[H]
+    \centering
+    \caption{Wyniki dla roznych wartosci CFG.}
+    \label{tab:cfg-sweep-matched-reconstruction}
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{lrrrrrrrr}
+        \toprule
+        Metoda &
+        CFG &
+        Corr. $\downarrow$ &
+        KL Div. $\times 10^2$ $\downarrow$ &
+        Recon. MAE $\downarrow$ &
+        LPIPS $\downarrow$ &
+        PSNR $\uparrow$ &
+        SSIM $\uparrow$ \\
+        \midrule
+        DDIM Inv. &
+        1.0 & 0.1601 & 0.8566 & 0.02663 & 0.09617 & 28.32 & 0.8112 \\
+        LoRA $r=32$ &
+        1.0 & 0.0972 & 0.0504 & \textbf{0.01970} & \textbf{0.05538} & \textbf{30.40} & \textbf{0.8743} \\
+        \midrule
+        LoRA $r=32$ &
+        2.0 & 0.0955 & 0.0150 & 0.07249 & 0.29056 & 21.16 & 0.6442 \\
+        LoRA $r=32$ &
+        3.0 & 0.0989 & 0.0607 & 0.26066 & 0.64225 & 11.36 & 0.3292 \\
+        LoRA $r=32$ &
+        4.0 & 0.1124 & 0.1500 & 0.32729 & 0.72783 & 9.10 & 0.2355 \\
+        LoRA $r=32$ &
+        5.0 & 0.1331 & 0.2499 & 0.34274 & 0.75096 & 8.52 & 0.2063 \\
+        \bottomrule
+    \end{tabular}%
+    }
+\end{table}
+
+
+\begin{table}[H]
+    \centering
+    \caption{Wyniki CFG $=4$ dla danych wygenerowanych przy CFG $=4$.
+    (Tylko 100 próbek)}
+    \label{tab:cfg4-lora-quick100}
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{llrrrrrrrr}
+        \toprule
+        Metoda &
+        LoRA &
+        Probki &
+        Std. szumu &
+        Corr. $\downarrow$ &
+        KL Div. $\downarrow$ &
+        Recon. MAE $\downarrow$ &
+        LPIPS $\downarrow$ &
+        PSNR $\uparrow$ &
+        SSIM $\uparrow$ \\
+        \midrule
+        DDIM Inv. &
+        brak & 100 & 0.8812 & 0.3669$^\dagger$ & 2.2262 & 0.1725 & 0.5900 & 13.76 & 0.3566 \\
+        DDIM Inv. &
+        shared & 100 & \textbf{0.9828} & \textbf{0.3599}$^\dagger$ & \textbf{0.0838} & \textbf{0.0557} & \textbf{0.1939} & \textbf{22.09} & \textbf{0.7522} \\
+        DDIM Inv. &
+        branch-pair & 100 & 0.9562 & 0.3611$^\dagger$ & 0.3306 & 0.0737 & 0.2489 & 20.40 & 0.7026 \\
+        \bottomrule
+    \end{tabular}%
+    }
+\end{table}
+
+
+\begin{table}[H]
+    \centering
+    \caption{Przykladowe rekonstrukcje dla CFG $=4$}
+    \label{tab:cfg4-qualitative-samples}
+    \begin{tabular}{cccc}
+        \toprule
+        Obraz zrodlowy & DDIM Inv. bez LoRA & Shared LoRA & Branch-pair \\
+        \midrule
+        \includegraphics[width=0.215\textwidth]{../sample_images_for_cfg/original/final.png} &
+        \includegraphics[width=0.215\textwidth]{../sample_images_for_cfg/no_lora/reconstructed.png} &
+        \includegraphics[width=0.215\textwidth]{../sample_images_for_cfg/shared_lora/reconstructed.png} &
+        \includegraphics[width=0.215\textwidth]{../sample_images_for_cfg/branch/reconstructed.png} \\
+        \includegraphics[width=0.215\textwidth]{../sample_images_for_cfg/original/final1.png} &
+        \includegraphics[width=0.215\textwidth]{../sample_images_for_cfg/no_lora/reconstructed1.png} &
+        \includegraphics[width=0.215\textwidth]{../sample_images_for_cfg/shared_lora/reconstructed1.png} &
+        \includegraphics[width=0.215\textwidth]{../sample_images_for_cfg/branch/reconstructed1.png} \\
+        \includegraphics[width=0.215\textwidth]{../sample_images_for_cfg/original/final2.png} &
+        \includegraphics[width=0.215\textwidth]{../sample_images_for_cfg/no_lora/reconstructed2.png} &
+        \includegraphics[width=0.215\textwidth]{../sample_images_for_cfg/shared_lora/reconstructed2.png} &
+        \includegraphics[width=0.215\textwidth]{../sample_images_for_cfg/branch/reconstructed2.png} \\
+        \includegraphics[width=0.215\textwidth]{../sample_images_for_cfg/original/final3.png} &
+        \includegraphics[width=0.215\textwidth]{../sample_images_for_cfg/no_lora/reconstructed3.png} &
+        \includegraphics[width=0.215\textwidth]{../sample_images_for_cfg/shared_lora/reconstructed3.png} &
+        \includegraphics[width=0.215\textwidth]{../sample_images_for_cfg/branch/reconstructed3.png} \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\begin{table}[H]
+    \centering
+    \caption{Przykladowe rekonstrukcje dla CFG $=4$}
+    \label{tab:cfg4-qualitative-samples-cont}
+    \begin{tabular}{cccc}
+        \toprule
+        Obraz zrodlowy & DDIM Inv. bez LoRA & Shared LoRA & Branch-pair \\
+        \midrule
+        \includegraphics[width=0.215\textwidth]{../sample_images_for_cfg/original/final4.png} &
+        \includegraphics[width=0.215\textwidth]{../sample_images_for_cfg/no_lora/reconstructed4.png} &
+        \includegraphics[width=0.215\textwidth]{../sample_images_for_cfg/shared_lora/reconstructed4.png} &
+        \includegraphics[width=0.215\textwidth]{../sample_images_for_cfg/branch/reconstructed4.png} \\
+        \includegraphics[width=0.215\textwidth]{../sample_images_for_cfg/original/final5.png} &
+        \includegraphics[width=0.215\textwidth]{../sample_images_for_cfg/no_lora/reconstructed5.png} &
+        \includegraphics[width=0.215\textwidth]{../sample_images_for_cfg/shared_lora/reconstructed5.png} &
+        \includegraphics[width=0.215\textwidth]{../sample_images_for_cfg/branch/reconstructed5.png} \\
+        \includegraphics[width=0.215\textwidth]{../sample_images_for_cfg/original/final6.png} &
+        \includegraphics[width=0.215\textwidth]{../sample_images_for_cfg/no_lora/reconstructed6.png} &
+        \includegraphics[width=0.215\textwidth]{../sample_images_for_cfg/shared_lora/reconstructed6.png} &
+        \includegraphics[width=0.215\textwidth]{../sample_images_for_cfg/branch/reconstructed6.png} \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\begin{table}[H]
+    \centering
+    \caption{Porównanie z 4\% (już cały zbiór eval)}
+    \label{tab:cfg4-appendix-n3}
+    \begin{tabular}{lrrrr}
+        \toprule
+        Metoda &
+        CFG &
+        LPIPS $\downarrow$ &
+        Corr. $\downarrow$ &
+        CLIP/Edit align. $\uparrow$ \\
+        \midrule
+        DDIM Inv. & 4.0 & 0.525 & 0.172 & 0.725 \\
+        Forward $4\%$ & 4.0 & 0.372 & 0.121 & 0.800 \\
+        Shared LoRA & 4.0 & \textbf{0.1968} & \textbf{0.0955} & -- \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+
+\section{Divergence w SD 1.5}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{image.png}
+    \caption{Val loss }
+    \label{fig:placeholder}
+\end{figure}
+
+
+\section{Wnioski}
+
+Przeprowadzone eksperymenty potwierdzają główną hipotezę projektu:
+niewielki adapter LoRA używany wyłącznie podczas inwersji może poprawić
+jakość odtwarzanego latentu szumowego w DDIM inversion. Adapter zmniejsza
+lokalne korelacje w odtworzonym szumie, obniża dywergencję KL względem
+rozkładu normalnego oraz zmniejsza błąd względem rzeczywistego szumu
+początkowego. Co istotne, poprawa ta nie odbywa się kosztem rekonstrukcji
+obrazu.
+
+Najważniejszy wynik dotyczy kompromisu pomiędzy normalnością latentów a
+jakością rekonstrukcji. Zarówno wariant aktywny przez pierwsze kilka kroków,
+jak i pełna LoRA zmniejszają lokalną strukturę w odtworzonym szumie, a
+jednocześnie poprawiają metryki rekonstrukcyjne względem bazowej DDIM
+inversion. Oznacza to, że adapter uczy się użytecznej korekty predykcji
+szumu, która pozwala uzyskać latent bardziej zbliżony do szumu
+gaussowskiego bez widocznego kosztu rekonstrukcyjnego.
+
+Wyniki potwierdzają również szczególne znaczenie początkowych kroków
+inwersji. Już aktywacja LoRA przez pierwsze dwa kroki daje największy
+pojedynczy przyrost jakości względem DDIM Inv., a pięć pierwszych kroków
+przejmuje większość zysku pełnej LoRA w metrykach normalności latentów i
+edytowalności. Jest to zgodne z założeniem, że największy błąd aproksymacji
+DDIM inversion pojawia się na początku trajektorii.
+
+Porównanie z forward diffusion pokazuje, że poprawa uzyskana przez LoRA ma
+inny charakter niż proste dodanie losowego szumu. Forward diffusion
+skutecznie obniża korelacje w latencie, ale pogarsza rekonstrukcję. LoRA
+natomiast poprawia własności latentów i jednocześnie poprawia metryki
+rekonstrukcyjne. Sugeruje to, że adapter uczy się użytecznej korekty
+predykcji szumu, a nie tylko zwiększa losowość odtwarzanego latentu.
+
+W eksperymencie edycji tekstowej warianty LoRA od dwóch kroków wzwyż
+poprawiają CLIP Target oraz Directional CLIP względem bazowej DDIM inversion.
+Oznacza to, że uzyskane latenty są bardziej podatne na zmianę promptu
+docelowego.
+
+Podsumowując, wariant aktywny przez pierwsze kilka kroków stanowi
+interesujący kompromis pomiędzy normalnością latentów, edytowalnością i
+jakością rekonstrukcji, szczególnie dla adaptera $r=32$. W porównaniu
+rzędów adaptera najlepszą pełną LoRA był wariant $r=32$, który uzyskał
+najniższą korelację, najniższą dywergencję KL oraz najlepsze metryki
+rekonstrukcyjne. Projekt pokazuje, że uczenie korekty predykcji szumu jest
+sensownym kierunkiem poprawy DDIM inversion i może prowadzić do latentów
+lepiej nadających się zarówno do rekonstrukcji, jak i do dalszej edycji
+tekstowej.
+
+\newpage
+\printbibliography
+\end{document}

@@ -1,3 +1,4 @@
+import json
 import re
 import warnings
 from pathlib import Path
@@ -19,6 +20,7 @@ from torch.utils.data import DataLoader, WeightedRandomSampler
 from tqdm import tqdm
 
 from diff_inversion.data.latent_trajectory_dataset import LatentTrajectoryDataset
+from diff_inversion.modeling.one_step_endpoint import endpoint_latent_from_noise, endpoint_noise_target
 from diff_inversion.utils import make_pipe
 
 SINGLE_ADAPTER_NAME = "inversion"
@@ -31,11 +33,12 @@ CFG_PAIR_MODES = frozenset({"cfg_pair"})
 SHARED_BRANCH_LOSS_MODES = frozenset({"branch_pair_shared"})
 PAIR_BRANCH_LOSS_MODES = frozenset({"branch_pair"})
 CYCLE_LOSS_MODES = frozenset({"conditional_cycle"})
+ENDPOINT_LOSS_MODES = frozenset({"conditional_endpoint"})
 PAIR_ADAPTER_MODES = CFG_PAIR_MODES | PAIR_BRANCH_LOSS_MODES
 CFG_REQUIRED_MODES = (
     CFG_LOSS_MODES | CFG_SINGLE_PASS_MODES | SHARED_BRANCH_LOSS_MODES | PAIR_BRANCH_LOSS_MODES
 )
-TRAINING_TARGET_MODES = CFG_REQUIRED_MODES | CYCLE_LOSS_MODES | {"conditional", "unconditional"}
+TRAINING_TARGET_MODES = CFG_REQUIRED_MODES | CYCLE_LOSS_MODES | ENDPOINT_LOSS_MODES | {"conditional", "unconditional"}
 CFG_BRANCH_TARGET_MODES = CFG_REQUIRED_MODES | {"unconditional"}
 NEGATIVE_CONDITIONING_MODES = (
     CFG_LOSS_MODES | SHARED_BRANCH_LOSS_MODES | PAIR_BRANCH_LOSS_MODES | {"unconditional"}
@@ -148,6 +151,8 @@ class SDXLInversionTrainer:
         )
         if self.training_target_mode in CYCLE_LOSS_MODES:
             logger.info("Cycle reconstruction weight: {}", self.recon_lambda)
+        if self.training_target_mode in ENDPOINT_LOSS_MODES:
+            self._write_endpoint_manifest()
 
     def train(
         self,
@@ -242,7 +247,6 @@ class SDXLInversionTrainer:
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         x_clean = batch["x_clean"].to(device=self.model.device, dtype=self.model.dtype)
         timestep = batch["timestep"].to(device=self.model.device)
-        target_eps = batch["target_eps"].to(device=self.model.device, dtype=self.model.dtype)
         prompt_embeds = batch["prompt_embeds"].to(
             device=self.model.device,
             dtype=self.model.dtype,
@@ -259,6 +263,24 @@ class SDXLInversionTrainer:
 
         scheduler_timesteps = self._scheduler_timesteps(timestep, batch_size=x_clean.shape[0])
 
+        if self.training_target_mode in ENDPOINT_LOSS_MODES:
+            target_endpoint = self._required_tensor(batch, "target_endpoint").to(
+                device=self.model.device, dtype=self.model.dtype
+            )
+            terminal_timestep = self._required_tensor(batch, "terminal_timestep").to(
+                device=self.model.device
+            )
+            return self._forward_endpoint_loss(
+                x_clean=x_clean,
+                input_timesteps=scheduler_timesteps,
+                terminal_timesteps=terminal_timestep,
+                prompt_embeds=prompt_embeds,
+                pooled_prompt_embeds=pooled_prompt_embeds,
+                add_time_ids=add_time_ids,
+                target_endpoint=target_endpoint,
+            )
+
+        target_eps = batch["target_eps"].to(device=self.model.device, dtype=self.model.dtype)
         target_eps_uncond = None
         if self.training_target_mode in CFG_BRANCH_TARGET_MODES:
             target_eps_uncond = self._required_tensor(batch, "target_eps_uncond").to(
@@ -392,6 +414,66 @@ class SDXLInversionTrainer:
             "loss": loss,
             "loss_cond": loss,
         }
+
+    def _forward_endpoint_loss(
+        self,
+        *,
+        x_clean: torch.Tensor,
+        input_timesteps: torch.Tensor,
+        terminal_timesteps: torch.Tensor,
+        prompt_embeds: torch.Tensor,
+        pooled_prompt_embeds: torch.Tensor | None,
+        add_time_ids: torch.Tensor | None,
+        target_endpoint: torch.Tensor,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        schedule = self.pipe.scheduler.timesteps.to(device=x_clean.device, dtype=torch.long)
+        terminal = terminal_timesteps.flatten().to(device=x_clean.device, dtype=torch.long)
+        input_t = input_timesteps.flatten().to(device=x_clean.device, dtype=torch.long)
+        expected_terminal = schedule[0]
+        expected_input = schedule[-1]
+        if not bool(torch.all(terminal == expected_terminal).item()):
+            raise ValueError(
+                f"Endpoint terminal timestep must equal active schedule start {int(expected_terminal)}, "
+                f"got {terminal.detach().cpu().unique().tolist()}."
+            )
+        if not bool(torch.all(input_t == expected_input).item()):
+            raise ValueError(
+                f"Endpoint input timestep must equal active schedule end {int(expected_input)}, "
+                f"got {input_t.detach().cpu().unique().tolist()}."
+            )
+        student_eps = self.predict_noise(
+            x_clean, input_t, prompt_embeds, pooled_prompt_embeds, add_time_ids
+        )
+        predicted_endpoint = endpoint_latent_from_noise(
+            x_clean, student_eps, terminal, self.pipe.scheduler
+        )
+        target_eps = endpoint_noise_target(
+            x_clean, target_endpoint, terminal, self.pipe.scheduler
+        )
+        loss_endpoint = F.mse_loss(predicted_endpoint.float(), target_endpoint.float())
+        loss_eps = F.mse_loss(student_eps.float(), target_eps.float())
+        return loss_endpoint, {
+            "loss": loss_endpoint,
+            "loss_endpoint": loss_endpoint,
+            "loss_endpoint_eps": loss_eps,
+            "terminal_timestep": terminal.float().mean(),
+        }
+
+    def _write_endpoint_manifest(self) -> None:
+        schedule = self.pipe.scheduler.timesteps.detach().cpu().tolist()
+        manifest = {
+            "inversion_mode": "one_step_endpoint",
+            "model_id": str(getattr(self.pipe, "_name_or_path", "unknown")),
+            "num_inference_steps": len(schedule),
+            "input_timestep": int(schedule[-1]),
+            "terminal_timestep": int(schedule[0]),
+            "adapter_mode": "conditional_single",
+            "formula": "z_terminal = sqrt(alpha_terminal) * z0 + sqrt(1-alpha_terminal) * eps_hat",
+        }
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        path = self.checkpoint_dir / "one_step_endpoint_manifest.json"
+        path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        logger.info("One-step endpoint manifest saved to {}", path)
 
     def _forward_loss_regularized(
         self,
@@ -1290,7 +1372,7 @@ class SDXLInversionTrainer:
         if mode not in TRAINING_TARGET_MODES:
             raise ValueError(
                 "training_target.mode must be 'conditional', 'unconditional', "
-                "'conditional_cycle', 'cfg', 'cfg_single_pass', 'cfg_pair', "
+                "'conditional_cycle', 'conditional_endpoint', 'cfg', 'cfg_single_pass', 'cfg_pair', "
                 f"'branch_pair_shared', or 'branch_pair', got {value!r}."
             )
         return mode
@@ -1426,6 +1508,8 @@ def build_train_sampler(
     mode = str(sampling_cfg.get("mode", "uniform")) if sampling_cfg is not None else "uniform"
     if mode == "uniform":
         return None
+    if getattr(dataset, "sample_mode", "transition") == "endpoint":
+        raise ValueError("Endpoint training supports sampling.mode=uniform only.")
     if mode != "final_tail":
         raise ValueError(f"Unknown training sampling mode: {mode!r}.")
     final_step_fraction = sampling_cfg.get("final_step_fraction")
@@ -1564,6 +1648,8 @@ def main(cfg: DictConfig) -> None:
         target_uncond_eps_file_name=str(cfg.data.target_uncond_eps_file_name),
         load_cfg_branch_targets=training_target_mode in CFG_BRANCH_TARGET_MODES,
         require_training_cache=cfg.data.require_training_cache,
+        require_target_eps=training_target_mode not in ENDPOINT_LOSS_MODES,
+        sample_mode=("endpoint" if training_target_mode in ENDPOINT_LOSS_MODES else "transition"),
     )
     val_dataset = LatentTrajectoryDataset(
         val_roots,
@@ -1574,9 +1660,12 @@ def main(cfg: DictConfig) -> None:
         target_uncond_eps_file_name=str(cfg.data.target_uncond_eps_file_name),
         load_cfg_branch_targets=training_target_mode in CFG_BRANCH_TARGET_MODES,
         require_training_cache=cfg.data.require_training_cache,
+        require_target_eps=training_target_mode not in ENDPOINT_LOSS_MODES,
+        sample_mode=("endpoint" if training_target_mode in ENDPOINT_LOSS_MODES else "transition"),
     )
-    logger.info("Loaded {:,} train transitions", len(train_dataset))
-    logger.info("Loaded {:,} val transitions", len(val_dataset))
+    dataset_unit = "endpoints" if training_target_mode in ENDPOINT_LOSS_MODES else "transitions"
+    logger.info("Loaded {:,} train {}", len(train_dataset), dataset_unit)
+    logger.info("Loaded {:,} val {}", len(val_dataset), dataset_unit)
 
     train_generator = torch.Generator()
     train_generator.manual_seed(int(cfg.get("seed", 42)))

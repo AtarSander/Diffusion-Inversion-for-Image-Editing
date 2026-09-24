@@ -2,9 +2,9 @@
 \usepackage[margin=1in]{geometry}
 \usepackage{booktabs}
 \usepackage{graphicx}
-\usepackage{siunitx}
+\usepackage[table]{xcolor}
+\definecolor{cyclelossrow}{RGB}{232,242,255}
 
-\sisetup{detect-weight=true, separate-uncertainty=true, table-number-alignment=center}
 
 \title{Full-FP32 SD1.5 LoRA Inversion Results}
 \date{}
@@ -15,15 +15,17 @@
 \begin{table*}[htbp]
   \centering
   \scriptsize
-  \caption{PIE-Bench results for four editing methods. Original DDIM and
-  DirectInversion values are paper means without standard deviations. For each
+  \caption{PIE-Bench SD1.5 results for four editing methods. The reproduced
+  DDIM and DirectInversion controls and all LoRA rows use SD1.5. For each
   editor, the three uniform rows precede the three final-tail rows. Final-tail
   training assigns 50\% of draws to the final 10\% of every trajectory. Blank
-  cells correspond to training runs that have not yet completed. Bold marks the
-  best reported result within each editor. Underlining marks an experimental
-  result that is better than the paper's original DirectInv value for the same
-  editor and metric. Structure distance and LPIPS are scaled by $\times 10^3$,
-  MSE by $\times 10^4$, and SSIM by $\times 10^2$.}
+  cells correspond to training runs that have not yet completed. Dashes mark
+  the SD1.5 DDIM + Pix2Pix-Zero control, which timed out before producing
+  images. Bold marks the best reported result within each editor. Underlining
+  marks an experimental result that is better than the reproduced SD1.5
+  DirectInv value for the same editor and metric. Structure distance and LPIPS
+  are scaled by $\times 10^3$, MSE by $\times 10^4$, and SSIM by
+  $\times 10^2$.}
   \label{tab:fp32-lora-directinv-all-editors}
   \resizebox{\textwidth}{!}{%
   \begin{tabular}{llll rrrrrrr}
@@ -34,41 +36,41 @@
     SSIM ($\times 10^2$) $\uparrow$ & CLIP target $\uparrow$ &
     CLIP target (edit) $\uparrow$ \tabularnewline
     \midrule
-    P2P & Paper original & DDIM & -- & $69.43$ & $17.87$ & $208.80$ & $219.88$ & $71.14$ & $25.01$ & $\mathbf{22.44}$ \tabularnewline
-    P2P & Paper original & DirectInv & -- & $\mathbf{11.65}$ & $\mathbf{27.22}$ & $\mathbf{54.55}$ & $\mathbf{32.86}$ & $\mathbf{84.76}$ & $25.02$ & $22.10$ \tabularnewline
-    P2P & Uniform & LoRA r8 & 4 & $14.12 \pm 11.68$ & $26.02 \pm 5.36$ & $73.25 \pm 52.90$ & $44.40 \pm 47.79$ & $83.50 \pm 12.44$ & $\underline{25.33 \pm 3.79}$ & $\underline{22.31 \pm 4.87}$ \tabularnewline
-    P2P & Uniform & LoRA r16 & 8 & $14.17 \pm 11.78$ & $26.01 \pm 5.42$ & $72.98 \pm 50.27$ & $43.99 \pm 45.35$ & $83.51 \pm 12.24$ & $\underline{25.29 \pm 3.85}$ & $\underline{22.40 \pm 4.86}$ \tabularnewline
-    P2P & Uniform & LoRA r32 & 16 & & & & & & & \tabularnewline
-    P2P & Final-tail & LoRA r8 & 4 & $14.27 \pm 11.73$ & $25.95 \pm 5.30$ & $72.48 \pm 49.20$ & $44.31 \pm 46.18$ & $83.55 \pm 12.13$ & $\underline{\mathbf{25.35 \pm 3.77}}$ & $\underline{22.37 \pm 4.85}$ \tabularnewline
-    P2P & Final-tail & LoRA r16 & 8 & & & & & & & \tabularnewline
-    P2P & Final-tail & LoRA r32 & 16 & $14.37 \pm 11.71$ & $25.92 \pm 5.38$ & $74.82 \pm 53.07$ & $45.35 \pm 48.56$ & $83.34 \pm 12.37$ & $\underline{25.31 \pm 3.83}$ & $\underline{22.33 \pm 4.86}$ \tabularnewline
+    P2P & SD1.5 reproduced & DDIM & -- & $70.50 \pm 38.97$ & $17.84 \pm 3.93$ & $210.15 \pm 107.16$ & $220.28 \pm 145.34$ & $71.56 \pm 15.89$ & $25.19 \pm 3.68$ & $22.39 \pm 4.48$ \tabularnewline
+    P2P & SD1.5 reproduced & DirectInv & -- & $31.35 \pm 25.29$ & $22.57 \pm 5.10$ & $125.51 \pm 82.42$ & $91.27 \pm 85.39$ & $78.54 \pm 14.04$ & $25.07 \pm 3.79$ & $22.22 \pm 4.79$ \tabularnewline
+    P2P & Uniform & LoRA+DirectInv r8 & 4 & $\underline{\mathbf{14.12 \pm 11.68}}$ & $\underline{\mathbf{26.02 \pm 5.36}}$ & $\underline{73.25 \pm 52.90}$ & $\underline{44.40 \pm 47.79}$ & $\underline{83.50 \pm 12.44}$ & $\underline{25.33 \pm 3.79}$ & $\underline{22.31 \pm 4.87}$ \tabularnewline
+    P2P & Uniform & LoRA+DirectInv r16 & 8 & $\underline{14.17 \pm 11.78}$ & $\underline{26.01 \pm 5.42}$ & $\underline{72.98 \pm 50.27}$ & $\underline{\mathbf{43.99 \pm 45.35}}$ & $\underline{83.51 \pm 12.24}$ & $\underline{25.29 \pm 3.85}$ & $\underline{\mathbf{22.40 \pm 4.86}}$ \tabularnewline
+    P2P & Uniform & LoRA+DirectInv r32 & 16 &  &  &  &  &  &  &  \tabularnewline
+    P2P & Final-tail & LoRA+DirectInv r8 & 4 & $\underline{14.27 \pm 11.73}$ & $\underline{25.95 \pm 5.30}$ & $\underline{\mathbf{72.48 \pm 49.20}}$ & $\underline{44.31 \pm 46.18}$ & $\underline{\mathbf{83.55 \pm 12.13}}$ & $\underline{\mathbf{25.35 \pm 3.77}}$ & $\underline{22.37 \pm 4.85}$ \tabularnewline
+    P2P & Final-tail & LoRA+DirectInv r16 & 8 &  &  &  &  &  &  &  \tabularnewline
+    P2P & Final-tail & LoRA+DirectInv r32 & 16 & $\underline{14.37 \pm 11.71}$ & $\underline{25.92 \pm 5.38}$ & $\underline{74.82 \pm 53.07}$ & $\underline{45.35 \pm 48.56}$ & $\underline{83.34 \pm 12.37}$ & $\underline{25.31 \pm 3.83}$ & $\underline{22.33 \pm 4.86}$ \tabularnewline
     \midrule
-    PnP & Paper original & DDIM & -- & $28.22$ & $22.28$ & $113.46$ & $83.64$ & $79.05$ & $25.41$ & $22.55$ \tabularnewline
-    PnP & Paper original & DirectInv & -- & $24.29$ & $\mathbf{22.46}$ & $\mathbf{106.06}$ & $\mathbf{80.45}$ & $79.68$ & $25.41$ & $22.62$ \tabularnewline
-    PnP & Uniform & LoRA r8 & 4 & $\underline{\mathbf{24.27 \pm 20.09}}$ & $22.37 \pm 4.49$ & $110.17 \pm 62.58$ & $81.82 \pm 60.23$ & $\underline{79.90 \pm 12.80}$ & $\underline{25.83 \pm 3.73}$ & $\underline{22.85 \pm 4.84}$ \tabularnewline
-    PnP & Uniform & LoRA r16 & 8 & $24.32 \pm 20.11$ & $22.37 \pm 4.48$ & $110.15 \pm 62.53$ & $81.75 \pm 60.23$ & $\underline{\mathbf{79.90 \pm 12.81}}$ & $\underline{25.79 \pm 3.73}$ & $\underline{22.82 \pm 4.86}$ \tabularnewline
-    PnP & Uniform & LoRA r32 & 16 & & & & & & & \tabularnewline
-    PnP & Final-tail & LoRA r8 & 4 & $24.54 \pm 21.13$ & $22.38 \pm 4.45$ & $110.40 \pm 62.45$ & $81.40 \pm 59.74$ & $\underline{79.88 \pm 12.78}$ & $\underline{\mathbf{25.85 \pm 3.74}}$ & $\underline{22.88 \pm 4.88}$ \tabularnewline
-    PnP & Final-tail & LoRA r16 & 8 & & & & & & & \tabularnewline
-    PnP & Final-tail & LoRA r32 & 16 & $24.43 \pm 20.80$ & $22.36 \pm 4.46$ & $110.82 \pm 62.81$ & $81.83 \pm 60.02$ & $\underline{79.88 \pm 12.80}$ & $\underline{25.82 \pm 3.71}$ & $\underline{\mathbf{22.89 \pm 4.85}}$ \tabularnewline
+    PnP & SD1.5 reproduced & DDIM & -- & $27.32 \pm 24.59$ & $22.31 \pm 4.50$ & $112.76 \pm 64.87$ & $82.98 \pm 60.97$ & $79.58 \pm 12.90$ & $25.59 \pm 3.73$ & $22.57 \pm 4.86$ \tabularnewline
+    PnP & SD1.5 reproduced & DirectInv & -- & $\mathbf{23.33 \pm 20.19}$ & $\mathbf{22.46 \pm 4.34}$ & $\mathbf{105.51 \pm 59.90}$ & $\mathbf{79.97 \pm 59.13}$ & $\mathbf{80.22 \pm 12.76}$ & $25.63 \pm 3.78$ & $22.67 \pm 4.89$ \tabularnewline
+    PnP & Uniform & LoRA+DirectInv r8 & 4 & $24.27 \pm 20.09$ & $22.37 \pm 4.49$ & $110.17 \pm 62.58$ & $81.82 \pm 60.23$ & $79.90 \pm 12.80$ & $\underline{25.83 \pm 3.73}$ & $\underline{22.85 \pm 4.84}$ \tabularnewline
+    PnP & Uniform & LoRA+DirectInv r16 & 8 & $24.32 \pm 20.11$ & $22.37 \pm 4.48$ & $110.15 \pm 62.53$ & $81.75 \pm 60.23$ & $79.90 \pm 12.81$ & $\underline{25.79 \pm 3.73}$ & $\underline{22.82 \pm 4.86}$ \tabularnewline
+    PnP & Uniform & LoRA+DirectInv r32 & 16 &  &  &  &  &  &  &  \tabularnewline
+    PnP & Final-tail & LoRA+DirectInv r8 & 4 & $24.54 \pm 21.13$ & $22.38 \pm 4.45$ & $110.40 \pm 62.45$ & $81.40 \pm 59.74$ & $79.88 \pm 12.78$ & $\underline{\mathbf{25.85 \pm 3.74}}$ & $\underline{22.88 \pm 4.88}$ \tabularnewline
+    PnP & Final-tail & LoRA+DirectInv r16 & 8 &  &  &  &  &  &  &  \tabularnewline
+    PnP & Final-tail & LoRA+DirectInv r32 & 16 & $24.43 \pm 20.80$ & $22.36 \pm 4.46$ & $110.82 \pm 62.81$ & $81.83 \pm 60.02$ & $79.88 \pm 12.80$ & $\underline{25.82 \pm 3.71}$ & $\underline{\mathbf{22.89 \pm 4.85}}$ \tabularnewline
     \midrule
-    MasaCtrl & Paper original & DDIM & -- & $28.38$ & $22.17$ & $106.62$ & $86.97$ & $79.67$ & $23.96$ & $21.16$ \tabularnewline
-    MasaCtrl & Paper original & DirectInv & -- & $\mathbf{24.70}$ & $\mathbf{22.64}$ & $\mathbf{87.94}$ & $\mathbf{81.09}$ & $\mathbf{81.33}$ & $24.38$ & $21.35$ \tabularnewline
-    MasaCtrl & Uniform & LoRA r8 & 4 & $28.58 \pm 21.67$ & $21.90 \pm 4.93$ & $99.01 \pm 58.73$ & $99.13 \pm 84.36$ & $80.49 \pm 12.73$ & $\underline{24.61 \pm 3.65}$ & $\underline{\mathbf{21.50 \pm 4.64}}$ \tabularnewline
-    MasaCtrl & Uniform & LoRA r16 & 8 & $28.47 \pm 21.63$ & $21.91 \pm 4.93$ & $98.89 \pm 58.83$ & $98.90 \pm 84.73$ & $80.52 \pm 12.72$ & $\underline{24.61 \pm 3.63}$ & $\underline{21.48 \pm 4.67}$ \tabularnewline
-    MasaCtrl & Uniform & LoRA r32 & 16 & & & & & & & \tabularnewline
-    MasaCtrl & Final-tail & LoRA r8 & 4 & $28.38 \pm 21.57$ & $21.93 \pm 4.93$ & $98.72 \pm 58.55$ & $98.66 \pm 84.98$ & $80.54 \pm 12.70$ & $\underline{\mathbf{24.64 \pm 3.65}}$ & $\underline{21.46 \pm 4.61}$ \tabularnewline
-    MasaCtrl & Final-tail & LoRA r16 & 8 & & & & & & & \tabularnewline
-    MasaCtrl & Final-tail & LoRA r32 & 16 & $28.33 \pm 21.04$ & $21.88 \pm 4.87$ & $98.96 \pm 58.38$ & $99.32 \pm 85.64$ & $80.49 \pm 12.71$ & $\underline{24.59 \pm 3.63}$ & $\underline{21.49 \pm 4.71}$ \tabularnewline
+    MasaCtrl & SD1.5 reproduced & DDIM & -- & $27.68 \pm 21.08$ & $22.32 \pm 4.52$ & $105.51 \pm 60.03$ & $84.69 \pm 66.87$ & $80.41 \pm 12.65$ & $24.16 \pm 3.86$ & $21.20 \pm 4.71$ \tabularnewline
+    MasaCtrl & SD1.5 reproduced & DirectInv & -- & $\mathbf{23.57 \pm 19.02}$ & $\mathbf{22.82 \pm 4.87}$ & $\mathbf{86.83 \pm 51.98}$ & $\mathbf{79.19 \pm 67.20}$ & $\mathbf{82.02 \pm 12.22}$ & $24.51 \pm 3.66$ & $21.47 \pm 4.61$ \tabularnewline
+    MasaCtrl & Uniform & LoRA+DirectInv r8 & 4 & $28.58 \pm 21.67$ & $21.90 \pm 4.93$ & $99.01 \pm 58.73$ & $99.13 \pm 84.36$ & $80.49 \pm 12.73$ & $\underline{24.61 \pm 3.65}$ & $\underline{\mathbf{21.50 \pm 4.64}}$ \tabularnewline
+    MasaCtrl & Uniform & LoRA+DirectInv r16 & 8 & $28.47 \pm 21.63$ & $21.91 \pm 4.93$ & $98.89 \pm 58.83$ & $98.90 \pm 84.73$ & $80.52 \pm 12.72$ & $\underline{24.61 \pm 3.63}$ & $\underline{21.48 \pm 4.67}$ \tabularnewline
+    MasaCtrl & Uniform & LoRA+DirectInv r32 & 16 &  &  &  &  &  &  &  \tabularnewline
+    MasaCtrl & Final-tail & LoRA+DirectInv r8 & 4 & $28.38 \pm 21.57$ & $21.93 \pm 4.93$ & $98.72 \pm 58.55$ & $98.66 \pm 84.98$ & $80.54 \pm 12.70$ & $\underline{\mathbf{24.64 \pm 3.65}}$ & $21.46 \pm 4.61$ \tabularnewline
+    MasaCtrl & Final-tail & LoRA+DirectInv r16 & 8 &  &  &  &  &  &  &  \tabularnewline
+    MasaCtrl & Final-tail & LoRA+DirectInv r32 & 16 & $28.33 \pm 21.04$ & $21.88 \pm 4.87$ & $98.96 \pm 58.38$ & $99.32 \pm 85.64$ & $80.49 \pm 12.71$ & $\underline{24.59 \pm 3.63}$ & $\underline{21.49 \pm 4.71}$ \tabularnewline
     \midrule
-    Pix2Pix-Zero & Paper original & DDIM & -- & $61.68$ & $20.44$ & $172.22$ & $144.12$ & $74.67$ & $22.80$ & $20.54$ \tabularnewline
-    Pix2Pix-Zero & Paper original & DirectInv & -- & $\mathbf{49.22}$ & $\mathbf{21.53}$ & $\mathbf{138.98}$ & $\mathbf{127.32}$ & $77.05$ & $23.31$ & $\mathbf{21.05}$ \tabularnewline
-    Pix2Pix-Zero & Uniform & LoRA r8 & 4 & $52.60 \pm 52.68$ & $21.31 \pm 5.45$ & $144.57 \pm 115.49$ & $136.29 \pm 157.55$ & $\underline{77.14 \pm 15.42}$ & $\underline{23.37 \pm 4.38}$ & $20.96 \pm 4.68$ \tabularnewline
-    Pix2Pix-Zero & Uniform & LoRA r16 & 8 & $51.63 \pm 50.83$ & $21.25 \pm 5.48$ & $147.07 \pm 117.89$ & $137.65 \pm 153.16$ & $76.94 \pm 15.62$ & $\underline{23.39 \pm 4.35}$ & $20.95 \pm 4.64$ \tabularnewline
-    Pix2Pix-Zero & Uniform & LoRA r32 & 16 & & & & & & & \tabularnewline
-    Pix2Pix-Zero & Final-tail & LoRA r8 & 4 & $51.67 \pm 51.06$ & $21.33 \pm 5.43$ & $144.87 \pm 117.21$ & $135.70 \pm 153.36$ & $\underline{\mathbf{77.15 \pm 15.58}}$ & $\underline{\mathbf{23.56 \pm 4.29}}$ & $21.01 \pm 4.67$ \tabularnewline
-    Pix2Pix-Zero & Final-tail & LoRA r16 & 8 & & & & & & & \tabularnewline
-    Pix2Pix-Zero & Final-tail & LoRA r32 & 16 & $52.21 \pm 52.25$ & $21.19 \pm 5.50$ & $147.18 \pm 118.65$ & $141.80 \pm 163.40$ & $76.91 \pm 15.77$ & $\underline{23.32 \pm 4.31}$ & $20.96 \pm 4.79$ \tabularnewline
+    Pix2Pix-Zero & SD1.5 reproduced & DDIM & -- & -- & -- & -- & -- & -- & -- & -- \tabularnewline
+    Pix2Pix-Zero & SD1.5 reproduced & DirectInv & -- & $\mathbf{49.99 \pm 51.39}$ & $\mathbf{21.47 \pm 5.49}$ & $\mathbf{142.46 \pm 115.06}$ & $\mathbf{133.49 \pm 154.49}$ & $\mathbf{77.49 \pm 15.64}$ & $23.53 \pm 4.40$ & $\mathbf{21.09 \pm 4.77}$ \tabularnewline
+    Pix2Pix-Zero & Uniform & LoRA+DirectInv r8 & 4 & $52.60 \pm 52.68$ & $21.31 \pm 5.45$ & $144.57 \pm 115.49$ & $136.29 \pm 157.55$ & $77.14 \pm 15.42$ & $23.37 \pm 4.38$ & $20.96 \pm 4.68$ \tabularnewline
+    Pix2Pix-Zero & Uniform & LoRA+DirectInv r16 & 8 & $51.63 \pm 50.83$ & $21.25 \pm 5.48$ & $147.07 \pm 117.89$ & $137.65 \pm 153.16$ & $76.94 \pm 15.62$ & $23.39 \pm 4.35$ & $20.95 \pm 4.64$ \tabularnewline
+    Pix2Pix-Zero & Uniform & LoRA+DirectInv r32 & 16 &  &  &  &  &  &  &  \tabularnewline
+    Pix2Pix-Zero & Final-tail & LoRA+DirectInv r8 & 4 & $51.67 \pm 51.06$ & $21.33 \pm 5.43$ & $144.87 \pm 117.21$ & $135.70 \pm 153.36$ & $77.15 \pm 15.58$ & $\underline{\mathbf{23.56 \pm 4.29}}$ & $21.01 \pm 4.67$ \tabularnewline
+    Pix2Pix-Zero & Final-tail & LoRA+DirectInv r16 & 8 &  &  &  &  &  &  &  \tabularnewline
+    Pix2Pix-Zero & Final-tail & LoRA+DirectInv r32 & 16 & $52.21 \pm 52.25$ & $21.19 \pm 5.50$ & $147.18 \pm 118.65$ & $141.80 \pm 163.40$ & $76.91 \pm 15.77$ & $23.32 \pm 4.31$ & $20.96 \pm 4.79$ \tabularnewline
     \bottomrule
   \end{tabular}
   }
@@ -79,17 +81,18 @@
   \centering
   \scriptsize
   \caption{Comparison of the completed corrected branch-pair CFG1 and standard
-  CFG2.5 experiments against the paper references and the best completed
-  standard CFG1 uniform and final-tail configurations. The representative
-  uniform and final-tail configurations are selected independently for each
-  editor by lowest structure distance; every cell in a row comes from that
-  single configuration. CFG2.5 rows use inversion guidance 2.5. Branch-pair
-  rows use separately loaded conditional and unconditional adapters, inversion
-  guidance 1.0, and Direct Inversion. Bold marks the best value across all shown
-  rows within each editor. Underlining marks an experimental result that is
-  better than the paper's original DirectInv value for the same editor and
-  metric. Structure distance and LPIPS are scaled by $\times 10^3$, MSE by
-  $\times 10^4$, and SSIM by $\times 10^2$.}
+  CFG2.5 experiments against the reproduced SD1.5 controls and the best
+  completed standard CFG1 uniform and final-tail configurations. All rows use
+  SD1.5. The representative uniform and final-tail configurations are selected
+  independently for each editor by lowest structure distance; every cell in a
+  row comes from that single configuration. CFG2.5 rows use inversion guidance
+  2.5. Branch-pair rows use separately loaded conditional and unconditional
+  adapters, inversion guidance 1.0, and Direct Inversion. Bold marks the best
+  value across all shown rows within each editor. Underlining marks an
+  experimental result that is better than the reproduced SD1.5 DirectInv value
+  for the same editor and metric. Dashes mark the unavailable SD1.5 DDIM +
+  Pix2Pix-Zero control. Structure distance and LPIPS are scaled by
+  $\times 10^3$, MSE by $\times 10^4$, and SSIM by $\times 10^2$.}
   \label{tab:cfg-branchpair-comparison}
   \resizebox{\textwidth}{!}{%
   \begin{tabular}{llll rrrrrrr}
@@ -100,34 +103,34 @@
     SSIM ($\times 10^2$) $\uparrow$ & CLIP target $\uparrow$ &
     CLIP target (edit) $\uparrow$ \tabularnewline
     \midrule
-    P2P & Paper original & DDIM & -- & $69.43$ & $17.87$ & $208.80$ & $219.88$ & $71.14$ & $25.01$ & $22.44$ \tabularnewline
-    P2P & Paper original & DirectInv & -- & $\mathbf{11.65}$ & $\mathbf{27.22}$ & $\mathbf{54.55}$ & $\mathbf{32.86}$ & $\mathbf{84.76}$ & $25.02$ & $22.10$ \tabularnewline
-    P2P & Best uniform CFG1 & LoRA r8 & 4 & $14.12 \pm 11.68$ & $26.02 \pm 5.36$ & $73.25 \pm 52.90$ & $44.40 \pm 47.79$ & $83.50 \pm 12.44$ & $\underline{25.33 \pm 3.79}$ & $\underline{22.31 \pm 4.87}$ \tabularnewline
-    P2P & Best final-tail CFG1 & LoRA r8 & 4 & $14.27 \pm 11.73$ & $25.95 \pm 5.30$ & $72.48 \pm 49.20$ & $44.31 \pm 46.18$ & $83.55 \pm 12.13$ & $\underline{\mathbf{25.35 \pm 3.77}}$ & $\underline{22.37 \pm 4.85}$ \tabularnewline
+    P2P & SD1.5 reproduced & DDIM & -- & $70.50 \pm 38.97$ & $17.84 \pm 3.93$ & $210.15 \pm 107.16$ & $220.28 \pm 145.34$ & $71.56 \pm 15.89$ & $25.19 \pm 3.68$ & $22.39 \pm 4.48$ \tabularnewline
+    P2P & SD1.5 reproduced & DirectInv & -- & $31.35 \pm 25.29$ & $22.57 \pm 5.10$ & $125.51 \pm 82.42$ & $91.27 \pm 85.39$ & $78.54 \pm 14.04$ & $25.07 \pm 3.79$ & $22.22 \pm 4.79$ \tabularnewline
+    P2P & Best uniform CFG1 & LoRA+DirectInv r8 & 4 & $\underline{\mathbf{14.12 \pm 11.68}}$ & $\underline{\mathbf{26.02 \pm 5.36}}$ & $\underline{73.25 \pm 52.90}$ & $\underline{44.40 \pm 47.79}$ & $\underline{83.50 \pm 12.44}$ & $\underline{25.33 \pm 3.79}$ & $\underline{22.31 \pm 4.87}$ \tabularnewline
+    P2P & Best final-tail CFG1 & LoRA+DirectInv r8 & 4 & $\underline{14.27 \pm 11.73}$ & $\underline{25.95 \pm 5.30}$ & $\underline{\mathbf{72.48 \pm 49.20}}$ & $\underline{\mathbf{44.31 \pm 46.18}}$ & $\underline{\mathbf{83.55 \pm 12.13}}$ & $\underline{\mathbf{25.35 \pm 3.77}}$ & $\underline{22.37 \pm 4.85}$ \tabularnewline
     P2P & Branch-pair CFG1 & LoRA+DirectInv r8 & 4 & $199.60 \pm 145.24$ & $15.63 \pm 6.33$ & $374.03 \pm 224.61$ & $501.94 \pm 419.94$ & $62.97 \pm 21.21$ & $15.95 \pm 5.05$ & $16.15 \pm 4.56$ \tabularnewline
     P2P & Branch-pair CFG1 & LoRA+DirectInv r16 & 8 & $178.54 \pm 121.54$ & $15.71 \pm 6.57$ & $357.96 \pm 211.65$ & $502.96 \pm 426.17$ & $59.61 \pm 22.91$ & $16.61 \pm 5.03$ & $16.55 \pm 4.55$ \tabularnewline
     P2P & CFG2.5 uniform & LoRA r8 & 4 & $71.55 \pm 41.14$ & $17.91 \pm 3.97$ & $211.94 \pm 108.19$ & $217.15 \pm 143.27$ & $71.80 \pm 15.86$ & $\underline{25.30 \pm 3.68}$ & $\underline{\mathbf{22.52 \pm 4.51}}$ \tabularnewline
     P2P & CFG2.5 uniform & LoRA r16 & 8 & $71.84 \pm 41.54$ & $17.90 \pm 3.97$ & $212.48 \pm 108.77$ & $218.15 \pm 145.37$ & $71.81 \pm 15.90$ & $\underline{25.26 \pm 3.67}$ & $\underline{22.45 \pm 4.53}$ \tabularnewline
-    P2P & CFG2.5 uniform & LoRA+DirectInv r8 & 4 & $15.93 \pm 14.92$ & $25.70 \pm 5.51$ & $81.20 \pm 58.56$ & $48.01 \pm 50.79$ & $82.78 \pm 12.69$ & $\underline{25.11 \pm 3.88}$ & $\underline{22.23 \pm 4.90}$ \tabularnewline
-    P2P & CFG2.5 uniform & LoRA+DirectInv r16 & 8 & $16.01 \pm 15.55$ & $25.57 \pm 5.27$ & $81.83 \pm 57.95$ & $48.72 \pm 52.43$ & $82.79 \pm 12.54$ & $\underline{25.22 \pm 3.96}$ & $\underline{22.24 \pm 4.97}$ \tabularnewline
-    P2P & CFG2.5 uniform & LoRA+DirectInv r32 & 16 & $16.21 \pm 15.69$ & $25.60 \pm 5.47$ & $82.51 \pm 59.85$ & $49.53 \pm 55.11$ & $82.66 \pm 12.79$ & $\underline{25.21 \pm 3.95}$ & $\underline{22.29 \pm 4.90}$ \tabularnewline
+    P2P & CFG2.5 uniform & LoRA+DirectInv r8 & 4 & $\underline{15.93 \pm 14.92}$ & $\underline{25.70 \pm 5.51}$ & $\underline{81.20 \pm 58.56}$ & $\underline{48.01 \pm 50.79}$ & $\underline{82.78 \pm 12.69}$ & $\underline{25.11 \pm 3.88}$ & $\underline{22.23 \pm 4.90}$ \tabularnewline
+    P2P & CFG2.5 uniform & LoRA+DirectInv r16 & 8 & $\underline{16.01 \pm 15.55}$ & $\underline{25.57 \pm 5.27}$ & $\underline{81.83 \pm 57.95}$ & $\underline{48.72 \pm 52.43}$ & $\underline{82.79 \pm 12.54}$ & $\underline{25.22 \pm 3.96}$ & $\underline{22.24 \pm 4.97}$ \tabularnewline
+    P2P & CFG2.5 uniform & LoRA+DirectInv r32 & 16 & $\underline{16.21 \pm 15.69}$ & $\underline{25.60 \pm 5.47}$ & $\underline{82.51 \pm 59.85}$ & $\underline{49.53 \pm 55.11}$ & $\underline{82.66 \pm 12.79}$ & $\underline{25.21 \pm 3.95}$ & $\underline{22.29 \pm 4.90}$ \tabularnewline
     \midrule
-    PnP & Paper original & DDIM & -- & $28.22$ & $22.28$ & $113.46$ & $83.64$ & $79.05$ & $25.41$ & $22.55$ \tabularnewline
-    PnP & Paper original & DirectInv & -- & $24.29$ & $22.46$ & $106.06$ & $80.45$ & $79.68$ & $25.41$ & $22.62$ \tabularnewline
-    PnP & Best uniform CFG1 & LoRA r8 & 4 & $\underline{24.27 \pm 20.09}$ & $22.37 \pm 4.49$ & $110.17 \pm 62.58$ & $81.82 \pm 60.23$ & $\underline{79.90 \pm 12.80}$ & $\underline{\mathbf{25.83 \pm 3.73}}$ & $\underline{22.85 \pm 4.84}$ \tabularnewline
-    PnP & Best final-tail CFG1 & LoRA r32 & 16 & $24.43 \pm 20.80$ & $22.36 \pm 4.46$ & $110.82 \pm 62.81$ & $81.83 \pm 60.02$ & $\underline{79.88 \pm 12.80}$ & $\underline{25.82 \pm 3.71}$ & $\underline{\mathbf{22.89 \pm 4.85}}$ \tabularnewline
+    PnP & SD1.5 reproduced & DDIM & -- & $27.32 \pm 24.59$ & $22.31 \pm 4.50$ & $112.76 \pm 64.87$ & $82.98 \pm 60.97$ & $79.58 \pm 12.90$ & $25.59 \pm 3.73$ & $22.57 \pm 4.86$ \tabularnewline
+    PnP & SD1.5 reproduced & DirectInv & -- & $\mathbf{23.33 \pm 20.19}$ & $22.46 \pm 4.34$ & $105.51 \pm 59.90$ & $79.97 \pm 59.13$ & $80.22 \pm 12.76$ & $25.63 \pm 3.78$ & $22.67 \pm 4.89$ \tabularnewline
+    PnP & Best uniform CFG1 & LoRA+DirectInv r8 & 4 & $24.27 \pm 20.09$ & $22.37 \pm 4.49$ & $110.17 \pm 62.58$ & $81.82 \pm 60.23$ & $79.90 \pm 12.80$ & $\underline{\mathbf{25.83 \pm 3.73}}$ & $\underline{22.85 \pm 4.84}$ \tabularnewline
+    PnP & Best final-tail CFG1 & LoRA+DirectInv r32 & 16 & $24.43 \pm 20.80$ & $22.36 \pm 4.46$ & $110.82 \pm 62.81$ & $81.83 \pm 60.02$ & $79.88 \pm 12.80$ & $\underline{25.82 \pm 3.71}$ & $\underline{\mathbf{22.89 \pm 4.85}}$ \tabularnewline
     PnP & Branch-pair CFG1 & LoRA+DirectInv r8 & 4 & $271.82 \pm 160.47$ & $12.07 \pm 3.72$ & $475.18 \pm 212.15$ & $810.72 \pm 487.99$ & $55.82 \pm 20.42$ & $12.26 \pm 3.38$ & $15.28 \pm 4.36$ \tabularnewline
     PnP & Branch-pair CFG1 & LoRA+DirectInv r32 & 16 & $272.46 \pm 158.92$ & $14.06 \pm 3.98$ & $426.96 \pm 208.83$ & $523.24 \pm 347.38$ & $66.40 \pm 18.75$ & $12.78 \pm 3.69$ & $15.71 \pm 4.36$ \tabularnewline
-    PnP & CFG2.5 uniform & LoRA r8 & 4 & $27.29 \pm 25.88$ & $\underline{\mathbf{22.60 \pm 4.61}}$ & $109.23 \pm 62.19$ & $\underline{\mathbf{78.07 \pm 56.51}}$ & $\underline{80.14 \pm 12.78}$ & $\underline{25.60 \pm 3.67}$ & $22.59 \pm 4.83$ \tabularnewline
-    PnP & CFG2.5 uniform & LoRA r16 & 8 & $27.24 \pm 25.73$ & $\underline{22.60 \pm 4.60}$ & $109.61 \pm 62.71$ & $\underline{78.27 \pm 57.06}$ & $\underline{80.13 \pm 12.82}$ & $\underline{25.53 \pm 3.69}$ & $22.54 \pm 4.84$ \tabularnewline
-    PnP & CFG2.5 uniform & LoRA+DirectInv r8 & 4 & $\underline{23.77 \pm 20.03}$ & $\underline{22.59 \pm 4.52}$ & $\underline{104.66 \pm 60.25}$ & $\underline{78.24 \pm 57.77}$ & $\underline{\mathbf{80.52 \pm 12.71}}$ & $\underline{25.62 \pm 3.74}$ & $\underline{22.65 \pm 4.88}$ \tabularnewline
-    PnP & CFG2.5 uniform & LoRA+DirectInv r16 & 8 & $\underline{23.79 \pm 20.27}$ & $\underline{22.57 \pm 4.44}$ & $\underline{104.43 \pm 60.21}$ & $\underline{78.27 \pm 57.91}$ & $\underline{80.47 \pm 12.73}$ & $\underline{25.61 \pm 3.73}$ & $22.62 \pm 4.87$ \tabularnewline
-    PnP & CFG2.5 uniform & LoRA+DirectInv r32 & 16 & $\underline{\mathbf{23.71 \pm 20.25}}$ & $\underline{22.56 \pm 4.45}$ & $\underline{\mathbf{104.37 \pm 60.08}}$ & $\underline{78.48 \pm 58.08}$ & $\underline{80.45 \pm 12.71}$ & $\underline{25.62 \pm 3.69}$ & $\underline{22.64 \pm 4.85}$ \tabularnewline
+    PnP & CFG2.5 uniform & LoRA r8 & 4 & $27.29 \pm 25.88$ & $\underline{\mathbf{22.60 \pm 4.61}}$ & $109.23 \pm 62.19$ & $\underline{\mathbf{78.07 \pm 56.51}}$ & $80.14 \pm 12.78$ & $25.60 \pm 3.67$ & $22.59 \pm 4.83$ \tabularnewline
+    PnP & CFG2.5 uniform & LoRA r16 & 8 & $27.24 \pm 25.73$ & $\underline{\mathbf{22.60 \pm 4.60}}$ & $109.61 \pm 62.71$ & $\underline{78.27 \pm 57.06}$ & $80.13 \pm 12.82$ & $25.53 \pm 3.69$ & $22.54 \pm 4.84$ \tabularnewline
+    PnP & CFG2.5 uniform & LoRA+DirectInv r8 & 4 & $23.77 \pm 20.03$ & $\underline{22.59 \pm 4.52}$ & $\underline{104.66 \pm 60.25}$ & $\underline{78.24 \pm 57.77}$ & $\underline{\mathbf{80.52 \pm 12.71}}$ & $25.62 \pm 3.74$ & $22.65 \pm 4.88$ \tabularnewline
+    PnP & CFG2.5 uniform & LoRA+DirectInv r16 & 8 & $23.79 \pm 20.27$ & $\underline{22.57 \pm 4.44}$ & $\underline{104.43 \pm 60.21}$ & $\underline{78.27 \pm 57.91}$ & $\underline{80.47 \pm 12.73}$ & $25.61 \pm 3.73$ & $22.62 \pm 4.87$ \tabularnewline
+    PnP & CFG2.5 uniform & LoRA+DirectInv r32 & 16 & $23.71 \pm 20.25$ & $\underline{22.56 \pm 4.45}$ & $\underline{\mathbf{104.37 \pm 60.08}}$ & $\underline{78.48 \pm 58.08}$ & $\underline{80.45 \pm 12.71}$ & $25.62 \pm 3.69$ & $22.64 \pm 4.85$ \tabularnewline
     \midrule
-    MasaCtrl & Paper original & DDIM & -- & $28.38$ & $22.17$ & $106.62$ & $86.97$ & $79.67$ & $23.96$ & $21.16$ \tabularnewline
-    MasaCtrl & Paper original & DirectInv & -- & $\mathbf{24.70}$ & $\mathbf{22.64}$ & $\mathbf{87.94}$ & $\mathbf{81.09}$ & $\mathbf{81.33}$ & $24.38$ & $21.35$ \tabularnewline
-    MasaCtrl & Best uniform CFG1 & LoRA r16 & 8 & $28.47 \pm 21.63$ & $21.91 \pm 4.93$ & $98.89 \pm 58.83$ & $98.90 \pm 84.73$ & $80.52 \pm 12.72$ & $\underline{\mathbf{24.61 \pm 3.63}}$ & $\underline{21.48 \pm 4.67}$ \tabularnewline
-    MasaCtrl & Best final-tail CFG1 & LoRA r32 & 16 & $28.33 \pm 21.04$ & $21.88 \pm 4.87$ & $98.96 \pm 58.38$ & $99.32 \pm 85.64$ & $80.49 \pm 12.71$ & $\underline{24.59 \pm 3.63}$ & $\underline{\mathbf{21.49 \pm 4.71}}$ \tabularnewline
+    MasaCtrl & SD1.5 reproduced & DDIM & -- & $27.68 \pm 21.08$ & $22.32 \pm 4.52$ & $105.51 \pm 60.03$ & $84.69 \pm 66.87$ & $80.41 \pm 12.65$ & $24.16 \pm 3.86$ & $21.20 \pm 4.71$ \tabularnewline
+    MasaCtrl & SD1.5 reproduced & DirectInv & -- & $\mathbf{23.57 \pm 19.02}$ & $\mathbf{22.82 \pm 4.87}$ & $\mathbf{86.83 \pm 51.98}$ & $\mathbf{79.19 \pm 67.20}$ & $\mathbf{82.02 \pm 12.22}$ & $24.51 \pm 3.66$ & $21.47 \pm 4.61$ \tabularnewline
+    MasaCtrl & Best uniform CFG1 & LoRA+DirectInv r16 & 8 & $28.47 \pm 21.63$ & $21.91 \pm 4.93$ & $98.89 \pm 58.83$ & $98.90 \pm 84.73$ & $80.52 \pm 12.72$ & $\underline{\mathbf{24.61 \pm 3.63}}$ & $\underline{21.48 \pm 4.67}$ \tabularnewline
+    MasaCtrl & Best final-tail CFG1 & LoRA+DirectInv r32 & 16 & $28.33 \pm 21.04$ & $21.88 \pm 4.87$ & $98.96 \pm 58.38$ & $99.32 \pm 85.64$ & $80.49 \pm 12.71$ & $\underline{24.59 \pm 3.63}$ & $\underline{\mathbf{21.49 \pm 4.71}}$ \tabularnewline
     MasaCtrl & Branch-pair CFG1 & LoRA+DirectInv r16 & 8 & $212.08 \pm 115.07$ & $13.37 \pm 4.03$ & $400.75 \pm 185.79$ & $603.56 \pm 365.06$ & $55.95 \pm 21.38$ & $14.36 \pm 3.69$ & $16.12 \pm 4.27$ \tabularnewline
     MasaCtrl & CFG2.5 uniform & LoRA r8 & 4 & $55.94 \pm 37.74$ & $20.30 \pm 4.42$ & $171.62 \pm 90.65$ & $131.29 \pm 99.02$ & $75.14 \pm 15.10$ & $21.08 \pm 4.50$ & $19.34 \pm 4.59$ \tabularnewline
     MasaCtrl & CFG2.5 uniform & LoRA r16 & 8 & $57.89 \pm 39.41$ & $20.31 \pm 4.44$ & $172.45 \pm 91.59$ & $131.85 \pm 100.57$ & $75.12 \pm 15.23$ & $21.07 \pm 4.44$ & $19.30 \pm 4.59$ \tabularnewline
@@ -135,14 +138,169 @@
     MasaCtrl & CFG2.5 uniform & LoRA+DirectInv r16 & 8 & $35.84 \pm 25.05$ & $21.01 \pm 4.97$ & $115.20 \pm 67.94$ & $122.34 \pm 107.22$ & $78.76 \pm 13.52$ & $24.24 \pm 3.64$ & $21.29 \pm 4.65$ \tabularnewline
     MasaCtrl & CFG2.5 uniform & LoRA+DirectInv r32 & 16 & $35.86 \pm 25.45$ & $20.99 \pm 4.96$ & $115.41 \pm 67.71$ & $122.70 \pm 107.58$ & $78.72 \pm 13.51$ & $24.20 \pm 3.66$ & $21.25 \pm 4.64$ \tabularnewline
     \midrule
-    Pix2Pix-Zero & Paper original & DDIM & -- & $61.68$ & $20.44$ & $172.22$ & $144.12$ & $74.67$ & $22.80$ & $20.54$ \tabularnewline
-    Pix2Pix-Zero & Paper original & DirectInv & -- & $\mathbf{49.22}$ & $\mathbf{21.53}$ & $\mathbf{138.98}$ & $\mathbf{127.32}$ & $77.05$ & $23.31$ & $\mathbf{21.05}$ \tabularnewline
-    Pix2Pix-Zero & Best uniform CFG1 & LoRA r16 & 8 & $51.63 \pm 50.83$ & $21.25 \pm 5.48$ & $147.07 \pm 117.89$ & $137.65 \pm 153.16$ & $76.94 \pm 15.62$ & $\underline{23.39 \pm 4.35}$ & $20.95 \pm 4.64$ \tabularnewline
-    Pix2Pix-Zero & Best final-tail CFG1 & LoRA r8 & 4 & $51.67 \pm 51.06$ & $21.33 \pm 5.43$ & $144.87 \pm 117.21$ & $135.70 \pm 153.36$ & $\underline{\mathbf{77.15 \pm 15.58}}$ & $\underline{\mathbf{23.56 \pm 4.29}}$ & $21.01 \pm 4.67$ \tabularnewline
+    Pix2Pix-Zero & SD1.5 reproduced & DDIM & -- & -- & -- & -- & -- & -- & -- & -- \tabularnewline
+    Pix2Pix-Zero & SD1.5 reproduced & DirectInv & -- & $\mathbf{49.99 \pm 51.39}$ & $\mathbf{21.47 \pm 5.49}$ & $\mathbf{142.46 \pm 115.06}$ & $\mathbf{133.49 \pm 154.49}$ & $\mathbf{77.49 \pm 15.64}$ & $23.53 \pm 4.40$ & $\mathbf{21.09 \pm 4.77}$ \tabularnewline
+    Pix2Pix-Zero & Best uniform CFG1 & LoRA+DirectInv r16 & 8 & $51.63 \pm 50.83$ & $21.25 \pm 5.48$ & $147.07 \pm 117.89$ & $137.65 \pm 153.16$ & $76.94 \pm 15.62$ & $23.39 \pm 4.35$ & $20.95 \pm 4.64$ \tabularnewline
+    Pix2Pix-Zero & Best final-tail CFG1 & LoRA+DirectInv r8 & 4 & $51.67 \pm 51.06$ & $21.33 \pm 5.43$ & $144.87 \pm 117.21$ & $135.70 \pm 153.36$ & $77.15 \pm 15.58$ & $\underline{\mathbf{23.56 \pm 4.29}}$ & $21.01 \pm 4.67$ \tabularnewline
     Pix2Pix-Zero & CFG2.5 uniform & LoRA r8 & 4 & $65.88 \pm 48.83$ & $20.50 \pm 4.86$ & $182.65 \pm 117.39$ & $148.20 \pm 157.13$ & $75.02 \pm 15.72$ & $22.91 \pm 4.55$ & $20.65 \pm 4.73$ \tabularnewline
     Pix2Pix-Zero & CFG2.5 uniform & LoRA+DirectInv r8 & 4 & $55.93 \pm 55.15$ & $20.93 \pm 5.53$ & $152.91 \pm 121.24$ & $151.32 \pm 175.20$ & $76.47 \pm 15.87$ & $23.12 \pm 4.37$ & $20.85 \pm 4.83$ \tabularnewline
     Pix2Pix-Zero & CFG2.5 uniform & LoRA+DirectInv r16 & 8 & $56.23 \pm 55.10$ & $20.81 \pm 5.45$ & $153.89 \pm 121.81$ & $153.21 \pm 172.14$ & $76.46 \pm 15.89$ & $23.17 \pm 4.49$ & $20.85 \pm 4.76$ \tabularnewline
     Pix2Pix-Zero & CFG2.5 uniform & LoRA+DirectInv r32 & 16 & $58.23 \pm 60.19$ & $20.89 \pm 5.55$ & $154.12 \pm 123.21$ & $152.52 \pm 171.04$ & $76.38 \pm 15.98$ & $23.02 \pm 4.61$ & $20.75 \pm 4.90$ \tabularnewline
+    \bottomrule
+  \end{tabular}
+  }
+\end{table*}
+
+\clearpage
+\begin{table*}[htbp]
+  \centering
+  \scriptsize
+  \caption{SD1.5 comparison of the conditional cycle-loss LoRAs with the
+  reproduced DDIM and DirectInversion controls and the best completed standard
+  CFG1 uniform and final-tail configurations. Cycle-loss training uses uniform
+  transition sampling, inversion CFG 1, and $\lambda_{\mathrm{cycle}}=1$.
+  Light-blue rows identify cycle-loss results and carry no ranking meaning.
+  Bold marks the best reported result within each editor. Underlining marks an
+  experimental result that is better than the reproduced SD1.5 DirectInv value
+  for the same editor and metric. Structure distance and LPIPS are scaled by
+  $\times 10^3$, MSE by $\times 10^4$, and SSIM by $\times 10^2$.}
+  \label{tab:sd15-cycle-loss-comparison}
+  \resizebox{\textwidth}{!}{%
+  \begin{tabular}{llll rrrrrrr}
+    \toprule
+    Editor & Training / reference & Inversion & $\alpha$ &
+    Structure ($\times 10^3$) $\downarrow$ & PSNR (dB) $\uparrow$ &
+    LPIPS ($\times 10^3$) $\downarrow$ & MSE ($\times 10^4$) $\downarrow$ &
+    SSIM ($\times 10^2$) $\uparrow$ & CLIP target $\uparrow$ &
+    CLIP target (edit) $\uparrow$ \tabularnewline
+    \midrule
+    P2P & SD1.5 reproduced & DDIM & -- & $70.50 \pm 38.97$ & $17.84 \pm 3.93$ & $210.15 \pm 107.16$ & $220.28 \pm 145.34$ & $71.56 \pm 15.89$ & $25.19 \pm 3.68$ & $22.39 \pm 4.48$ \tabularnewline
+    P2P & SD1.5 reproduced & DirectInv & -- & $31.35 \pm 25.29$ & $22.57 \pm 5.10$ & $125.51 \pm 82.42$ & $91.27 \pm 85.39$ & $78.54 \pm 14.04$ & $25.07 \pm 3.79$ & $22.22 \pm 4.79$ \tabularnewline
+    P2P & Best uniform CFG1 & LoRA+DirectInv r8 & 4 & $\underline{14.12 \pm 11.68}$ & $\underline{26.02 \pm 5.36}$ & $\underline{73.25 \pm 52.90}$ & $\underline{44.40 \pm 47.79}$ & $\underline{83.50 \pm 12.44}$ & $\underline{25.33 \pm 3.79}$ & $\underline{22.31 \pm 4.87}$ \tabularnewline
+    P2P & Best final-tail CFG1 & LoRA+DirectInv r8 & 4 & $\underline{14.27 \pm 11.73}$ & $\underline{25.95 \pm 5.30}$ & $\underline{72.48 \pm 49.20}$ & $\underline{44.31 \pm 46.18}$ & $\underline{83.55 \pm 12.13}$ & $\underline{25.35 \pm 3.77}$ & $\underline{22.37 \pm 4.85}$ \tabularnewline
+    \rowcolor{cyclelossrow} P2P & Cycle loss ($\lambda=1$) & LoRA r8 & 4 & $70.40 \pm 38.78$ & $17.82 \pm 3.95$ & $211.23 \pm 106.60$ & $221.46 \pm 146.67$ & $71.35 \pm 15.81$ & $\underline{25.37 \pm 3.67}$ & $\underline{22.64 \pm 4.50}$ \tabularnewline
+    \rowcolor{cyclelossrow} P2P & Cycle loss ($\lambda=1$) & LoRA+DirectInv r8 & 4 & $\underline{\mathbf{14.01 \pm 11.38}}$ & $\underline{\mathbf{26.03 \pm 5.43}}$ & $\underline{\mathbf{72.35 \pm 49.47}}$ & $\underline{\mathbf{43.83 \pm 45.13}}$ & $\underline{\mathbf{83.56 \pm 12.16}}$ & $\underline{25.32 \pm 3.83}$ & $\underline{22.31 \pm 4.88}$ \tabularnewline
+    \rowcolor{cyclelossrow} P2P & Cycle loss ($\lambda=1$) & LoRA r16 & 8 & $70.57 \pm 39.83$ & $17.82 \pm 3.94$ & $211.10 \pm 106.78$ & $221.37 \pm 146.41$ & $71.34 \pm 15.81$ & $\underline{\mathbf{25.42 \pm 3.71}}$ & $\underline{\mathbf{22.65 \pm 4.57}}$ \tabularnewline
+    \rowcolor{cyclelossrow} P2P & Cycle loss ($\lambda=1$) & LoRA+DirectInv r16 & 8 & $\underline{14.45 \pm 11.85}$ & $\underline{25.92 \pm 5.39}$ & $\underline{74.51 \pm 52.35}$ & $\underline{45.37 \pm 46.89}$ & $\underline{83.37 \pm 12.32}$ & $\underline{25.27 \pm 3.84}$ & $\underline{22.31 \pm 4.84}$ \tabularnewline
+    \rowcolor{cyclelossrow} P2P & Cycle loss ($\lambda=1$) & LoRA r32 & 16 & $70.33 \pm 39.36$ & $17.83 \pm 3.94$ & $210.93 \pm 106.55$ & $220.31 \pm 145.03$ & $71.40 \pm 15.81$ & $\underline{25.37 \pm 3.64}$ & $\underline{\mathbf{22.65 \pm 4.52}}$ \tabularnewline
+    \rowcolor{cyclelossrow} P2P & Cycle loss ($\lambda=1$) & LoRA+DirectInv r32 & 16 & $\underline{14.04 \pm 11.47}$ & $\underline{25.99 \pm 5.40}$ & $\underline{72.48 \pm 49.20}$ & $\underline{43.89 \pm 44.49}$ & $\underline{83.53 \pm 12.21}$ & $\underline{25.31 \pm 3.85}$ & $\underline{22.34 \pm 4.89}$ \tabularnewline
+    \midrule
+    PnP & SD1.5 reproduced & DDIM & -- & $27.32 \pm 24.59$ & $22.31 \pm 4.50$ & $112.76 \pm 64.87$ & $82.98 \pm 60.97$ & $79.58 \pm 12.90$ & $25.59 \pm 3.73$ & $22.57 \pm 4.86$ \tabularnewline
+    PnP & SD1.5 reproduced & DirectInv & -- & $\mathbf{23.33 \pm 20.19}$ & $\mathbf{22.46 \pm 4.34}$ & $\mathbf{105.51 \pm 59.90}$ & $\mathbf{79.97 \pm 59.13}$ & $\mathbf{80.22 \pm 12.76}$ & $25.63 \pm 3.78$ & $22.67 \pm 4.89$ \tabularnewline
+    PnP & Best uniform CFG1 & LoRA+DirectInv r8 & 4 & $24.27 \pm 20.09$ & $22.37 \pm 4.49$ & $110.17 \pm 62.58$ & $81.82 \pm 60.23$ & $79.90 \pm 12.80$ & $\underline{\mathbf{25.83 \pm 3.73}}$ & $\underline{22.85 \pm 4.84}$ \tabularnewline
+    PnP & Best final-tail CFG1 & LoRA+DirectInv r32 & 16 & $24.43 \pm 20.80$ & $22.36 \pm 4.46$ & $110.82 \pm 62.81$ & $81.83 \pm 60.02$ & $79.88 \pm 12.80$ & $\underline{25.82 \pm 3.71}$ & $\underline{\mathbf{22.89 \pm 4.85}}$ \tabularnewline
+    \rowcolor{cyclelossrow} PnP & Cycle loss ($\lambda=1$) & LoRA r8 & 4 & $27.17 \pm 24.47$ & $22.32 \pm 4.53$ & $113.87 \pm 65.57$ & $82.79 \pm 59.84$ & $79.50 \pm 12.90$ & $\underline{25.71 \pm 3.77}$ & $\underline{22.77 \pm 4.86}$ \tabularnewline
+    \rowcolor{cyclelossrow} PnP & Cycle loss ($\lambda=1$) & LoRA+DirectInv r8 & 4 & $24.19 \pm 19.84$ & $22.38 \pm 4.50$ & $110.03 \pm 62.50$ & $81.64 \pm 60.21$ & $79.92 \pm 12.80$ & $\underline{25.82 \pm 3.72}$ & $\underline{\mathbf{22.89 \pm 4.86}}$ \tabularnewline
+    \rowcolor{cyclelossrow} PnP & Cycle loss ($\lambda=1$) & LoRA r16 & 8 & $27.02 \pm 24.39$ & $22.30 \pm 4.51$ & $113.75 \pm 64.70$ & $82.78 \pm 59.42$ & $79.52 \pm 12.83$ & $\underline{25.72 \pm 3.76}$ & $\underline{22.76 \pm 4.86}$ \tabularnewline
+    \rowcolor{cyclelossrow} PnP & Cycle loss ($\lambda=1$) & LoRA+DirectInv r16 & 8 & $24.38 \pm 20.67$ & $22.36 \pm 4.48$ & $110.28 \pm 62.53$ & $81.87 \pm 60.30$ & $79.88 \pm 12.81$ & $\underline{25.81 \pm 3.74}$ & $\underline{22.83 \pm 4.86}$ \tabularnewline
+    \rowcolor{cyclelossrow} PnP & Cycle loss ($\lambda=1$) & LoRA r32 & 16 & $26.94 \pm 24.29$ & $22.33 \pm 4.48$ & $113.26 \pm 64.71$ & $82.20 \pm 59.26$ & $79.58 \pm 12.84$ & $\underline{25.68 \pm 3.77}$ & $\underline{22.76 \pm 4.90}$ \tabularnewline
+    \rowcolor{cyclelossrow} PnP & Cycle loss ($\lambda=1$) & LoRA+DirectInv r32 & 16 & $24.17 \pm 20.07$ & $22.38 \pm 4.50$ & $110.13 \pm 62.39$ & $81.72 \pm 60.19$ & $79.91 \pm 12.80$ & $\underline{25.78 \pm 3.75}$ & $\underline{22.83 \pm 4.86}$ \tabularnewline
+    \midrule
+    MasaCtrl & SD1.5 reproduced & DDIM & -- & $27.68 \pm 21.08$ & $22.32 \pm 4.52$ & $105.51 \pm 60.03$ & $84.69 \pm 66.87$ & $80.41 \pm 12.65$ & $24.16 \pm 3.86$ & $21.20 \pm 4.71$ \tabularnewline
+    MasaCtrl & SD1.5 reproduced & DirectInv & -- & $\mathbf{23.57 \pm 19.02}$ & $\mathbf{22.82 \pm 4.87}$ & $\mathbf{86.83 \pm 51.98}$ & $\mathbf{79.19 \pm 67.20}$ & $\mathbf{82.02 \pm 12.22}$ & $24.51 \pm 3.66$ & $21.47 \pm 4.61$ \tabularnewline
+    MasaCtrl & Best uniform CFG1 & LoRA+DirectInv r16 & 8 & $28.47 \pm 21.63$ & $21.91 \pm 4.93$ & $98.89 \pm 58.83$ & $98.90 \pm 84.73$ & $80.52 \pm 12.72$ & $\underline{24.61 \pm 3.63}$ & $\underline{21.48 \pm 4.67}$ \tabularnewline
+    MasaCtrl & Best final-tail CFG1 & LoRA+DirectInv r32 & 16 & $28.33 \pm 21.04$ & $21.88 \pm 4.87$ & $98.96 \pm 58.38$ & $99.32 \pm 85.64$ & $80.49 \pm 12.71$ & $\underline{24.59 \pm 3.63}$ & $\underline{21.49 \pm 4.71}$ \tabularnewline
+    \rowcolor{cyclelossrow} MasaCtrl & Cycle loss ($\lambda=1$) & LoRA r8 & 4 & $49.50 \pm 30.08$ & $19.96 \pm 4.43$ & $179.40 \pm 91.98$ & $141.84 \pm 105.95$ & $73.97 \pm 15.32$ & $20.62 \pm 4.45$ & $19.22 \pm 4.66$ \tabularnewline
+    \rowcolor{cyclelossrow} MasaCtrl & Cycle loss ($\lambda=1$) & LoRA+DirectInv r8 & 4 & $28.60 \pm 21.70$ & $21.91 \pm 4.93$ & $98.73 \pm 58.98$ & $98.95 \pm 85.02$ & $80.54 \pm 12.72$ & $\underline{24.60 \pm 3.65}$ & $\underline{\mathbf{21.50 \pm 4.62}}$ \tabularnewline
+    \rowcolor{cyclelossrow} MasaCtrl & Cycle loss ($\lambda=1$) & LoRA r16 & 8 & $49.39 \pm 29.59$ & $19.93 \pm 4.37$ & $180.12 \pm 92.26$ & $142.61 \pm 106.72$ & $73.89 \pm 15.36$ & $20.61 \pm 4.55$ & $19.22 \pm 4.72$ \tabularnewline
+    \rowcolor{cyclelossrow} MasaCtrl & Cycle loss ($\lambda=1$) & LoRA+DirectInv r16 & 8 & $28.49 \pm 21.61$ & $21.89 \pm 4.89$ & $98.91 \pm 58.48$ & $98.95 \pm 84.46$ & $80.50 \pm 12.73$ & $\underline{\mathbf{24.63 \pm 3.64}}$ & $\underline{21.48 \pm 4.67}$ \tabularnewline
+    \rowcolor{cyclelossrow} MasaCtrl & Cycle loss ($\lambda=1$) & LoRA r32 & 16 & $49.59 \pm 29.73$ & $19.94 \pm 4.32$ & $179.67 \pm 91.96$ & $141.88 \pm 105.82$ & $73.95 \pm 15.36$ & $20.55 \pm 4.60$ & $19.21 \pm 4.68$ \tabularnewline
+    \rowcolor{cyclelossrow} MasaCtrl & Cycle loss ($\lambda=1$) & LoRA+DirectInv r32 & 16 & $28.48 \pm 21.49$ & $21.90 \pm 4.88$ & $98.65 \pm 58.25$ & $98.72 \pm 84.36$ & $80.53 \pm 12.68$ & $\underline{24.62 \pm 3.61}$ & $\underline{21.49 \pm 4.68}$ \tabularnewline
+    \midrule
+    Pix2Pix-Zero & SD1.5 reproduced & DDIM & -- & -- & -- & -- & -- & -- & -- & -- \tabularnewline
+    Pix2Pix-Zero & SD1.5 reproduced & DirectInv & -- & $\mathbf{49.99 \pm 51.39}$ & $\mathbf{21.47 \pm 5.49}$ & $\mathbf{142.46 \pm 115.06}$ & $\mathbf{133.49 \pm 154.49}$ & $\mathbf{77.49 \pm 15.64}$ & $23.53 \pm 4.40$ & $21.09 \pm 4.77$ \tabularnewline
+    Pix2Pix-Zero & Best uniform CFG1 & LoRA+DirectInv r16 & 8 & $51.63 \pm 50.83$ & $21.25 \pm 5.48$ & $147.07 \pm 117.89$ & $137.65 \pm 153.16$ & $76.94 \pm 15.62$ & $23.39 \pm 4.35$ & $20.95 \pm 4.64$ \tabularnewline
+    Pix2Pix-Zero & Best final-tail CFG1 & LoRA+DirectInv r8 & 4 & $51.67 \pm 51.06$ & $21.33 \pm 5.43$ & $144.87 \pm 117.21$ & $135.70 \pm 153.36$ & $77.15 \pm 15.58$ & $\underline{\mathbf{23.56 \pm 4.29}}$ & $21.01 \pm 4.67$ \tabularnewline
+    \rowcolor{cyclelossrow} Pix2Pix-Zero & Cycle loss ($\lambda=1$) & LoRA r8 & 4 & $62.95 \pm 47.81$ & $20.32 \pm 4.68$ & $179.04 \pm 114.37$ & $148.97 \pm 147.13$ & $74.83 \pm 15.52$ & $22.88 \pm 4.60$ & $20.78 \pm 4.85$ \tabularnewline
+    \rowcolor{cyclelossrow} Pix2Pix-Zero & Cycle loss ($\lambda=1$) & LoRA+DirectInv r8 & 4 & $51.19 \pm 50.86$ & $21.36 \pm 5.71$ & $145.33 \pm 118.31$ & $138.62 \pm 156.68$ & $77.12 \pm 15.63$ & $23.40 \pm 4.43$ & $20.97 \pm 4.72$ \tabularnewline
+    \rowcolor{cyclelossrow} Pix2Pix-Zero & Cycle loss ($\lambda=1$) & LoRA r16 & 8 & $63.73 \pm 50.35$ & $20.33 \pm 4.75$ & $179.45 \pm 116.80$ & $153.01 \pm 165.31$ & $74.68 \pm 15.74$ & $22.89 \pm 4.50$ & $20.73 \pm 4.80$ \tabularnewline
+    \rowcolor{cyclelossrow} Pix2Pix-Zero & Cycle loss ($\lambda=1$) & LoRA+DirectInv r16 & 8 & $52.16 \pm 52.08$ & $21.22 \pm 5.45$ & $147.00 \pm 121.01$ & $140.33 \pm 163.90$ & $76.95 \pm 15.75$ & $23.43 \pm 4.35$ & $20.98 \pm 4.74$ \tabularnewline
+    \rowcolor{cyclelossrow} Pix2Pix-Zero & Cycle loss ($\lambda=1$) & LoRA r32 & 16 & $63.53 \pm 49.50$ & $20.29 \pm 4.67$ & $179.57 \pm 114.54$ & $151.14 \pm 157.11$ & $74.85 \pm 15.43$ & $22.89 \pm 4.51$ & $20.71 \pm 4.81$ \tabularnewline
+    \rowcolor{cyclelossrow} Pix2Pix-Zero & Cycle loss ($\lambda=1$) & LoRA+DirectInv r32 & 16 & $53.15 \pm 55.55$ & $21.24 \pm 5.45$ & $146.02 \pm 118.51$ & $138.96 \pm 162.09$ & $76.95 \pm 15.60$ & $23.45 \pm 4.28$ & $\underline{\mathbf{21.11 \pm 4.70}}$ \tabularnewline
+    \bottomrule
+  \end{tabular}
+  }
+\end{table*}
+
+\clearpage
+\begin{table*}[htbp]
+  \centering
+  \scriptsize
+  \caption{Standalone SD1.5 reconstruction from the saved PIE-Bench output
+  panels (700 images per row). This is a no-edit measurement: the source image
+  is compared directly with the reconstruction panel emitted immediately after
+  inversion and reverse generation. No PIE edit mask is applied. The rows are
+  the reproduced Direct Inversion control, the previously selected best
+  standard-CFG1 uniform/final-tail configurations, and the selected cycle-loss
+  r8 configuration. Bold
+  marks the best value among these three rows within an editor. Structure
+  distance and LPIPS are scaled by $\times 10^3$, MSE by $\times 10^4$, and
+  SSIM by $\times 10^2$.}
+  \label{tab:sd15-standalone-reconstruction}
+  \resizebox{\textwidth}{!}{%
+  \begin{tabular}{lll rrrrr}
+    \toprule
+    Editor & Configuration & Adapter &
+    Structure ($\times 10^3$) $\downarrow$ & PSNR (dB) $\uparrow$ &
+    LPIPS ($\times 10^3$) $\downarrow$ & MSE ($\times 10^4$) $\downarrow$ &
+    SSIM ($\times 10^2$) $\uparrow$ \tabularnewline
+    \midrule
+    P2P & DirectInv & -- & $38.79 \pm 26.95$ & $19.65 \pm 3.98$ & $158.91 \pm 89.79$ & $154.93 \pm 128.85$ & $65.52 \pm 14.98$ \tabularnewline
+    P2P & Best uniform & LoRA+DirectInv r8 & $\mathbf{3.31 \pm 1.79}$ & $\mathbf{27.28 \pm 3.93}$ & $37.17 \pm 14.27$ & $\mathbf{28.19 \pm 30.29}$ & $79.99 \pm 12.45$ \tabularnewline
+    P2P & Best final-tail & LoRA+DirectInv r8 & $3.31 \pm 1.81$ & $27.28 \pm 3.93$ & $37.17 \pm 14.27$ & $28.19 \pm 30.29$ & $79.99 \pm 12.45$ \tabularnewline
+    P2P & Cycle loss & LoRA+DirectInv r8 & $3.31 \pm 1.82$ & $27.28 \pm 3.93$ & $\mathbf{37.15 \pm 14.25}$ & $28.19 \pm 30.28$ & $\mathbf{79.99 \pm 12.45}$ \tabularnewline
+    \midrule
+    PnP & DirectInv & -- & $3.38 \pm 1.85$ & $\mathbf{27.26 \pm 3.92}$ & $37.15 \pm 14.23$ & $\mathbf{28.24 \pm 30.31}$ & $79.97 \pm 12.44$ \tabularnewline
+    PnP & Best uniform & LoRA+DirectInv r8 & $3.37 \pm 1.84$ & $27.26 \pm 3.92$ & $\mathbf{37.13 \pm 14.21}$ & $28.24 \pm 30.31$ & $\mathbf{79.97 \pm 12.44}$ \tabularnewline
+    PnP & Best final-tail & LoRA+DirectInv r32 & $3.37 \pm 1.82$ & $27.26 \pm 3.92$ & $37.15 \pm 14.23$ & $28.24 \pm 30.31$ & $79.97 \pm 12.44$ \tabularnewline
+    PnP & Cycle loss & LoRA+DirectInv r8 & $\mathbf{3.37 \pm 1.83}$ & $27.26 \pm 3.92$ & $37.15 \pm 14.25$ & $28.24 \pm 30.31$ & $\mathbf{79.97 \pm 12.44}$ \tabularnewline
+    \midrule
+    MasaCtrl & DirectInv & -- & $\mathbf{3.31 \pm 1.84}$ & $\mathbf{27.28 \pm 3.93}$ & $\mathbf{37.15 \pm 14.26}$ & $\mathbf{28.19 \pm 30.28}$ & $\mathbf{79.99 \pm 12.45}$ \tabularnewline
+    MasaCtrl & Best uniform & LoRA+DirectInv r16 & $3.69 \pm 3.72$ & $27.22 \pm 3.92$ & $37.84 \pm 15.70$ & $28.50 \pm 30.49$ & $79.91 \pm 12.46$ \tabularnewline
+    MasaCtrl & Best final-tail & LoRA+DirectInv r32 & $3.75 \pm 3.87$ & $27.21 \pm 3.90$ & $37.95 \pm 15.79$ & $28.54 \pm 30.52$ & $79.89 \pm 12.48$ \tabularnewline
+    MasaCtrl & Cycle loss & LoRA+DirectInv r8 & $3.63 \pm 3.03$ & $27.22 \pm 3.91$ & $37.84 \pm 15.29$ & $28.41 \pm 30.29$ & $79.91 \pm 12.44$ \tabularnewline
+    \midrule
+    Pix2Pix-Zero & DirectInv & -- & $\mathbf{3.35 \pm 1.83}$ & $\mathbf{27.36 \pm 4.00}$ & $37.11 \pm 14.36$ & $\mathbf{27.96 \pm 30.29}$ & $\mathbf{80.05 \pm 12.46}$ \tabularnewline
+    Pix2Pix-Zero & Best uniform & LoRA+DirectInv r16 & $3.37 \pm 1.89$ & $27.36 \pm 4.00$ & $\mathbf{37.11 \pm 14.36}$ & $27.96 \pm 30.29$ & $80.05 \pm 12.46$ \tabularnewline
+    Pix2Pix-Zero & Best final-tail & LoRA+DirectInv r8 & $3.36 \pm 1.87$ & $27.36 \pm 4.00$ & $37.11 \pm 14.36$ & $27.96 \pm 30.28$ & $80.05 \pm 12.45$ \tabularnewline
+    Pix2Pix-Zero & Cycle loss & LoRA+DirectInv r8 & $3.36 \pm 1.89$ & $27.36 \pm 4.00$ & $\mathbf{37.10 \pm 14.35}$ & $27.96 \pm 30.29$ & $\mathbf{80.05 \pm 12.46}$ \tabularnewline
+    \bottomrule
+  \end{tabular}
+  }
+\end{table*}
+
+\clearpage
+\begin{table*}[htbp]
+  \centering
+  \scriptsize
+  \caption{Paired standalone-reconstruction change of LoRA+DirectInv relative
+  to DirectInv on the same 700 PIE-Bench source images. Each cell is mean
+  signed improvement with a bootstrap 95\% interval. Positive always means
+  LoRA+DirectInv is better: lower structure/LPIPS/MSE or higher PSNR/SSIM.
+  No edit mask is used. Values use the same scaling as
+  Table~\ref{tab:sd15-standalone-reconstruction}.}
+  \label{tab:sd15-standalone-reconstruction-paired}
+  \resizebox{\textwidth}{!}{%
+  \begin{tabular}{ll rrrrr}
+    \toprule
+    Editor & LoRA+DirectInv configuration &
+    Structure $\Delta$ & PSNR $\Delta$ & LPIPS $\Delta$ & MSE $\Delta$ & SSIM $\Delta$ \tabularnewline
+    \midrule
+    P2P & Uniform r8 & $+35.48\,[33.55,37.53]$ & $+7.63\,[7.30,7.97]$ & $+121.74\,[115.36,128.31]$ & $+126.75\,[117.83,136.38]$ & $+14.47\,[13.68,15.19]$ \tabularnewline
+    P2P & Final-tail r8 & $+35.48\,[33.52,37.52]$ & $+7.63\,[7.29,7.98]$ & $+121.74\,[115.51,128.10]$ & $+126.75\,[117.61,136.08]$ & $+14.47\,[13.74,15.20]$ \tabularnewline
+    P2P & Cycle loss r8 & $+35.48\,[33.48,37.37]$ & $+7.63\,[7.28,7.94]$ & $+121.76\,[115.55,128.25]$ & $+126.75\,[117.28,135.75]$ & $+14.47\,[13.70,15.23]$ \tabularnewline
+    \midrule
+    PnP & Uniform r8 & $+0.007\,[-0.004,0.018]$ & $-0.0002\,[-0.0007,0.0003]$ & $+0.014\,[-0.010,0.039]$ & $-0.0017\,[-0.0031,-0.0002]$ & $+0.0002\,[-0.0007,0.0011]$ \tabularnewline
+    PnP & Final-tail r32 & $+0.007\,[-0.003,0.018]$ & $-0.0003\,[-0.0008,0.0002]$ & $+0.000\,[-0.024,0.024]$ & $-0.0025\,[-0.0039,-0.0010]$ & $-0.0001\,[-0.0011,0.0008]$ \tabularnewline
+    PnP & Cycle loss r8 & $+0.009\,[-0.000,0.020]$ & $-0.0003\,[-0.0007,0.0002]$ & $+0.003\,[-0.022,0.029]$ & $-0.0015\,[-0.0029,-0.0001]$ & $+0.0004\,[-0.0005,0.0013]$ \tabularnewline
+    \midrule
+    MasaCtrl & Uniform r16 & $-0.38\,[-0.62,-0.19]$ & $-0.06\,[-0.10,-0.03]$ & $-0.69\,[-1.24,-0.30]$ & $-0.32\,[-0.63,-0.10]$ & $-0.08\,[-0.15,-0.03]$ \tabularnewline
+    MasaCtrl & Final-tail r32 & $-0.44\,[-0.69,-0.24]$ & $-0.07\,[-0.12,-0.03]$ & $-0.81\,[-1.37,-0.36]$ & $-0.35\,[-0.63,-0.13]$ & $-0.11\,[-0.18,-0.05]$ \tabularnewline
+    MasaCtrl & Cycle loss r8 & $-0.32\,[-0.51,-0.17]$ & $-0.05\,[-0.09,-0.02]$ & $-0.70\,[-1.17,-0.31]$ & $-0.22\,[-0.39,-0.10]$ & $-0.08\,[-0.13,-0.04]$ \tabularnewline
+    \midrule
+    Pix2Pix-Zero & Uniform r16 & $-0.017\,[-0.039,0.005]$ & $-0.0002\,[-0.0005,0.0001]$ & $+0.001\,[-0.018,0.020]$ & $-0.0006\,[-0.0016,0.0006]$ & $-0.0001\,[-0.0014,0.0013]$ \tabularnewline
+    Pix2Pix-Zero & Final-tail r8 & $-0.006\,[-0.028,0.018]$ & $-0.0002\,[-0.0005,0.0002]$ & $-0.005\,[-0.024,0.013]$ & $-0.0005\,[-0.0017,0.0006]$ & $-0.0002\,[-0.0015,0.0012]$ \tabularnewline
+    Pix2Pix-Zero & Cycle loss r8 & $-0.008\,[-0.030,0.012]$ & $-0.0002\,[-0.0005,0.0001]$ & $+0.006\,[-0.016,0.027]$ & $-0.0004\,[-0.0017,0.0008]$ & $+0.0005\,[-0.0008,0.0019]$ \tabularnewline
     \bottomrule
   \end{tabular}
   }

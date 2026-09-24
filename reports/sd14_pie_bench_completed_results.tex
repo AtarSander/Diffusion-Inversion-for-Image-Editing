@@ -1,0 +1,167 @@
+\documentclass[11pt]{article}
+\usepackage[margin=0.6in]{geometry}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{pdflscape}
+
+\title{SD1.4 Inversion LoRA Results on PIE-Bench}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{landscape}
+\begin{table}[p]
+  \centering
+  \scriptsize
+  \caption{Completed SD1.4 PIE-Bench results compared with the original paper
+  values. Our values are mean $\pm$ population standard deviation. Paper rows
+  contain the reported means only. Structure distance and LPIPS are scaled by
+  $10^3$, MSE by $10^4$, and SSIM by $10^2$. Structure, LPIPS, and MSE are
+  lower-is-better; PSNR, SSIM, and both CLIP similarities are
+  higher-is-better. Unedited-region metrics use $n=556$; structure and CLIP
+  metrics use $n=700$. Bold marks the best displayed result for each metric
+  within each editor. Underlining marks an SD1.4 LoRA result that beats the
+  matching paper baseline: DDIM for plain LoRA rows and DirectInv for
+  LoRA+DirectInv rows. Comparisons use the unrounded means.}
+  \label{tab:sd14-pie-bench-completed}
+  \resizebox{\linewidth}{!}{%
+  \begin{tabular}{llllrrrrrrr}
+    \toprule
+    Editor & Training / source & Inversion & $\alpha$ &
+    Structure ($\times 10^3$) $\downarrow$ &
+    PSNR (dB) $\uparrow$ &
+    LPIPS ($\times 10^3$) $\downarrow$ &
+    MSE ($\times 10^4$) $\downarrow$ &
+    SSIM ($\times 10^2$) $\uparrow$ &
+    CLIP target $\uparrow$ &
+    CLIP target (edit) $\uparrow$ \\
+    \midrule
+    P2P & Paper original & DDIM & -- &
+    $69.43$ & $17.87$ & $208.80$ & $219.88$ & $71.14$ & $25.01$ & $22.44$ \\
+    P2P & Paper original & DirectInv & -- &
+    $\mathbf{11.65}$ & $\mathbf{27.22}$ & $\mathbf{54.55}$ & $\mathbf{32.86}$ & $\mathbf{84.76}$ & $25.02$ & $22.10$ \\
+    \addlinespace
+    P2P & Uniform & LoRA r8 & 4 &
+    $\underline{69.42 \pm 37.68}$ & $17.81 \pm 4.09$ & $209.60 \pm 104.79$ &
+    $223.18 \pm 147.73$ & $\underline{71.36 \pm 15.79}$ & $\underline{25.28 \pm 3.79}$ &
+    $\underline{22.65 \pm 4.55}$ \\
+    P2P & Uniform & LoRA+DirectInv r8 & 4 &
+    $14.96 \pm 11.73$ & $25.98 \pm 5.42$ & $73.01 \pm 51.04$ &
+    $44.75 \pm 48.43$ & $83.44 \pm 12.32$ & $\underline{\mathbf{25.32 \pm 3.81}}$ &
+    $\underline{22.42 \pm 4.81}$ \\
+    P2P & Uniform & LoRA r16 & 8 &
+    $69.57 \pm 37.82$ & $17.77 \pm 3.96$ & $210.24 \pm 105.02$ &
+    $224.13 \pm 147.89$ & $\underline{71.30 \pm 15.81}$ & $\underline{25.25 \pm 3.77}$ &
+    $\underline{22.64 \pm 4.54}$ \\
+    P2P & Uniform & LoRA+DirectInv r16 & 8 &
+    $14.87 \pm 11.44$ & $26.01 \pm 5.40$ & $71.86 \pm 47.55$ &
+    $43.58 \pm 43.74$ & $83.52 \pm 12.03$ & $\underline{25.27 \pm 3.78}$ &
+    $\underline{22.25 \pm 4.80}$ \\
+    P2P & Final-tail & LoRA r8 & 4 &
+    $70.17 \pm 40.73$ & $17.78 \pm 3.96$ & $209.83 \pm 105.38$ &
+    $223.76 \pm 147.96$ & $\underline{71.30 \pm 15.79}$ & $\underline{25.31 \pm 3.76}$ &
+    $\underline{\mathbf{22.67 \pm 4.58}}$ \\
+    P2P & Final-tail & LoRA+DirectInv r8 & 4 &
+    $14.68 \pm 11.29$ & $26.03 \pm 5.31$ & $71.27 \pm 46.80$ &
+    $42.87 \pm 41.95$ & $83.57 \pm 12.00$ & $\underline{25.28 \pm 3.80}$ &
+    $\underline{22.31 \pm 4.81}$ \\
+    P2P & Final-tail & LoRA r32 & 16 &
+    $69.67 \pm 39.71$ & $17.81 \pm 4.14$ & $210.24 \pm 105.17$ &
+    $224.12 \pm 148.13$ & $\underline{71.28 \pm 15.85}$ & $\underline{25.28 \pm 3.75}$ &
+    $\underline{22.64 \pm 4.61}$ \\
+    P2P & Final-tail & LoRA+DirectInv r32 & 16 &
+    $14.95 \pm 11.45$ & $25.93 \pm 5.23$ & $72.52 \pm 48.90$ &
+    $43.65 \pm 43.54$ & $83.51 \pm 12.05$ & $\underline{25.31 \pm 3.74}$ &
+    $\underline{22.42 \pm 4.80}$ \\
+    \midrule
+    MasaCtrl & Paper original & DDIM & -- &
+    $28.38$ & $22.17$ & $106.62$ & $86.97$ & $79.67$ & $23.96$ & $21.16$ \\
+    MasaCtrl & Paper original & DirectInv & -- &
+    $\mathbf{24.70}$ & $\mathbf{22.64}$ & $\mathbf{87.94}$ & $\mathbf{81.09}$ & $\mathbf{81.33}$ & $24.38$ & $21.35$ \\
+    \addlinespace
+    MasaCtrl & Uniform & LoRA r8 & 4 &
+    $48.34 \pm 27.65$ & $20.01 \pm 4.33$ & $177.42 \pm 91.98$ &
+    $139.74 \pm 102.62$ & $73.97 \pm 15.36$ & $20.69 \pm 4.48$ &
+    $19.18 \pm 4.66$ \\
+    MasaCtrl & Uniform & LoRA+DirectInv r8 & 4 &
+    $28.83 \pm 21.08$ & $21.96 \pm 4.89$ & $98.38 \pm 59.39$ &
+    $97.30 \pm 83.39$ & $80.44 \pm 12.96$ & $\underline{24.54 \pm 3.68}$ &
+    $\underline{21.48 \pm 4.67}$ \\
+    MasaCtrl & Uniform & LoRA r16 & 8 &
+    $48.41 \pm 27.87$ & $19.99 \pm 4.31$ & $177.45 \pm 91.92$ &
+    $140.18 \pm 102.96$ & $73.95 \pm 15.34$ & $20.65 \pm 4.53$ &
+    $19.22 \pm 4.69$ \\
+    MasaCtrl & Uniform & LoRA+DirectInv r16 & 8 &
+    $28.94 \pm 21.32$ & $21.95 \pm 4.89$ & $98.39 \pm 59.54$ &
+    $97.78 \pm 84.24$ & $80.43 \pm 12.97$ & $\underline{\mathbf{24.58 \pm 3.66}}$ &
+    $\underline{\mathbf{21.49 \pm 4.64}}$ \\
+    MasaCtrl & Final-tail & LoRA r8 & 4 &
+    $48.13 \pm 27.20$ & $20.01 \pm 4.34$ & $175.59 \pm 90.24$ &
+    $139.97 \pm 103.39$ & $74.16 \pm 15.20$ & $20.73 \pm 4.62$ &
+    $19.25 \pm 4.71$ \\
+    MasaCtrl & Final-tail & LoRA+DirectInv r8 & 4 &
+    $28.85 \pm 20.99$ & $21.96 \pm 4.91$ & $97.84 \pm 58.86$ &
+    $97.62 \pm 83.80$ & $80.49 \pm 12.88$ & $\underline{24.55 \pm 3.61}$ &
+    $\underline{21.45 \pm 4.68}$ \\
+    MasaCtrl & Final-tail & LoRA r32 & 16 &
+    $48.06 \pm 26.71$ & $19.94 \pm 4.27$ & $178.10 \pm 91.75$ &
+    $141.60 \pm 105.64$ & $73.94 \pm 15.28$ & $20.67 \pm 4.47$ &
+    $19.23 \pm 4.68$ \\
+    MasaCtrl & Final-tail & LoRA+DirectInv r32 & 16 &
+    $28.73 \pm 20.78$ & $21.96 \pm 4.91$ & $98.38 \pm 59.29$ &
+    $97.71 \pm 84.72$ & $80.43 \pm 12.92$ & $\underline{24.51 \pm 3.59}$ &
+    $\underline{21.46 \pm 4.65}$ \\
+    \midrule
+    Pix2Pix-Zero & Paper original & DDIM & -- &
+    $61.68$ & $20.44$ & $172.22$ & $144.12$ & $74.67$ & $22.80$ & $20.54$ \\
+    Pix2Pix-Zero & Paper original & DirectInv & -- &
+    $\mathbf{49.22}$ & $\mathbf{21.53}$ & $\mathbf{138.98}$ &
+    $\mathbf{127.32}$ & $77.05$ & $23.31$ & $21.05$ \\
+    \addlinespace
+    Pix2Pix-Zero & Uniform & LoRA r8 & 4 &
+    $62.63 \pm 48.48$ & $\underline{20.53 \pm 4.85}$ &
+    $175.92 \pm 118.40$ & $147.84 \pm 158.44$ &
+    $\underline{75.18 \pm 15.79}$ & $\underline{23.05 \pm 4.26}$ &
+    $\underline{20.74 \pm 4.72}$ \\
+    Pix2Pix-Zero & Uniform & LoRA+DirectInv r8 & 4 &
+    $49.82 \pm 49.84$ & $21.45 \pm 5.57$ & $141.90 \pm 116.24$ &
+    $134.32 \pm 152.36$ & $\underline{77.57 \pm 15.45}$ &
+    $\underline{23.45 \pm 4.42}$ & $21.05 \pm 4.78$ \\
+    Pix2Pix-Zero & Uniform & LoRA r16 & 8 &
+    $63.93 \pm 49.91$ & $20.44 \pm 4.81$ & $176.02 \pm 114.58$ &
+    $151.03 \pm 165.38$ & $\underline{75.09 \pm 15.54}$ &
+    $\underline{22.96 \pm 4.36}$ & $\underline{20.64 \pm 4.78}$ \\
+    Pix2Pix-Zero & Uniform & LoRA+DirectInv r16 & 8 &
+    $50.75 \pm 49.73$ & $21.39 \pm 5.60$ & $143.43 \pm 117.11$ &
+    $138.13 \pm 162.22$ & $\underline{77.37 \pm 15.73}$ &
+    $\underline{23.47 \pm 4.29}$ &
+    $\underline{\mathbf{21.17 \pm 4.64}}$ \\
+    Pix2Pix-Zero & Final-tail & LoRA r8 & 4 &
+    $63.87 \pm 49.71$ & $20.39 \pm 4.71$ & $176.46 \pm 113.77$ &
+    $149.96 \pm 160.27$ & $\underline{75.03 \pm 15.64}$ &
+    $\underline{22.85 \pm 4.42}$ & $\underline{20.85 \pm 4.68}$ \\
+    Pix2Pix-Zero & Final-tail & LoRA+DirectInv r8 & 4 &
+    $50.19 \pm 50.92$ & $21.51 \pm 5.63$ & $140.58 \pm 114.23$ &
+    $133.50 \pm 152.58$ & $\underline{77.65 \pm 15.42}$ &
+    $\underline{\mathbf{23.55 \pm 4.27}}$ &
+    $\underline{21.14 \pm 4.70}$ \\
+    Pix2Pix-Zero & Final-tail & LoRA r32 & 16 &
+    $64.06 \pm 50.54$ & $20.42 \pm 4.63$ & $174.95 \pm 112.93$ &
+    $145.74 \pm 149.24$ & $\underline{75.28 \pm 15.54}$ &
+    $\underline{23.02 \pm 4.51}$ & $\underline{20.81 \pm 4.82}$ \\
+    Pix2Pix-Zero & Final-tail & LoRA+DirectInv r32 & 16 &
+    $50.30 \pm 50.64$ & $21.38 \pm 5.37$ & $140.29 \pm 112.27$ &
+    $132.93 \pm 155.33$ & $\underline{\mathbf{77.69 \pm 15.28}}$ &
+    $\underline{23.46 \pm 4.24}$ & $21.02 \pm 4.61$ \\
+    \bottomrule
+  \end{tabular}%
+  }
+\end{table}
+\end{landscape}
+
+\noindent The paper means are transcribed from the repository's preserved
+original-result comparison. The table includes every completed SD1.4 LoRA
+PIE-Bench evaluation in the scheduled P2P, MasaCtrl, and Pix2Pix-Zero matrix.
+
+\end{document}

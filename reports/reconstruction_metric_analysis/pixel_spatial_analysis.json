@@ -1,0 +1,3341 @@
+{
+  "definitions": {
+    "gap_direction": "experiment minus baseline; positive is worse",
+    "ring_distance": "Chebyshev pixel distance on the unedited side of the PIE mask",
+    "texture": "within-image terciles of source luminance gradient among unedited pixels"
+  },
+  "editors": {
+    "p2p": {
+      "n": 556,
+      "official_mse_recompute_max_abs_error": 9.281507118430454e-09,
+      "normalized_mask_metrics": {
+        "baseline_mse_x10000": 146.3534318156117,
+        "experiment_mse_x10000": 73.0387340210406,
+        "mse_gap_x10000": -73.3146977945711,
+        "baseline_psnr": 20.402603642824882,
+        "experiment_psnr": 23.751843540330597,
+        "psnr_worsening": -3.3492398975057154
+      },
+      "global_rgb_bias_component": {
+        "baseline_bias_mse_x10000": 8.299171337020212,
+        "experiment_bias_mse_x10000": 6.086652155995385,
+        "bias_mse_gap_x10000": -2.212519181024827,
+        "share_of_total_signed_mse_gap": 0.030178385065765936
+      },
+      "by_mask_distance": {
+        "boundary_0_4": {
+          "pixels": 6749983,
+          "baseline_mse_x10000": 161.78229380490131,
+          "experiment_mse_x10000": 80.97854486966271,
+          "signed_gap_mse_x10000": -80.80374994934427,
+          "share_of_positive_excess_sse": 0.08594778365432272
+        },
+        "near_5_16": {
+          "pixels": 18120508,
+          "baseline_mse_x10000": 130.3431434077438,
+          "experiment_mse_x10000": 63.97517579209223,
+          "signed_gap_mse_x10000": -66.36796774910042,
+          "share_of_positive_excess_sse": 0.1770059438790104
+        },
+        "mid_17_32": {
+          "pixels": 20202853,
+          "baseline_mse_x10000": 118.98319367389365,
+          "experiment_mse_x10000": 58.27591419738852,
+          "signed_gap_mse_x10000": -60.707278294547706,
+          "share_of_positive_excess_sse": 0.17457174013302668
+        },
+        "far_gt_32": {
+          "pixels": 54501687,
+          "baseline_mse_x10000": 136.6039121822409,
+          "experiment_mse_x10000": 68.43487670836771,
+          "signed_gap_mse_x10000": -68.16903369921165,
+          "share_of_positive_excess_sse": 0.5624745323336403
+        }
+      },
+      "by_source_texture": {
+        "smooth": {
+          "pixels": 36638697,
+          "baseline_mse_x10000": 54.27205806295737,
+          "experiment_mse_x10000": 22.054580487440195,
+          "signed_gap_mse_x10000": -32.217477703502325,
+          "share_of_positive_excess_sse": 0.11563955004789833
+        },
+        "medium": {
+          "pixels": 30433907,
+          "baseline_mse_x10000": 111.04003427827543,
+          "experiment_mse_x10000": 49.04667271083396,
+          "signed_gap_mse_x10000": -61.99336091039261,
+          "share_of_positive_excess_sse": 0.22755961054235385
+        },
+        "edge": {
+          "pixels": 32502427,
+          "baseline_mse_x10000": 244.13610056047352,
+          "experiment_mse_x10000": 132.6759240852003,
+          "signed_gap_mse_x10000": -111.46017762361615,
+          "share_of_positive_excess_sse": 0.6568008394097479
+        }
+      },
+      "by_source_group": {
+        "random_unknown": {
+          "pixels": 21002018,
+          "baseline_mse_x10000": 118.1143664830563,
+          "experiment_mse_x10000": 57.43135494483101,
+          "signed_gap_mse_x10000": -60.68301077948851,
+          "share_of_positive_excess_sse": 0.15707086494347383
+        },
+        "artificial_graphic": {
+          "pixels": 40042746,
+          "baseline_mse_x10000": 154.75583752550602,
+          "experiment_mse_x10000": 80.06681945182811,
+          "signed_gap_mse_x10000": -74.68901935700514,
+          "share_of_positive_excess_sse": 0.5197653631225023
+        },
+        "photographic": {
+          "pixels": 38530267,
+          "baseline_mse_x10000": 120.04501852079088,
+          "experiment_mse_x10000": 57.117507438798015,
+          "signed_gap_mse_x10000": -62.927510267489346,
+          "share_of_positive_excess_sse": 0.32316377193402385
+        }
+      },
+      "by_category": {
+        "random": {
+          "pixels": 21002018,
+          "baseline_mse_x10000": 118.1143664830563,
+          "experiment_mse_x10000": 57.43135494483101,
+          "signed_gap_mse_x10000": -60.68301077948851,
+          "share_of_positive_excess_sse": 0.15707086494347383
+        },
+        "change_object": {
+          "pixels": 16022814,
+          "baseline_mse_x10000": 122.6499955831701,
+          "experiment_mse_x10000": 55.98549172101939,
+          "signed_gap_mse_x10000": -66.66450157778166,
+          "share_of_positive_excess_sse": 0.1385216382525506
+        },
+        "add_object": {
+          "pixels": 8488606,
+          "baseline_mse_x10000": 125.21766917265946,
+          "experiment_mse_x10000": 69.05436575474032,
+          "signed_gap_mse_x10000": -56.16330719242324,
+          "share_of_positive_excess_sse": 0.09557508826553725
+        },
+        "delete_object": {
+          "pixels": 17728310,
+          "baseline_mse_x10000": 150.71465736999684,
+          "experiment_mse_x10000": 85.33432627843793,
+          "signed_gap_mse_x10000": -65.3803308380105,
+          "share_of_positive_excess_sse": 0.22813247803030992
+        },
+        "change_content": {
+          "pixels": 6672651,
+          "baseline_mse_x10000": 133.759008801433,
+          "experiment_mse_x10000": 53.311279879981946,
+          "signed_gap_mse_x10000": -80.44773380572043,
+          "share_of_positive_excess_sse": 0.06137277851240876
+        },
+        "change_pose": {
+          "pixels": 7302442,
+          "baseline_mse_x10000": 123.7934812069304,
+          "experiment_mse_x10000": 59.93611020329491,
+          "signed_gap_mse_x10000": -63.857376270162256,
+          "share_of_positive_excess_sse": 0.06895569831347993
+        },
+        "change_color": {
+          "pixels": 7420476,
+          "baseline_mse_x10000": 131.87963128986948,
+          "experiment_mse_x10000": 69.31992531782879,
+          "signed_gap_mse_x10000": -62.559707172839275,
+          "share_of_positive_excess_sse": 0.0718850142735435
+        },
+        "change_material": {
+          "pixels": 7051385,
+          "baseline_mse_x10000": 89.96042474280452,
+          "experiment_mse_x10000": 42.54112266022096,
+          "signed_gap_mse_x10000": -47.41930197709139,
+          "share_of_positive_excess_sse": 0.05158755949095339
+        },
+        "change_background": {
+          "pixels": 7473788,
+          "baseline_mse_x10000": 217.74159026600017,
+          "experiment_mse_x10000": 103.65946966102658,
+          "signed_gap_mse_x10000": -114.08211383300058,
+          "share_of_positive_excess_sse": 0.12358841173546649
+        },
+        "change_style": {
+          "pixels": 412541,
+          "baseline_mse_x10000": 206.87884317467208,
+          "experiment_mse_x10000": 68.59246026076802,
+          "signed_gap_mse_x10000": -138.28638402352388,
+          "share_of_positive_excess_sse": 0.00331046818227634
+        }
+      },
+      "grid_signed_gap_mse_x10000": [
+        [
+          -28.06759912428714,
+          -29.165471408353966,
+          -35.68474774932567,
+          -46.770525258931045,
+          -43.05781919405054,
+          -32.564864820757286,
+          -39.48809579796643,
+          -32.00636439521314
+        ],
+        [
+          -27.118743249718953,
+          -41.49985903160821,
+          -56.84646053040524,
+          -82.83565000475399,
+          -95.13889258907345,
+          -64.9544625468231,
+          -48.029293184235286,
+          -43.72426379783737
+        ],
+        [
+          -35.75920086157341,
+          -63.18607827162393,
+          -87.3020231303866,
+          -113.65530088228441,
+          -108.50423297500619,
+          -82.09384588413664,
+          -47.61487182346061,
+          -46.856378425753896
+        ],
+        [
+          -38.757425972868795,
+          -71.04314173029913,
+          -104.7903300878705,
+          -113.43259013569916,
+          -103.8045333778409,
+          -100.43996086098805,
+          -67.70383192517032,
+          -55.82429941249603
+        ],
+        [
+          -61.04029435168495,
+          -79.63556856868144,
+          -95.74713334595212,
+          -110.07669685986367,
+          -101.09220856972652,
+          -108.41932392740904,
+          -75.06362070759081,
+          -54.26901650720639
+        ],
+        [
+          -58.422063210372194,
+          -80.52439094365995,
+          -104.50153353598775,
+          -115.47625826931029,
+          -117.46429329051804,
+          -98.1726472663754,
+          -71.4932959216701,
+          -56.58669721034904
+        ],
+        [
+          -49.51463718886557,
+          -76.83671819039255,
+          -94.930850980165,
+          -118.50376873152833,
+          -96.29686909834437,
+          -84.826062808687,
+          -64.15907256547476,
+          -47.31351023286251
+        ],
+        [
+          -40.617063374496574,
+          -51.24185806486595,
+          -60.54911287170497,
+          -69.21052946102155,
+          -67.87716686208493,
+          -60.02367292682183,
+          -44.626439105178704,
+          -39.257977052667904
+        ]
+      ],
+      "normalized_mse_outlier_concentration": {
+        "top_10pct_share_of_positive_per_image_gap": 1.0
+      },
+      "worst_normalized_mse": [
+        {
+          "file_id": "214000000002",
+          "image_path": "2_add_object_80/1_artificial/4_outdoor/214000000002.jpg",
+          "category": "add_object",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a family playing with their dog at sunset",
+          "editing_prompt": "a family playing with their dog at sunset [with clouds in the sky]",
+          "instruction": "Add clouds in the sky to the sunset scene",
+          "unedited_fraction": 0.26300811767578125,
+          "baseline_normalized_mse_x10000": 51.167551428079605,
+          "experiment_normalized_mse_x10000": 160.53097322583199,
+          "normalized_mse_gap_x10000": 109.36342179775238,
+          "baseline_normalized_psnr": 22.910053652580405,
+          "experiment_normalized_psnr": 17.9444116136939,
+          "normalized_psnr_worsening": 4.965642038886501,
+          "baseline_rgb_bias": [
+            -0.006262942682951689,
+            -0.04692640155553818,
+            -0.014181702397763729
+          ],
+          "experiment_rgb_bias": [
+            0.01752467453479767,
+            0.0009865998290479183,
+            -0.0011625192128121853
+          ],
+          "baseline_bias_mse_x10000": 8.141440921463072,
+          "experiment_bias_mse_x10000": 1.0314633982488886,
+          "bias_mse_gap_x10000": -7.109977523214184
+        },
+        {
+          "file_id": "314000000009",
+          "image_path": "3_delete_object_80/1_artificial/4_outdoor/314000000009.jpg",
+          "category": "delete_object",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a poster of [a bus driving down] a road with mountains in the background",
+          "editing_prompt": "a poster of a road with mountains in the background",
+          "instruction": "Remove the bus",
+          "unedited_fraction": 0.8797569274902344,
+          "baseline_normalized_mse_x10000": 256.2905102968216,
+          "experiment_normalized_mse_x10000": 331.22096210718155,
+          "normalized_mse_gap_x10000": 74.93045181035995,
+          "baseline_normalized_psnr": 15.91267474198217,
+          "experiment_normalized_psnr": 14.798821856570958,
+          "normalized_psnr_worsening": 1.1138528854112124,
+          "baseline_rgb_bias": [
+            0.017460744827985764,
+            0.008369243703782558,
+            0.007409870624542236
+          ],
+          "experiment_rgb_bias": [
+            0.006638138554990292,
+            0.005690713878720999,
+            0.017104147002100945
+          ],
+          "baseline_bias_mse_x10000": 1.4327601820696145,
+          "experiment_bias_mse_x10000": 1.230003108503297,
+          "bias_mse_gap_x10000": -0.20275707356631756
+        },
+        {
+          "file_id": "413000000002",
+          "image_path": "4_change_attribute_content_40/1_artificial/3_indoor/413000000002.jpg",
+          "category": "change_content",
+          "source_group": "artificial_graphic",
+          "original_prompt": "couple in a blanket on the couch with a [burning fire]",
+          "editing_prompt": "couple in a blanket on the couch with a [extinguished fire]",
+          "instruction": "Extinguish the fire to the scene",
+          "unedited_fraction": 0.9573326110839844,
+          "baseline_normalized_mse_x10000": 89.84237909317017,
+          "experiment_normalized_mse_x10000": 154.8565085977316,
+          "normalized_mse_gap_x10000": 65.01412950456142,
+          "baseline_normalized_psnr": 20.46518756152706,
+          "experiment_normalized_psnr": 18.10070536586322,
+          "normalized_psnr_worsening": 2.364482195663842,
+          "baseline_rgb_bias": [
+            -0.002041939878836274,
+            -0.014388089068233967,
+            0.00014200137229636312
+          ],
+          "experiment_rgb_bias": [
+            0.00401339353993535,
+            -0.011552092619240284,
+            -0.00036174998967908323
+          ],
+          "baseline_bias_mse_x10000": 0.7040226046228781,
+          "experiment_bias_mse_x10000": 0.498963454447221,
+          "bias_mse_gap_x10000": -0.20505915017565712
+        },
+        {
+          "file_id": "213000000000",
+          "image_path": "2_add_object_80/1_artificial/3_indoor/213000000000.jpg",
+          "category": "add_object",
+          "source_group": "artificial_graphic",
+          "original_prompt": "two red flowers on a pink background",
+          "editing_prompt": "two red flowers on a pink [hearts] background",
+          "instruction": "Add hearts to the pink background",
+          "unedited_fraction": 0.035614013671875,
+          "baseline_normalized_mse_x10000": 374.54754114151,
+          "experiment_normalized_mse_x10000": 430.1628842949867,
+          "normalized_mse_gap_x10000": 55.615343153476715,
+          "baseline_normalized_psnr": 14.26493049673412,
+          "experiment_normalized_psnr": 13.663670645233184,
+          "normalized_psnr_worsening": 0.6012598515009382,
+          "baseline_rgb_bias": [
+            -0.0019049582770094275,
+            0.11342974752187729,
+            0.18054528534412384
+          ],
+          "experiment_rgb_bias": [
+            -0.005523607600480318,
+            0.09848666191101074,
+            0.18277508020401
+          ],
+          "baseline_bias_mse_x10000": 151.55511908233166,
+          "experiment_bias_mse_x10000": 143.78954656422138,
+          "bias_mse_gap_x10000": -7.765572518110275
+        },
+        {
+          "file_id": "314000000007",
+          "image_path": "3_delete_object_80/1_artificial/4_outdoor/314000000007.jpg",
+          "category": "delete_object",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a painting of [a dog in] the forest",
+          "editing_prompt": "a painting of the forest",
+          "instruction": "Remove the dog from the painting",
+          "unedited_fraction": 0.8978843688964844,
+          "baseline_normalized_mse_x10000": 149.22991394996643,
+          "experiment_normalized_mse_x10000": 190.01079723238945,
+          "normalized_mse_gap_x10000": 40.78088328242302,
+          "baseline_normalized_psnr": 18.261441114396874,
+          "experiment_normalized_psnr": 17.212217198618323,
+          "normalized_psnr_worsening": 1.0492239157785492,
+          "baseline_rgb_bias": [
+            -0.03220563754439354,
+            -0.03698038309812546,
+            -0.07682206481695175
+          ],
+          "experiment_rgb_bias": [
+            -0.03716161102056503,
+            -0.03954004496335983,
+            -0.08141767978668213
+          ],
+          "baseline_bias_mse_x10000": 27.687938418239355,
+          "experiment_bias_mse_x10000": 31.910797115415335,
+          "bias_mse_gap_x10000": 4.22285869717598
+        },
+        {
+          "file_id": "000000000047",
+          "image_path": "0_random_140/000000000047.jpg",
+          "category": "random",
+          "source_group": "random_unknown",
+          "original_prompt": "[rusty] car by jill kaufman",
+          "editing_prompt": "[shiny] car by jill kaufman",
+          "instruction": "Make the car shiny",
+          "unedited_fraction": 0.28218841552734375,
+          "baseline_normalized_mse_x10000": 263.86789977550507,
+          "experiment_normalized_mse_x10000": 300.1062572002411,
+          "normalized_mse_gap_x10000": 36.23835742473602,
+          "baseline_normalized_psnr": 15.78613439633335,
+          "experiment_normalized_psnr": 15.227249494628277,
+          "normalized_psnr_worsening": 0.5588849017050757,
+          "baseline_rgb_bias": [
+            -0.004607593175023794,
+            -0.014332941733300686,
+            -0.030288081616163254
+          ],
+          "experiment_rgb_bias": [
+            -0.04299609735608101,
+            0.0002185834018746391,
+            -0.019075805321335793
+          ],
+          "baseline_bias_mse_x10000": 3.813436778727919,
+          "experiment_bias_mse_x10000": 7.37532798666507,
+          "bias_mse_gap_x10000": 3.561891207937151
+        },
+        {
+          "file_id": "822000000003",
+          "image_path": "8_change_background_80/2_natural/2_human/822000000003.jpg",
+          "category": "change_background",
+          "source_group": "photographic",
+          "original_prompt": "a woman in a scarf and coat walking down a [cobblestone street]",
+          "editing_prompt": "a woman in a scarf and coat walking down a [thick forest]",
+          "instruction": "Change the street to a forest",
+          "unedited_fraction": 0.13878631591796875,
+          "baseline_normalized_mse_x10000": 281.70935809612274,
+          "experiment_normalized_mse_x10000": 307.6200932264328,
+          "normalized_mse_gap_x10000": 25.91073513031006,
+          "baseline_normalized_psnr": 15.50198725957064,
+          "experiment_normalized_psnr": 15.1198530055994,
+          "normalized_psnr_worsening": 0.3821342539712407,
+          "baseline_rgb_bias": [
+            -0.03349374979734421,
+            -0.03179864585399628,
+            -0.06970387697219849
+          ],
+          "experiment_rgb_bias": [
+            -0.050030481070280075,
+            -0.03306522220373154,
+            -0.06127046048641205
+          ],
+          "baseline_bias_mse_x10000": 23.30538583919406,
+          "experiment_bias_mse_x10000": 24.50142288580537,
+          "bias_mse_gap_x10000": 1.196037046611309
+        },
+        {
+          "file_id": "824000000003",
+          "image_path": "8_change_background_80/2_natural/4_outdoor/824000000003.jpg",
+          "category": "change_background",
+          "source_group": "photographic",
+          "original_prompt": "girl sitting in the [ruins] by james mccormick",
+          "editing_prompt": "girl sitting in the [beach] by james mccormick",
+          "instruction": "Change the location from ruins to a beach",
+          "unedited_fraction": 0.019687652587890625,
+          "baseline_normalized_mse_x10000": 211.8724025785923,
+          "experiment_normalized_mse_x10000": 235.10273545980453,
+          "normalized_mse_gap_x10000": 23.230332881212234,
+          "baseline_normalized_psnr": 16.739256085953752,
+          "experiment_normalized_psnr": 16.287423177564417,
+          "normalized_psnr_worsening": 0.4518329083893333,
+          "baseline_rgb_bias": [
+            0.02843630500137806,
+            -0.0200089979916811,
+            0.05131431296467781
+          ],
+          "experiment_rgb_bias": [
+            0.018702838569879532,
+            -0.012288231402635574,
+            0.06409548223018646
+          ],
+          "baseline_bias_mse_x10000": 12.807141756638885,
+          "experiment_bias_mse_x10000": 15.363426646217704,
+          "bias_mse_gap_x10000": 2.5562848895788193
+        },
+        {
+          "file_id": "321000000002",
+          "image_path": "3_delete_object_80/2_natural/1_animal/321000000002.jpg",
+          "category": "delete_object",
+          "source_group": "photographic",
+          "original_prompt": "a cheetah walking across a [grassy] field",
+          "editing_prompt": "a cheetah walking across a field",
+          "instruction": "Remove grass from the field",
+          "unedited_fraction": 0.11241531372070312,
+          "baseline_normalized_mse_x10000": 500.63151866197586,
+          "experiment_normalized_mse_x10000": 523.6531421542168,
+          "normalized_mse_gap_x10000": 23.021623492240906,
+          "baseline_normalized_psnr": 13.00481811639364,
+          "experiment_normalized_psnr": 12.809562861602297,
+          "normalized_psnr_worsening": 0.1952552547913426,
+          "baseline_rgb_bias": [
+            0.04070389270782471,
+            0.025676976889371872,
+            -0.013258571736514568
+          ],
+          "experiment_rgb_bias": [
+            0.04328863322734833,
+            0.027706937864422798,
+            -0.01666783168911934
+          ],
+          "baseline_bias_mse_x10000": 8.306345553137362,
+          "experiment_bias_mse_x10000": 9.731322061270475,
+          "bias_mse_gap_x10000": 1.4249765081331134
+        },
+        {
+          "file_id": "000000000122",
+          "image_path": "0_random_140/000000000122.jpg",
+          "category": "random",
+          "source_group": "random_unknown",
+          "original_prompt": "a view of the mountains covered in [snow]",
+          "editing_prompt": "a view of the mountains covered in [leaves]",
+          "instruction": "Replace snow with leaves",
+          "unedited_fraction": 0.8583869934082031,
+          "baseline_normalized_mse_x10000": 231.48313164710999,
+          "experiment_normalized_mse_x10000": 252.36576795578003,
+          "normalized_mse_gap_x10000": 20.882636308670044,
+          "baseline_normalized_psnr": 16.354806508641357,
+          "experiment_normalized_psnr": 15.979695551179304,
+          "normalized_psnr_worsening": 0.37511095746205264,
+          "baseline_rgb_bias": [
+            -0.05817463621497154,
+            -0.09484223276376724,
+            -0.13831059634685516
+          ],
+          "experiment_rgb_bias": [
+            -0.05921497941017151,
+            -0.09931880235671997,
+            -0.14805954694747925
+          ],
+          "baseline_bias_mse_x10000": 105.03052733838558,
+          "experiment_bias_mse_x10000": 117.64089576900005,
+          "bias_mse_gap_x10000": 12.610368430614471
+        },
+        {
+          "file_id": "713000000000",
+          "image_path": "7_change_attribute_material_40/1_artificial/3_indoor/713000000000.jpg",
+          "category": "change_material",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a sketch of a kitchen and dining area with two chairs",
+          "editing_prompt": "a sketch of a kitchen and dining area with two [plastic] chairs",
+          "instruction": "Make the chairs plastic",
+          "unedited_fraction": 0.9104042053222656,
+          "baseline_normalized_mse_x10000": 79.90946993231773,
+          "experiment_normalized_mse_x10000": 93.34282949566841,
+          "normalized_mse_gap_x10000": 13.433359563350677,
+          "baseline_normalized_psnr": 20.974017501523015,
+          "experiment_normalized_psnr": 20.299190385083904,
+          "normalized_psnr_worsening": 0.6748271164391146,
+          "baseline_rgb_bias": [
+            0.0007061446667648852,
+            0.0021389340981841087,
+            0.00047955670743249357
+          ],
+          "experiment_rgb_bias": [
+            0.007818276062607765,
+            0.007818536832928658,
+            0.009616395458579063
+          ],
+          "baseline_bias_mse_x10000": 0.01767884782566398,
+          "experiment_bias_mse_x10000": 0.7157667278079316,
+          "bias_mse_gap_x10000": 0.6980878799822676
+        },
+        {
+          "file_id": "813000000006",
+          "image_path": "8_change_background_80/1_artificial/3_indoor/813000000006.jpg",
+          "category": "change_background",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a white couch in front of a [painting]",
+          "editing_prompt": "a white couch in front of a [photo]",
+          "instruction": "replace painting with photo",
+          "unedited_fraction": 0.8799171447753906,
+          "baseline_normalized_mse_x10000": 128.16323898732662,
+          "experiment_normalized_mse_x10000": 138.65932822227478,
+          "normalized_mse_gap_x10000": 10.496089234948158,
+          "baseline_normalized_psnr": 18.92236525475289,
+          "experiment_normalized_psnr": 18.580509082052252,
+          "normalized_psnr_worsening": 0.34185617270063534,
+          "baseline_rgb_bias": [
+            0.03761234134435654,
+            0.04935719072818756,
+            0.07517310976982117
+          ],
+          "experiment_rgb_bias": [
+            0.04110060632228851,
+            0.052665721625089645,
+            0.07293277233839035
+          ],
+          "baseline_bias_mse_x10000": 31.67272312566638,
+          "experiment_bias_mse_x10000": 32.60709112510085,
+          "bias_mse_gap_x10000": 0.9343679994344711
+        },
+        {
+          "file_id": "813000000000",
+          "image_path": "8_change_background_80/1_artificial/3_indoor/813000000000.jpg",
+          "category": "change_background",
+          "source_group": "artificial_graphic",
+          "original_prompt": "popcorn and a cup of hot chocolate in front of [fireplace]",
+          "editing_prompt": "popcorn and a cup of hot chocolate in front of [garden]",
+          "instruction": "Change the fireplace to garden",
+          "unedited_fraction": 0.3336143493652344,
+          "baseline_normalized_mse_x10000": 180.5826835334301,
+          "experiment_normalized_mse_x10000": 190.69163128733635,
+          "normalized_mse_gap_x10000": 10.10894775390625,
+          "baseline_normalized_psnr": 17.433238974690347,
+          "experiment_normalized_psnr": 17.196683660283572,
+          "normalized_psnr_worsening": 0.23655531440677402,
+          "baseline_rgb_bias": [
+            0.021236341446638107,
+            0.022196898236870766,
+            0.028857748955488205
+          ],
+          "experiment_rgb_bias": [
+            0.025372423231601715,
+            0.03821491077542305,
+            0.054841652512550354
+          ],
+          "baseline_bias_mse_x10000": 5.9215136570855975,
+          "experiment_bias_mse_x10000": 17.039155354723334,
+          "bias_mse_gap_x10000": 11.117641697637737
+        },
+        {
+          "file_id": "212000000004",
+          "image_path": "2_add_object_80/1_artificial/2_human/212000000004.jpg",
+          "category": "add_object",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a female character in a blue outfit",
+          "editing_prompt": "a female character in a blue outfit [with a tiger]",
+          "instruction": "Add a tiger to the female character's outfit",
+          "unedited_fraction": 0.461456298828125,
+          "baseline_normalized_mse_x10000": 130.21254912018776,
+          "experiment_normalized_mse_x10000": 139.64300975203514,
+          "normalized_mse_gap_x10000": 9.430460631847382,
+          "baseline_normalized_psnr": 18.85347159001147,
+          "experiment_normalized_psnr": 18.549807993263897,
+          "normalized_psnr_worsening": 0.3036635967475758,
+          "baseline_rgb_bias": [
+            -0.02663128636777401,
+            0.015993725508451462,
+            0.0732174813747406
+          ],
+          "experiment_rgb_bias": [
+            -0.02318645641207695,
+            0.019967827945947647,
+            0.06267200410366058
+          ],
+          "baseline_bias_mse_x10000": 21.08608139678836,
+          "experiment_bias_mse_x10000": 16.21368806809187,
+          "bias_mse_gap_x10000": -4.872393328696489
+        },
+        {
+          "file_id": "821000000006",
+          "image_path": "8_change_background_80/2_natural/1_animal/821000000006.jpg",
+          "category": "change_background",
+          "source_group": "photographic",
+          "original_prompt": "a kingfisher is stretching its wings [on a branch]",
+          "editing_prompt": "a kingfisher is stretching its wings [on a rock]",
+          "instruction": "Change the perch for the kingfisher from a branch to a rock",
+          "unedited_fraction": 0.7411422729492188,
+          "baseline_normalized_mse_x10000": 75.165880843997,
+          "experiment_normalized_mse_x10000": 83.39167572557926,
+          "normalized_mse_gap_x10000": 8.22579488158226,
+          "baseline_normalized_psnr": 21.23979248819206,
+          "experiment_normalized_psnr": 20.788772990850106,
+          "normalized_psnr_worsening": 0.45101949734195623,
+          "baseline_rgb_bias": [
+            0.0044282120652496815,
+            -0.004341652616858482,
+            0.003067634766921401
+          ],
+          "experiment_rgb_bias": [
+            -0.0022089332342147827,
+            -0.009021171368658543,
+            -0.0034206174314022064
+          ],
+          "baseline_bias_mse_x10000": 0.15956464267219417,
+          "experiment_bias_mse_x10000": 0.32653846574248746,
+          "bias_mse_gap_x10000": 0.1669738230702933
+        },
+        {
+          "file_id": "613000000003",
+          "image_path": "6_change_attribute_color_40/1_artificial/3_indoor/613000000003.jpg",
+          "category": "change_color",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a plant hanging in front of a [white] wall",
+          "editing_prompt": "a plant hanging in front of a [red] wall",
+          "instruction": "Make the wall red",
+          "unedited_fraction": 0.3439826965332031,
+          "baseline_normalized_mse_x10000": 40.04976712167263,
+          "experiment_normalized_mse_x10000": 47.96077962964773,
+          "normalized_mse_gap_x10000": 7.9110125079751015,
+          "baseline_normalized_psnr": 23.974000048747893,
+          "experiment_normalized_psnr": 23.191137658129314,
+          "normalized_psnr_worsening": 0.782862390618576,
+          "baseline_rgb_bias": [
+            -0.006985364947468042,
+            -0.02056312747299671,
+            -0.01174788549542427
+          ],
+          "experiment_rgb_bias": [
+            -0.01000930368900299,
+            -0.024693045765161514,
+            -0.015058843418955803
+          ],
+          "baseline_bias_mse_x10000": 2.032167831202969,
+          "experiment_bias_mse_x10000": 3.122338093817234,
+          "bias_mse_gap_x10000": 1.090170262614265
+        },
+        {
+          "file_id": "212000000003",
+          "image_path": "2_add_object_80/1_artificial/2_human/212000000003.jpg",
+          "category": "add_object",
+          "source_group": "artificial_graphic",
+          "original_prompt": "an Asian woman with blue thick-lashed eyes and black hair",
+          "editing_prompt": "an Asian woman with blue thick-lashed eyes [and flowers on her] black hair",
+          "instruction": "Add flowers to the woman's hair",
+          "unedited_fraction": 0.4568519592285156,
+          "baseline_normalized_mse_x10000": 82.73744024336338,
+          "experiment_normalized_mse_x10000": 89.59593251347542,
+          "normalized_mse_gap_x10000": 6.858492270112038,
+          "baseline_normalized_psnr": 20.822979195702985,
+          "experiment_normalized_psnr": 20.47711706041556,
+          "normalized_psnr_worsening": 0.3458621352874288,
+          "baseline_rgb_bias": [
+            0.027528146281838417,
+            0.027190526947379112,
+            0.02479049749672413
+          ],
+          "experiment_rgb_bias": [
+            0.026902077719569206,
+            0.032150208950042725,
+            0.03354405239224434
+          ],
+          "baseline_bias_mse_x10000": 7.038975018076599,
+          "experiment_bias_mse_x10000": 9.60853707510978,
+          "bias_mse_gap_x10000": 2.569562057033181
+        },
+        {
+          "file_id": "511000000000",
+          "image_path": "5_change_attribute_pose_40/1_artificial/1_animal/511000000000.jpg",
+          "category": "change_pose",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a cartoon dog [laying down on] the ground",
+          "editing_prompt": "a cartoon dog [jumping up from] the ground",
+          "instruction": "Change the cartoon dog's posture from laying down to jumping up",
+          "unedited_fraction": 0.9391441345214844,
+          "baseline_normalized_mse_x10000": 3.4440873423591256,
+          "experiment_normalized_mse_x10000": 10.255741653963923,
+          "normalized_mse_gap_x10000": 6.811654311604798,
+          "baseline_normalized_psnr": 34.62925843332315,
+          "experiment_normalized_psnr": 29.8903292773078,
+          "normalized_psnr_worsening": 4.738929156015351,
+          "baseline_rgb_bias": [
+            -0.009533017873764038,
+            -0.0024538827128708363,
+            -0.0025124847888946533
+          ],
+          "experiment_rgb_bias": [
+            -0.007769978605210781,
+            -0.004730727057904005,
+            -0.004640753846615553
+          ],
+          "baseline_bias_mse_x10000": 0.3440418004174717,
+          "experiment_bias_mse_x10000": 0.34762979339575395,
+          "bias_mse_gap_x10000": 0.003587992978282273
+        },
+        {
+          "file_id": "622000000002",
+          "image_path": "6_change_attribute_color_40/2_natural/2_human/622000000002.jpg",
+          "category": "change_color",
+          "source_group": "photographic",
+          "original_prompt": "a man in a [white] shirt talking on a cell phone",
+          "editing_prompt": "a man in a [blue] shirt talking on a cell phone",
+          "instruction": "Change the color of the shirt from white to blue",
+          "unedited_fraction": 0.7741127014160156,
+          "baseline_normalized_mse_x10000": 71.1349630728364,
+          "experiment_normalized_mse_x10000": 77.21101865172386,
+          "normalized_mse_gap_x10000": 6.076055578887463,
+          "baseline_normalized_psnr": 21.479168896017104,
+          "experiment_normalized_psnr": 21.12320717822662,
+          "normalized_psnr_worsening": 0.35596171779048086,
+          "baseline_rgb_bias": [
+            -0.007451685611158609,
+            -0.0043364353477954865,
+            0.012311642058193684
+          ],
+          "experiment_rgb_bias": [
+            -0.009822598658502102,
+            -0.009562334045767784,
+            0.006371734663844109
+          ],
+          "baseline_bias_mse_x10000": 0.7530293805757537,
+          "experiment_bias_mse_x10000": 0.7617356459377334,
+          "bias_mse_gap_x10000": 0.008706265361979604
+        },
+        {
+          "file_id": "222000000004",
+          "image_path": "2_add_object_80/2_natural/2_human/222000000004.jpg",
+          "category": "add_object",
+          "source_group": "photographic",
+          "original_prompt": "a woman in a white dress holding a straw hat",
+          "editing_prompt": "a woman in a white dress holding a straw hat [and a tennis racket]",
+          "instruction": "Add a tennis racket to the woman",
+          "unedited_fraction": 0.87091064453125,
+          "baseline_normalized_mse_x10000": 97.04963304102421,
+          "experiment_normalized_mse_x10000": 103.12288999557495,
+          "normalized_mse_gap_x10000": 6.073256954550743,
+          "baseline_normalized_psnr": 20.13006102404001,
+          "experiment_normalized_psnr": 19.866449244798698,
+          "normalized_psnr_worsening": 0.2636117792413162,
+          "baseline_rgb_bias": [
+            -0.004536817315965891,
+            0.012282242067158222,
+            0.012647601775825024
+          ],
+          "experiment_rgb_bias": [
+            -0.0070971292443573475,
+            0.014413176104426384,
+            0.013689951971173286
+          ],
+          "baseline_bias_mse_x10000": 1.1046600411646068,
+          "experiment_bias_mse_x10000": 1.4850789739284664,
+          "bias_mse_gap_x10000": 0.38041893276385963
+        }
+      ]
+    },
+    "pnp": {
+      "n": 556,
+      "official_mse_recompute_max_abs_error": 1.0326701271878846e-08,
+      "normalized_mask_metrics": {
+        "baseline_mse_x10000": 129.5401113583525,
+        "experiment_mse_x10000": 131.73975357852345,
+        "mse_gap_x10000": 2.199642220170931,
+        "baseline_psnr": 20.29249343345445,
+        "experiment_psnr": 20.192218639003055,
+        "psnr_worsening": 0.10027479445139353
+      },
+      "global_rgb_bias_component": {
+        "baseline_bias_mse_x10000": 32.985134314166,
+        "experiment_bias_mse_x10000": 32.97972291782962,
+        "bias_mse_gap_x10000": -0.005411396336375223,
+        "share_of_total_signed_mse_gap": -0.0024601256907838117
+      },
+      "by_mask_distance": {
+        "boundary_0_4": {
+          "pixels": 6749983,
+          "baseline_mse_x10000": 131.2455660891703,
+          "experiment_mse_x10000": 134.25149287858426,
+          "signed_gap_mse_x10000": 3.0059273725769646,
+          "share_of_positive_excess_sse": 0.07992060258416034
+        },
+        "near_5_16": {
+          "pixels": 18120508,
+          "baseline_mse_x10000": 115.55146886894579,
+          "experiment_mse_x10000": 117.24321022028265,
+          "signed_gap_mse_x10000": 1.6917418790040153,
+          "share_of_positive_excess_sse": 0.17205435528291194
+        },
+        "mid_17_32": {
+          "pixels": 20202853,
+          "baseline_mse_x10000": 111.91096671942113,
+          "experiment_mse_x10000": 113.75208266783267,
+          "signed_gap_mse_x10000": 1.841116167206409,
+          "share_of_positive_excess_sse": 0.18389243755273835
+        },
+        "far_gt_32": {
+          "pixels": 54501687,
+          "baseline_mse_x10000": 117.69502820859209,
+          "experiment_mse_x10000": 121.16927521832356,
+          "signed_gap_mse_x10000": 3.474246082751163,
+          "share_of_positive_excess_sse": 0.5641326045801894
+        }
+      },
+      "by_source_texture": {
+        "smooth": {
+          "pixels": 36638697,
+          "baseline_mse_x10000": 63.15585010486241,
+          "experiment_mse_x10000": 63.83787538054706,
+          "signed_gap_mse_x10000": 0.6820249783993003,
+          "share_of_positive_excess_sse": 0.16282765454270753
+        },
+        "medium": {
+          "pixels": 30433907,
+          "baseline_mse_x10000": 99.10095860668096,
+          "experiment_mse_x10000": 101.76307652238164,
+          "signed_gap_mse_x10000": 2.662118803714802,
+          "share_of_positive_excess_sse": 0.24769389512905737
+        },
+        "edge": {
+          "pixels": 32502427,
+          "baseline_mse_x10000": 194.6093961305222,
+          "experiment_mse_x10000": 199.88549684788072,
+          "signed_gap_mse_x10000": 5.276100641055008,
+          "share_of_positive_excess_sse": 0.5894784503282351
+        }
+      },
+      "by_source_group": {
+        "random_unknown": {
+          "pixels": 21002018,
+          "baseline_mse_x10000": 104.964406523618,
+          "experiment_mse_x10000": 108.57438431574724,
+          "signed_gap_mse_x10000": 3.609979183357182,
+          "share_of_positive_excess_sse": 0.16781576936617118
+        },
+        "artificial_graphic": {
+          "pixels": 40042746,
+          "baseline_mse_x10000": 137.97289411132513,
+          "experiment_mse_x10000": 140.67905021672155,
+          "signed_gap_mse_x10000": 2.7061570172174636,
+          "share_of_positive_excess_sse": 0.5137528998352178
+        },
+        "photographic": {
+          "pixels": 38530267,
+          "baseline_mse_x10000": 101.89332977742568,
+          "experiment_mse_x10000": 104.31517921365678,
+          "signed_gap_mse_x10000": 2.4218481098912745,
+          "share_of_positive_excess_sse": 0.3184313307986111
+        }
+      },
+      "by_category": {
+        "random": {
+          "pixels": 21002018,
+          "baseline_mse_x10000": 104.964406523618,
+          "experiment_mse_x10000": 108.57438431574724,
+          "signed_gap_mse_x10000": 3.609979183357182,
+          "share_of_positive_excess_sse": 0.16781576936617118
+        },
+        "change_object": {
+          "pixels": 16022814,
+          "baseline_mse_x10000": 114.97684494817567,
+          "experiment_mse_x10000": 120.11923181102017,
+          "signed_gap_mse_x10000": 5.142385847263512,
+          "share_of_positive_excess_sse": 0.17137183760994149
+        },
+        "add_object": {
+          "pixels": 8488606,
+          "baseline_mse_x10000": 105.66289877899085,
+          "experiment_mse_x10000": 107.72355696933631,
+          "signed_gap_mse_x10000": 2.0606525136096403,
+          "share_of_positive_excess_sse": 0.08263851612051014
+        },
+        "delete_object": {
+          "pixels": 17728310,
+          "baseline_mse_x10000": 122.04459337480708,
+          "experiment_mse_x10000": 125.15208280209438,
+          "signed_gap_mse_x10000": 3.107491572945275,
+          "share_of_positive_excess_sse": 0.1887826571408061
+        },
+        "change_content": {
+          "pixels": 6672651,
+          "baseline_mse_x10000": 102.28476118678182,
+          "experiment_mse_x10000": 100.57758318589556,
+          "signed_gap_mse_x10000": -1.7071803346973378,
+          "share_of_positive_excess_sse": 0.06052042338705583
+        },
+        "change_pose": {
+          "pixels": 7302442,
+          "baseline_mse_x10000": 101.42313173862597,
+          "experiment_mse_x10000": 102.14073610395954,
+          "signed_gap_mse_x10000": 0.7176065667574364,
+          "share_of_positive_excess_sse": 0.06036334573067951
+        },
+        "change_color": {
+          "pixels": 7420476,
+          "baseline_mse_x10000": 121.74150496160682,
+          "experiment_mse_x10000": 130.03528796811793,
+          "signed_gap_mse_x10000": 8.293779132082863,
+          "share_of_positive_excess_sse": 0.09509785289462121
+        },
+        "change_material": {
+          "pixels": 7051385,
+          "baseline_mse_x10000": 105.36719397428402,
+          "experiment_mse_x10000": 104.89837819159743,
+          "signed_gap_mse_x10000": -0.4688191417559223,
+          "share_of_positive_excess_sse": 0.05874506754149352
+        },
+        "change_background": {
+          "pixels": 7473788,
+          "baseline_mse_x10000": 191.93956744352434,
+          "experiment_mse_x10000": 191.6739205057639,
+          "signed_gap_mse_x10000": -0.26563986953684016,
+          "share_of_positive_excess_sse": 0.11130290675030542
+        },
+        "change_style": {
+          "pixels": 412541,
+          "baseline_mse_x10000": 106.50044299929242,
+          "experiment_mse_x10000": 98.25102743181259,
+          "signed_gap_mse_x10000": -8.249389059895146,
+          "share_of_positive_excess_sse": 0.0033616234584155943
+        }
+      },
+      "grid_signed_gap_mse_x10000": [
+        [
+          -0.6715650052396649,
+          -0.8477450981027284,
+          0.9411220117971062,
+          0.6874287330146839,
+          1.3541310996093705,
+          0.771998293528146,
+          0.45143950164013746,
+          -0.594755509062597
+        ],
+        [
+          0.5705748617305451,
+          -0.38828206259826537,
+          2.050433466226732,
+          2.901594939169336,
+          4.7730780087999145,
+          4.5315308851314064,
+          1.628950691142433,
+          -0.7680316216738109
+        ],
+        [
+          2.816882839341395,
+          3.0050890505128214,
+          3.937970167342969,
+          4.280030705609753,
+          1.8852567593647167,
+          2.644859730370284,
+          2.8203326733487657,
+          0.2969245530170199
+        ],
+        [
+          1.8045030475518242,
+          1.091281295735897,
+          5.0938049529043585,
+          2.767460995492876,
+          1.3347659782085952,
+          3.7134559863465944,
+          0.7946124903281818,
+          0.1451746100079346
+        ],
+        [
+          1.321114389949044,
+          1.158632834511672,
+          4.324639290183472,
+          0.9874185424196935,
+          2.2684035231690696,
+          6.240973384514484,
+          2.0738991053656486,
+          2.2580497401119173
+        ],
+        [
+          2.2903951928592097,
+          2.5881179750964742,
+          6.194562156694871,
+          2.6569703208662587,
+          5.5427610844140816,
+          8.568847558195971,
+          7.091071909080569,
+          1.4505624363077847
+        ],
+        [
+          3.7208891633030667,
+          6.447165906177981,
+          8.22841494577222,
+          5.072834914439446,
+          6.064388002864056,
+          10.409262819406386,
+          5.41370931719926,
+          2.423288830626294
+        ],
+        [
+          1.8900184286618866,
+          2.4488976900676502,
+          2.2312842123782497,
+          4.136324509195584,
+          4.3058056480734335,
+          3.8388698486148303,
+          3.221972866191155,
+          2.1477880252178334
+        ]
+      ],
+      "normalized_mse_outlier_concentration": {
+        "top_10pct_share_of_positive_per_image_gap": 0.5628678849655322
+      },
+      "worst_normalized_mse": [
+        {
+          "file_id": "612000000001",
+          "image_path": "6_change_attribute_color_40/1_artificial/2_human/612000000001.jpg",
+          "category": "change_color",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a woman wearing a [red] hat and a red dress",
+          "editing_prompt": "a woman wearing a [green] hat and a red dress",
+          "instruction": "Change the woman's hat to green",
+          "unedited_fraction": 0.7392616271972656,
+          "baseline_normalized_mse_x10000": 105.18285445868969,
+          "experiment_normalized_mse_x10000": 262.34323158860207,
+          "normalized_mse_gap_x10000": 157.16037712991238,
+          "baseline_normalized_psnr": 19.780550474526205,
+          "experiment_normalized_psnr": 15.811301360459362,
+          "normalized_psnr_worsening": 3.969249114066841,
+          "baseline_rgb_bias": [
+            0.005692863836884499,
+            -0.0005867997533641756,
+            0.004685551393777132
+          ],
+          "experiment_rgb_bias": [
+            0.00018613235442899168,
+            -0.004307664930820465,
+            -0.0048681264743208885
+          ],
+          "baseline_bias_mse_x10000": 0.18235807146993466,
+          "experiment_bias_mse_x10000": 0.1409642572980374,
+          "bias_mse_gap_x10000": -0.04139381417189725
+        },
+        {
+          "file_id": "000000000123",
+          "image_path": "0_random_140/000000000123.jpg",
+          "category": "random",
+          "source_group": "random_unknown",
+          "original_prompt": "[gold] buddha statue in the temple",
+          "editing_prompt": "[stone] buddha statue in the temple",
+          "instruction": "Change the buddha statue from gold to stone",
+          "unedited_fraction": 0.24869918823242188,
+          "baseline_normalized_mse_x10000": 73.73000495135784,
+          "experiment_normalized_mse_x10000": 207.11630582809448,
+          "normalized_mse_gap_x10000": 133.38630087673664,
+          "baseline_normalized_psnr": 21.323557369317406,
+          "experiment_normalized_psnr": 16.837857086758376,
+          "normalized_psnr_worsening": 4.485700282559031,
+          "baseline_rgb_bias": [
+            0.06719227135181427,
+            0.06427042931318283,
+            0.07775390148162842
+          ],
+          "experiment_rgb_bias": [
+            0.051398925483226776,
+            0.1045692041516304,
+            0.1828714907169342
+          ],
+          "baseline_bias_mse_x10000": 48.97052887827158,
+          "experiment_bias_mse_x10000": 156.72849491238594,
+          "bias_mse_gap_x10000": 107.75796603411436
+        },
+        {
+          "file_id": "811000000007",
+          "image_path": "8_change_background_80/1_artificial/1_animal/811000000007.jpg",
+          "category": "change_background",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a colorful cat with splashes of paint on its head",
+          "editing_prompt": "a colorful cat with splashes of paint on its head [with a blue background]",
+          "instruction": "Add a blue background to the cat with paint on its head",
+          "unedited_fraction": 0.35607147216796875,
+          "baseline_normalized_mse_x10000": 872.3452687263489,
+          "experiment_normalized_mse_x10000": 967.6048904657364,
+          "normalized_mse_gap_x10000": 95.25962173938751,
+          "baseline_normalized_psnr": 10.59311590039431,
+          "experiment_normalized_psnr": 10.143019452947426,
+          "normalized_psnr_worsening": 0.4500964474468838,
+          "baseline_rgb_bias": [
+            0.14289212226867676,
+            0.10063584893941879,
+            0.31827792525291443
+          ],
+          "experiment_rgb_bias": [
+            0.15112464129924774,
+            0.10696642100811005,
+            0.34155529737472534
+          ],
+          "baseline_bias_mse_x10000": 439.4885525107384,
+          "experiment_bias_mse_x10000": 503.13498824834824,
+          "bias_mse_gap_x10000": 63.64643573760986
+        },
+        {
+          "file_id": "824000000007",
+          "image_path": "8_change_background_80/2_natural/4_outdoor/824000000007.jpg",
+          "category": "change_background",
+          "source_group": "photographic",
+          "original_prompt": "a man is walking through [a rice field]",
+          "editing_prompt": "a man is walking through [a wonder land]",
+          "instruction": "Change the rice field to a wonder land",
+          "unedited_fraction": 0.029590606689453125,
+          "baseline_normalized_mse_x10000": 336.93842589855194,
+          "experiment_normalized_mse_x10000": 403.07264775037766,
+          "normalized_mse_gap_x10000": 66.13422185182571,
+          "baseline_normalized_psnr": 14.724494573950366,
+          "experiment_normalized_psnr": 13.946166717901834,
+          "normalized_psnr_worsening": 0.7783278560485325,
+          "baseline_rgb_bias": [
+            0.04157804697751999,
+            0.05658026039600372,
+            0.03162097558379173
+          ],
+          "experiment_rgb_bias": [
+            0.04456286504864693,
+            0.059433650225400925,
+            0.03606492280960083
+          ],
+          "baseline_bias_mse_x10000": 19.766485784202814,
+          "experiment_bias_mse_x10000": 22.729618940502405,
+          "bias_mse_gap_x10000": 2.963133156299591
+        },
+        {
+          "file_id": "813000000009",
+          "image_path": "8_change_background_80/1_artificial/3_indoor/813000000009.jpg",
+          "category": "change_background",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a small table with a bowl of fruit on it [in a room]",
+          "editing_prompt": "a small table with a bowl of fruit on it [in a forest]",
+          "instruction": "Change the room to a forest.",
+          "unedited_fraction": 0.10802841186523438,
+          "baseline_normalized_mse_x10000": 165.37120565772057,
+          "experiment_normalized_mse_x10000": 216.5350876748562,
+          "normalized_mse_gap_x10000": 51.16388201713562,
+          "baseline_normalized_psnr": 17.81540107314307,
+          "experiment_normalized_psnr": 16.64471719870058,
+          "normalized_psnr_worsening": 1.1706838744424914,
+          "baseline_rgb_bias": [
+            -0.02596586011350155,
+            -0.045163948088884354,
+            -0.09229476004838943
+          ],
+          "experiment_rgb_bias": [
+            -0.020517956465482712,
+            -0.043463334441185,
+            -0.07638745754957199
+          ],
+          "baseline_bias_mse_x10000": 37.441102322191,
+          "experiment_bias_mse_x10000": 27.150306850671768,
+          "bias_mse_gap_x10000": -10.290795471519232
+        },
+        {
+          "file_id": "611000000001",
+          "image_path": "6_change_attribute_color_40/1_artificial/1_animal/611000000001.jpg",
+          "category": "change_color",
+          "source_group": "artificial_graphic",
+          "original_prompt": "otter in the water with [pink] hearts",
+          "editing_prompt": "otter in the water with [green] hearts",
+          "instruction": "Change the raven from pink to green",
+          "unedited_fraction": 0.7882194519042969,
+          "baseline_normalized_mse_x10000": 292.2664023935795,
+          "experiment_normalized_mse_x10000": 341.79095178842545,
+          "normalized_mse_gap_x10000": 49.52454939484596,
+          "baseline_normalized_psnr": 15.342211062768891,
+          "experiment_normalized_psnr": 14.662394385151396,
+          "normalized_psnr_worsening": 0.6798166776174952,
+          "baseline_rgb_bias": [
+            -0.027926169335842133,
+            0.0661887377500534,
+            0.030280843377113342
+          ],
+          "experiment_rgb_bias": [
+            -0.026013139635324478,
+            0.0732363611459732,
+            0.0404331237077713
+          ],
+          "baseline_bias_mse_x10000": 20.25916473940015,
+          "experiment_bias_mse_x10000": 25.583619717508554,
+          "bias_mse_gap_x10000": 5.324454978108406
+        },
+        {
+          "file_id": "822000000008",
+          "image_path": "8_change_background_80/2_natural/2_human/822000000008.jpg",
+          "category": "change_background",
+          "source_group": "photographic",
+          "original_prompt": "a woman sitting [in the desert]",
+          "editing_prompt": "a woman sitting [in the flowers]",
+          "instruction": "Change the background to flowers",
+          "unedited_fraction": 0.32608795166015625,
+          "baseline_normalized_mse_x10000": 236.65355518460274,
+          "experiment_normalized_mse_x10000": 285.43466702103615,
+          "normalized_mse_gap_x10000": 48.78111183643341,
+          "baseline_normalized_psnr": 16.258869668543117,
+          "experiment_normalized_psnr": 15.444932814609654,
+          "normalized_psnr_worsening": 0.8139368539334619,
+          "baseline_rgb_bias": [
+            0.09106603264808655,
+            0.10817521065473557,
+            0.1349872499704361
+          ],
+          "experiment_rgb_bias": [
+            0.08881597965955734,
+            0.10394205898046494,
+            0.14228640496730804
+          ],
+          "baseline_bias_mse_x10000": 127.38819234073162,
+          "experiment_bias_mse_x10000": 129.79216873645782,
+          "bias_mse_gap_x10000": 2.403976395726204
+        },
+        {
+          "file_id": "723000000003",
+          "image_path": "7_change_attribute_material_40/2_natural/3_indoor/723000000003.jpg",
+          "category": "change_material",
+          "source_group": "photographic",
+          "original_prompt": "a [chocolate] cake with candies on top",
+          "editing_prompt": "a [icecream] cake with candies on top",
+          "instruction": "Replace the chocolate cake with an icecream cake",
+          "unedited_fraction": 0.8165931701660156,
+          "baseline_normalized_mse_x10000": 248.2616901397705,
+          "experiment_normalized_mse_x10000": 295.03539204597473,
+          "normalized_mse_gap_x10000": 46.773701906204224,
+          "baseline_normalized_psnr": 16.05090292304238,
+          "experiment_normalized_psnr": 15.30125883519068,
+          "normalized_psnr_worsening": 0.7496440878516999,
+          "baseline_rgb_bias": [
+            0.10042351484298706,
+            0.06005992367863655,
+            0.06792803108692169
+          ],
+          "experiment_rgb_bias": [
+            0.09786327928304672,
+            0.06368565559387207,
+            0.0712505504488945
+          ],
+          "baseline_bias_mse_x10000": 61.02098152041435,
+          "experiment_bias_mse_x10000": 62.36575078219175,
+          "bias_mse_gap_x10000": 1.344769261777401
+        },
+        {
+          "file_id": "323000000006",
+          "image_path": "3_delete_object_80/2_natural/3_indoor/323000000006.jpg",
+          "category": "delete_object",
+          "source_group": "photographic",
+          "original_prompt": "[two purple flowers are on] a sheet of music",
+          "editing_prompt": "a sheet of music",
+          "instruction": "Edit the image to remove two purple flowers",
+          "unedited_fraction": 0.8272933959960938,
+          "baseline_normalized_mse_x10000": 81.4314465969801,
+          "experiment_normalized_mse_x10000": 127.10860930383205,
+          "normalized_mse_gap_x10000": 45.67716270685196,
+          "baseline_normalized_psnr": 20.892078500713936,
+          "experiment_normalized_psnr": 18.958250328722656,
+          "normalized_psnr_worsening": 1.9338281719912835,
+          "baseline_rgb_bias": [
+            -0.008993283845484257,
+            -0.00015051159425638616,
+            0.00855452474206686
+          ],
+          "experiment_rgb_bias": [
+            -0.010094628669321537,
+            -0.0015933593967929482,
+            -0.004504525568336248
+          ],
+          "baseline_bias_mse_x10000": 0.5136056643095799,
+          "experiment_bias_mse_x10000": 0.41577022784622386,
+          "bias_mse_gap_x10000": -0.09783543646335602
+        },
+        {
+          "file_id": "211000000001",
+          "image_path": "2_add_object_80/1_artificial/1_animal/211000000001.jpg",
+          "category": "add_object",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a cat",
+          "editing_prompt": "a cat [with a gold chain and a star on its head]",
+          "instruction": "Add a gold chain and a star to the cat's head",
+          "unedited_fraction": 0.7742118835449219,
+          "baseline_normalized_mse_x10000": 234.27320644259453,
+          "experiment_normalized_mse_x10000": 277.75269001722336,
+          "normalized_mse_gap_x10000": 43.47948357462883,
+          "baseline_normalized_psnr": 16.302773783237424,
+          "experiment_normalized_psnr": 15.563417262521567,
+          "normalized_psnr_worsening": 0.7393565207158554,
+          "baseline_rgb_bias": [
+            0.05363631248474121,
+            0.028608892112970352,
+            -0.03701728582382202
+          ],
+          "experiment_rgb_bias": [
+            0.056056734174489975,
+            0.032492745667696,
+            -0.04496097192168236
+          ],
+          "baseline_bias_mse_x10000": 16.88534044660628,
+          "experiment_bias_mse_x10000": 20.732081029564142,
+          "bias_mse_gap_x10000": 3.846740582957864
+        },
+        {
+          "file_id": "112000000006",
+          "image_path": "1_change_object_80/1_artificial/2_human/112000000006.jpg",
+          "category": "change_object",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a cartoon man sitting at a desk with [laptop]",
+          "editing_prompt": "a cartoon man sitting at a desk with [notebook]",
+          "instruction": "Replace the laptop with a notebook",
+          "unedited_fraction": 0.7911262512207031,
+          "baseline_normalized_mse_x10000": 88.6679906398058,
+          "experiment_normalized_mse_x10000": 131.3001662492752,
+          "normalized_mse_gap_x10000": 42.632175609469414,
+          "baseline_normalized_psnr": 20.522331332396973,
+          "experiment_normalized_psnr": 18.817347240164068,
+          "normalized_psnr_worsening": 1.7049840922329036,
+          "baseline_rgb_bias": [
+            0.007631879299879074,
+            0.021554680541157722,
+            0.028428751975297928
+          ],
+          "experiment_rgb_bias": [
+            0.006858197972178459,
+            0.024425027891993523,
+            0.03320671617984772
+          ],
+          "baseline_bias_mse_x10000": 4.436812596395612,
+          "experiment_bias_mse_x10000": 5.821009981445968,
+          "bias_mse_gap_x10000": 1.3841973850503564
+        },
+        {
+          "file_id": "114000000000",
+          "image_path": "1_change_object_80/1_artificial/4_outdoor/114000000000.jpg",
+          "category": "change_object",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a cup of coffee and a [moon] over the ocean",
+          "editing_prompt": "a cup of coffee and a [astronaut] over the ocean",
+          "instruction": "Replace the moon with an astronaut",
+          "unedited_fraction": 0.9671897888183594,
+          "baseline_normalized_mse_x10000": 236.52533069252968,
+          "experiment_normalized_mse_x10000": 278.120506554842,
+          "normalized_mse_gap_x10000": 41.59517586231232,
+          "baseline_normalized_psnr": 16.261223416454417,
+          "experiment_normalized_psnr": 15.557669882833574,
+          "normalized_psnr_worsening": 0.7035535336208445,
+          "baseline_rgb_bias": [
+            0.026166653260588646,
+            0.07092015445232391,
+            0.13383764028549194
+          ],
+          "experiment_rgb_bias": [
+            0.017205899581313133,
+            0.07331180572509766,
+            0.14255842566490173
+          ],
+          "baseline_bias_mse_x10000": 78.75625975430012,
+          "experiment_bias_mse_x10000": 86.6452232003212,
+          "bias_mse_gap_x10000": 7.88896344602108
+        },
+        {
+          "file_id": "813000000004",
+          "image_path": "8_change_background_80/1_artificial/3_indoor/813000000004.jpg",
+          "category": "change_background",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a chair sits in front of a wall with a [floral pattern]",
+          "editing_prompt": "a chair sits in front of a wall with a [spot pattern]",
+          "instruction": "Replace the floral pattern with a spot pattern",
+          "unedited_fraction": 0.3567771911621094,
+          "baseline_normalized_mse_x10000": 82.78342895209789,
+          "experiment_normalized_mse_x10000": 123.52397665381432,
+          "normalized_mse_gap_x10000": 40.74054770171642,
+          "baseline_normalized_psnr": 20.820565887575224,
+          "experiment_normalized_psnr": 19.082487353777683,
+          "normalized_psnr_worsening": 1.7380785337975402,
+          "baseline_rgb_bias": [
+            0.05843406170606613,
+            0.030719907954335213,
+            0.06845556944608688
+          ],
+          "experiment_rgb_bias": [
+            0.06768348813056946,
+            0.05697350576519966,
+            0.10854222625494003
+          ],
+          "baseline_bias_mse_x10000": 30.148059595376253,
+          "experiment_bias_mse_x10000": 65.36149885505438,
+          "bias_mse_gap_x10000": 35.213439259678125
+        },
+        {
+          "file_id": "000000000080",
+          "image_path": "0_random_140/000000000080.jpg",
+          "category": "random",
+          "source_group": "random_unknown",
+          "original_prompt": "a [cat] is shown in a low polygonal style",
+          "editing_prompt": "a [fox] is shown in a low polygonal style",
+          "instruction": "Replace the cat with fox",
+          "unedited_fraction": 0.3009300231933594,
+          "baseline_normalized_mse_x10000": 41.58026538789272,
+          "experiment_normalized_mse_x10000": 81.00233972072601,
+          "normalized_mse_gap_x10000": 39.42207433283329,
+          "baseline_normalized_psnr": 23.811127430918617,
+          "experiment_normalized_psnr": 20.91502436514867,
+          "normalized_psnr_worsening": 2.896103065769947,
+          "baseline_rgb_bias": [
+            0.006876744795590639,
+            -0.019029933959245682,
+            -0.05850578472018242
+          ],
+          "experiment_rgb_bias": [
+            -0.016160542145371437,
+            -0.029666630551218987,
+            -0.12824536859989166
+          ],
+          "baseline_bias_mse_x10000": 12.774516362696886,
+          "experiment_bias_mse_x10000": 58.62716119736433,
+          "bias_mse_gap_x10000": 45.852644834667444
+        },
+        {
+          "file_id": "312000000008",
+          "image_path": "3_delete_object_80/1_artificial/2_human/312000000008.jpg",
+          "category": "delete_object",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a young woman [in sunglasses] driving an old car",
+          "editing_prompt": "a young woman driving an old car",
+          "instruction": "Remove the sunglasses from the woman",
+          "unedited_fraction": 0.9777908325195312,
+          "baseline_normalized_mse_x10000": 127.32603587210178,
+          "experiment_normalized_mse_x10000": 165.93782231211662,
+          "normalized_mse_gap_x10000": 38.61178644001484,
+          "baseline_normalized_psnr": 18.950827818966673,
+          "experiment_normalized_psnr": 17.800546136784355,
+          "normalized_psnr_worsening": 1.1502816821823192,
+          "baseline_rgb_bias": [
+            -0.010924872010946274,
+            0.01731463149189949,
+            0.06685570627450943
+          ],
+          "experiment_rgb_bias": [
+            -0.021623648703098297,
+            0.0043289512395858765,
+            0.045885976403951645
+          ],
+          "baseline_bias_mse_x10000": 16.296114772558212,
+          "experiment_bias_mse_x10000": 8.639483130536973,
+          "bias_mse_gap_x10000": -7.656631642021239
+        },
+        {
+          "file_id": "611000000000",
+          "image_path": "6_change_attribute_color_40/1_artificial/1_animal/611000000000.jpg",
+          "category": "change_color",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a [black] raven sits on a tree stump in the rain",
+          "editing_prompt": "a [white] raven sits on a tree stump in the rain",
+          "instruction": "Change the raven from black to white",
+          "unedited_fraction": 0.5286903381347656,
+          "baseline_normalized_mse_x10000": 57.19313398003578,
+          "experiment_normalized_mse_x10000": 95.13675235211849,
+          "normalized_mse_gap_x10000": 37.94361837208271,
+          "baseline_normalized_psnr": 22.42656105010517,
+          "experiment_normalized_psnr": 20.216516780120557,
+          "normalized_psnr_worsening": 2.210044269984613,
+          "baseline_rgb_bias": [
+            -0.03670477494597435,
+            0.016978822648525238,
+            0.09337394684553146
+          ],
+          "experiment_rgb_bias": [
+            -0.04098331183195114,
+            0.021726414561271667,
+            0.11195926368236542
+          ],
+          "baseline_bias_mse_x10000": 34.51404860243201,
+          "experiment_bias_mse_x10000": 48.95515274256468,
+          "bias_mse_gap_x10000": 14.441104140132666
+        },
+        {
+          "file_id": "423000000001",
+          "image_path": "4_change_attribute_content_40/2_natural/3_indoor/423000000001.jpg",
+          "category": "change_content",
+          "source_group": "photographic",
+          "original_prompt": "a person holding a [mug] of hot chocolate and reading a book",
+          "editing_prompt": "a person holding a [glass] of hot chocolate and reading a book",
+          "instruction": "Change the mug to a glass",
+          "unedited_fraction": 0.8919601440429688,
+          "baseline_normalized_mse_x10000": 124.8619519174099,
+          "experiment_normalized_mse_x10000": 162.28238120675087,
+          "normalized_mse_gap_x10000": 37.42042928934097,
+          "baseline_normalized_psnr": 19.03569880198144,
+          "experiment_normalized_psnr": 17.897286284180133,
+          "normalized_psnr_worsening": 1.1384125178013047,
+          "baseline_rgb_bias": [
+            0.013521485961973667,
+            0.022935882210731506,
+            0.1304478496313095
+          ],
+          "experiment_rgb_bias": [
+            0.0010433412389829755,
+            0.020966723561286926,
+            0.15176767110824585
+          ],
+          "baseline_bias_mse_x10000": 59.08509250730276,
+          "experiment_bias_mse_x10000": 78.2470591366291,
+          "bias_mse_gap_x10000": 19.161966629326344
+        },
+        {
+          "file_id": "122000000002",
+          "image_path": "1_change_object_80/2_natural/2_human/122000000002.jpg",
+          "category": "change_object",
+          "source_group": "photographic",
+          "original_prompt": "a woman in a coat holding a [camera]",
+          "editing_prompt": "a woman in a coat holding a [phone]",
+          "instruction": "Change the camera to a phone",
+          "unedited_fraction": 0.9661140441894531,
+          "baseline_normalized_mse_x10000": 33.04024925455451,
+          "experiment_normalized_mse_x10000": 70.26071194559336,
+          "normalized_mse_gap_x10000": 37.22046269103885,
+          "baseline_normalized_psnr": 24.809566850359985,
+          "experiment_normalized_psnr": 21.532874538540405,
+          "normalized_psnr_worsening": 3.276692311819584,
+          "baseline_rgb_bias": [
+            0.02507520094513893,
+            0.023550396785140038,
+            0.030415261164307594
+          ],
+          "experiment_rgb_bias": [
+            0.017372015863656998,
+            0.03293122351169586,
+            0.061093803495168686
+          ],
+          "baseline_bias_mse_x10000": 7.028249674476683,
+          "experiment_bias_mse_x10000": 17.06235110759735,
+          "bias_mse_gap_x10000": 10.034101433120668
+        },
+        {
+          "file_id": "000000000014",
+          "image_path": "0_random_140/000000000014.jpg",
+          "category": "random",
+          "source_group": "random_unknown",
+          "original_prompt": "a man with his hands [hanging down] standing by a house",
+          "editing_prompt": "a man with his hands [rasing] standing by a house",
+          "instruction": "Turn the man's hands from hanhanging down to rasing",
+          "unedited_fraction": 0.6846275329589844,
+          "baseline_normalized_mse_x10000": 572.2732469439507,
+          "experiment_normalized_mse_x10000": 606.832318007946,
+          "normalized_mse_gap_x10000": 34.55907106399536,
+          "baseline_normalized_psnr": 12.423965563390196,
+          "experiment_normalized_psnr": 12.169312980916915,
+          "normalized_psnr_worsening": 0.2546525824732807,
+          "baseline_rgb_bias": [
+            -0.04660434275865555,
+            0.061628978699445724,
+            0.1990550458431244
+          ],
+          "experiment_rgb_bias": [
+            -0.051238398998975754,
+            0.054137494415044785,
+            0.1904890388250351
+          ],
+          "baseline_bias_mse_x10000": 151.97668224573135,
+          "experiment_bias_mse_x10000": 139.47438448667526,
+          "bias_mse_gap_x10000": -12.502297759056091
+        },
+        {
+          "file_id": "000000000011",
+          "image_path": "0_random_140/000000000011.jpg",
+          "category": "random",
+          "source_group": "random_unknown",
+          "original_prompt": "a [colorful] bird standing on a branch",
+          "editing_prompt": "a [red] bird standing on a branch",
+          "instruction": "Change the color of the bird to red",
+          "unedited_fraction": 0.8000221252441406,
+          "baseline_normalized_mse_x10000": 70.21700032055378,
+          "experiment_normalized_mse_x10000": 104.59296405315399,
+          "normalized_mse_gap_x10000": 34.37596373260021,
+          "baseline_normalized_psnr": 21.53557727591506,
+          "experiment_normalized_psnr": 19.804975293852372,
+          "normalized_psnr_worsening": 1.7306019820626894,
+          "baseline_rgb_bias": [
+            0.007082716096192598,
+            0.028594568371772766,
+            0.06266339868307114
+          ],
+          "experiment_rgb_bias": [
+            0.004192062187939882,
+            0.036897312849760056,
+            0.08076462894678116
+          ],
+          "baseline_bias_mse_x10000": 15.981718897819519,
+          "experiment_bias_mse_x10000": 26.33969997987151,
+          "bias_mse_gap_x10000": 10.357981082051992
+        }
+      ]
+    },
+    "masactrl": {
+      "n": 556,
+      "official_mse_recompute_max_abs_error": 1.24722134842159e-08,
+      "normalized_mask_metrics": {
+        "baseline_mse_x10000": 125.28688207153584,
+        "experiment_mse_x10000": 158.38606623372314,
+        "mse_gap_x10000": 33.099184162187285,
+        "baseline_psnr": 20.655925852834343,
+        "experiment_psnr": 19.723749895186852,
+        "psnr_worsening": 0.9321759576474954
+      },
+      "global_rgb_bias_component": {
+        "baseline_bias_mse_x10000": 14.009897736398969,
+        "experiment_bias_mse_x10000": 14.48907984282503,
+        "bias_mse_gap_x10000": 0.4791821064260598,
+        "share_of_total_signed_mse_gap": 0.014477157626545986
+      },
+      "by_mask_distance": {
+        "boundary_0_4": {
+          "pixels": 6749983,
+          "baseline_mse_x10000": 148.822362918843,
+          "experiment_mse_x10000": 185.76908943142453,
+          "signed_gap_mse_x10000": 36.946725786317344,
+          "share_of_positive_excess_sse": 0.08713018640567137
+        },
+        "near_5_16": {
+          "pixels": 18120508,
+          "baseline_mse_x10000": 118.10898334411242,
+          "experiment_mse_x10000": 149.84937676920836,
+          "signed_gap_mse_x10000": 31.740392806950663,
+          "share_of_positive_excess_sse": 0.19096023293939868
+        },
+        "mid_17_32": {
+          "pixels": 20202853,
+          "baseline_mse_x10000": 102.20155131576944,
+          "experiment_mse_x10000": 126.46030300596125,
+          "signed_gap_mse_x10000": 24.25875120521031,
+          "share_of_positive_excess_sse": 0.17525739243607866
+        },
+        "far_gt_32": {
+          "pixels": 54501687,
+          "baseline_mse_x10000": 116.19980429750464,
+          "experiment_mse_x10000": 144.9166198493638,
+          "signed_gap_mse_x10000": 28.716817364482836,
+          "share_of_positive_excess_sse": 0.5466521882188513
+        }
+      },
+      "by_source_texture": {
+        "smooth": {
+          "pixels": 36638697,
+          "baseline_mse_x10000": 55.24002691395332,
+          "experiment_mse_x10000": 71.89928071758929,
+          "signed_gap_mse_x10000": 16.659253831519724,
+          "share_of_positive_excess_sse": 0.19151039338660178
+        },
+        "medium": {
+          "pixels": 30433907,
+          "baseline_mse_x10000": 96.20903885786225,
+          "experiment_mse_x10000": 124.67655906227347,
+          "signed_gap_mse_x10000": 28.46752006486683,
+          "share_of_positive_excess_sse": 0.27826131075890725
+        },
+        "edge": {
+          "pixels": 32502427,
+          "baseline_mse_x10000": 202.77414471655456,
+          "experiment_mse_x10000": 245.94020017449833,
+          "signed_gap_mse_x10000": 43.16605484284358,
+          "share_of_positive_excess_sse": 0.5302282958544909
+        }
+      },
+      "by_source_group": {
+        "random_unknown": {
+          "pixels": 21002018,
+          "baseline_mse_x10000": 107.49155498332472,
+          "experiment_mse_x10000": 133.97797600510765,
+          "signed_gap_mse_x10000": 26.486424096311932,
+          "share_of_positive_excess_sse": 0.19178277612139605
+        },
+        "artificial_graphic": {
+          "pixels": 40042746,
+          "baseline_mse_x10000": 126.38513468454637,
+          "experiment_mse_x10000": 163.73893322571894,
+          "signed_gap_mse_x10000": 37.35379830515199,
+          "share_of_positive_excess_sse": 0.47644263252980146
+        },
+        "photographic": {
+          "pixels": 38530267,
+          "baseline_mse_x10000": 109.63443418931331,
+          "experiment_mse_x10000": 131.11717481813247,
+          "signed_gap_mse_x10000": 21.48274121253738,
+          "share_of_positive_excess_sse": 0.3317745913488025
+        }
+      },
+      "by_category": {
+        "random": {
+          "pixels": 21002018,
+          "baseline_mse_x10000": 107.49155498332472,
+          "experiment_mse_x10000": 133.97797600510765,
+          "signed_gap_mse_x10000": 26.486424096311932,
+          "share_of_positive_excess_sse": 0.19178277612139605
+        },
+        "change_object": {
+          "pixels": 16022814,
+          "baseline_mse_x10000": 125.75666357863776,
+          "experiment_mse_x10000": 152.82145130584695,
+          "signed_gap_mse_x10000": 27.064785500375915,
+          "share_of_positive_excess_sse": 0.1592565453649075
+        },
+        "add_object": {
+          "pixels": 8488606,
+          "baseline_mse_x10000": 113.42842530672667,
+          "experiment_mse_x10000": 131.96196187558675,
+          "signed_gap_mse_x10000": 18.533541115941023,
+          "share_of_positive_excess_sse": 0.06891571078246395
+        },
+        "delete_object": {
+          "pixels": 17728310,
+          "baseline_mse_x10000": 114.67837337335926,
+          "experiment_mse_x10000": 147.28018812794676,
+          "signed_gap_mse_x10000": 32.60181264228173,
+          "share_of_positive_excess_sse": 0.19142313120410834
+        },
+        "change_content": {
+          "pixels": 6672651,
+          "baseline_mse_x10000": 92.28985605343824,
+          "experiment_mse_x10000": 111.96347863416088,
+          "signed_gap_mse_x10000": 19.6736237660295,
+          "share_of_positive_excess_sse": 0.05620948418665822
+        },
+        "change_pose": {
+          "pixels": 7302442,
+          "baseline_mse_x10000": 101.844100403761,
+          "experiment_mse_x10000": 115.03474045558275,
+          "signed_gap_mse_x10000": 13.190638425458385,
+          "share_of_positive_excess_sse": 0.05091532029555229
+        },
+        "change_color": {
+          "pixels": 7420476,
+          "baseline_mse_x10000": 137.56382437060458,
+          "experiment_mse_x10000": 177.08732042260638,
+          "signed_gap_mse_x10000": 39.52349448192444,
+          "share_of_positive_excess_sse": 0.09507447692872384
+        },
+        "change_material": {
+          "pixels": 7051385,
+          "baseline_mse_x10000": 94.3269724089443,
+          "experiment_mse_x10000": 118.30431889230906,
+          "signed_gap_mse_x10000": 23.97734679668553,
+          "share_of_positive_excess_sse": 0.059642239638914456
+        },
+        "change_background": {
+          "pixels": 7473788,
+          "baseline_mse_x10000": 153.18541883680868,
+          "experiment_mse_x10000": 210.60219739838718,
+          "signed_gap_mse_x10000": 57.41678682937226,
+          "share_of_positive_excess_sse": 0.1196334754257758
+        },
+        "change_style": {
+          "pixels": 412541,
+          "baseline_mse_x10000": 203.23903814446624,
+          "experiment_mse_x10000": 289.18148833110934,
+          "signed_gap_mse_x10000": 85.9424482139856,
+          "share_of_positive_excess_sse": 0.00714684005149955
+        }
+      },
+      "grid_signed_gap_mse_x10000": [
+        [
+          11.027659370940855,
+          10.09371855739672,
+          13.211654571338268,
+          24.869629222879546,
+          20.743223806698296,
+          -2.549928185416081,
+          1.9166195010606537,
+          -3.089170916971411
+        ],
+        [
+          7.501503940309231,
+          11.168052827541059,
+          36.472692594780504,
+          55.1459591357396,
+          40.33765574009395,
+          19.06067067148574,
+          10.834499660747257,
+          2.2713501845303736
+        ],
+        [
+          8.78656276632435,
+          18.660312440437295,
+          48.37803643699233,
+          65.53174513995988,
+          70.04387357513527,
+          56.54381976641924,
+          37.59916715328059,
+          1.9795150592939006
+        ],
+        [
+          15.526616324586657,
+          33.480547424119834,
+          34.99919915917655,
+          57.81929933368998,
+          62.83724756270286,
+          70.24972849495883,
+          40.266748068894074,
+          11.157407166514863
+        ],
+        [
+          11.392616576921636,
+          23.72223501438683,
+          54.48923751159322,
+          69.03258376660602,
+          71.36799591026148,
+          58.45563318823594,
+          34.44749521252661,
+          11.412282217902984
+        ],
+        [
+          10.934387823323263,
+          26.314511686102193,
+          52.97882973534503,
+          63.57129463375329,
+          43.99646012263067,
+          43.51275632099466,
+          47.73936557403052,
+          15.317924990475367
+        ],
+        [
+          16.510524448617396,
+          26.730522012911887,
+          49.43910105195666,
+          50.91971028477744,
+          44.615059113362356,
+          58.64872573853287,
+          26.49227260369974,
+          7.112087665177765
+        ],
+        [
+          6.248413877224633,
+          20.49062777792594,
+          26.045945048492314,
+          24.41377854427647,
+          23.09634002804706,
+          25.620855018552053,
+          12.490932365032986,
+          9.055089476523266
+        ]
+      ],
+      "normalized_mse_outlier_concentration": {
+        "top_10pct_share_of_positive_per_image_gap": 0.5690617182044913
+      },
+      "worst_normalized_mse": [
+        {
+          "file_id": "824000000004",
+          "image_path": "8_change_background_80/2_natural/4_outdoor/824000000004.jpg",
+          "category": "change_background",
+          "source_group": "photographic",
+          "original_prompt": "an older couple walking down [a narrow dirt road]",
+          "editing_prompt": "an older couple walking down [a snow coverd road]",
+          "instruction": "Change the road to a snow covered one",
+          "unedited_fraction": 0.08344268798828125,
+          "baseline_normalized_mse_x10000": 168.7224954366684,
+          "experiment_normalized_mse_x10000": 832.2133868932724,
+          "normalized_mse_gap_x10000": 663.490891456604,
+          "baseline_normalized_psnr": 17.728270099259873,
+          "experiment_normalized_psnr": 10.79765302473476,
+          "normalized_psnr_worsening": 6.930617074525114,
+          "baseline_rgb_bias": [
+            0.03501325100660324,
+            0.05253765359520912,
+            0.13664494454860687
+          ],
+          "experiment_rgb_bias": [
+            0.13146644830703735,
+            0.14085960388183594,
+            0.19535069167613983
+          ],
+          "baseline_bias_mse_x10000": 75.5265774205327,
+          "experiment_bias_mse_x10000": 250.95582008361816,
+          "bias_mse_gap_x10000": 175.42924266308546
+        },
+        {
+          "file_id": "812000000009",
+          "image_path": "8_change_background_80/1_artificial/2_human/812000000009.jpg",
+          "category": "change_background",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a watercolor painting of a couple holding hands",
+          "editing_prompt": "a watercolor painting of a couple holding hands [in the field]",
+          "instruction": "Add field to the painting",
+          "unedited_fraction": 0.1850738525390625,
+          "baseline_normalized_mse_x10000": 228.19839417934418,
+          "experiment_normalized_mse_x10000": 714.7148996591568,
+          "normalized_mse_gap_x10000": 486.5165054798126,
+          "baseline_normalized_psnr": 16.41687416015541,
+          "experiment_normalized_psnr": 11.458671640688276,
+          "normalized_psnr_worsening": 4.958202519467133,
+          "baseline_rgb_bias": [
+            -0.014415456913411617,
+            0.02574240043759346,
+            -0.005529419053345919
+          ],
+          "experiment_rgb_bias": [
+            0.017634138464927673,
+            0.05059684440493584,
+            0.009214956313371658
+          ],
+          "baseline_bias_mse_x10000": 3.0035036616027355,
+          "experiment_bias_mse_x10000": 9.853063384070992,
+          "bias_mse_gap_x10000": 6.849559722468257
+        },
+        {
+          "file_id": "323000000008",
+          "image_path": "3_delete_object_80/2_natural/3_indoor/323000000008.jpg",
+          "category": "delete_object",
+          "source_group": "photographic",
+          "original_prompt": "two cups of coffee [with a leaf design on the top], coffee beans",
+          "editing_prompt": "two cups of coffee, coffee beans",
+          "instruction": "Remove the leaf design from the top of the coffee cups",
+          "unedited_fraction": 0.75360107421875,
+          "baseline_normalized_mse_x10000": 168.56856644153595,
+          "experiment_normalized_mse_x10000": 629.5235455036163,
+          "normalized_mse_gap_x10000": 460.9549790620804,
+          "baseline_normalized_psnr": 17.73223406542368,
+          "experiment_normalized_psnr": 12.00988021725998,
+          "normalized_psnr_worsening": 5.722353848163699,
+          "baseline_rgb_bias": [
+            -0.02340087667107582,
+            -0.041922442615032196,
+            -0.038341112434864044
+          ],
+          "experiment_rgb_bias": [
+            0.09119655936956406,
+            0.03429308161139488,
+            0.018408553674817085
+          ],
+          "baseline_bias_mse_x10000": 12.583778006955981,
+          "experiment_bias_mse_x10000": 32.77234034612775,
+          "bias_mse_gap_x10000": 20.188562339171767
+        },
+        {
+          "file_id": "812000000002",
+          "image_path": "8_change_background_80/1_artificial/2_human/812000000002.jpg",
+          "category": "change_background",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a cartoon girl in a hat and dress",
+          "editing_prompt": "a cartoon girl in a hat and dress [standing in front of a beautiful house]",
+          "instruction": "Add a beautiful house in front of the girl",
+          "unedited_fraction": 0.33945465087890625,
+          "baseline_normalized_mse_x10000": 174.44416880607605,
+          "experiment_normalized_mse_x10000": 621.783435344696,
+          "normalized_mse_gap_x10000": 447.33926653862,
+          "baseline_normalized_psnr": 17.58343543256112,
+          "experiment_normalized_psnr": 12.063608519843958,
+          "normalized_psnr_worsening": 5.519826912717161,
+          "baseline_rgb_bias": [
+            0.040661174803972244,
+            0.07406065613031387,
+            0.08312639594078064
+          ],
+          "experiment_rgb_bias": [
+            0.03903980553150177,
+            0.03784814104437828,
+            0.047532275319099426
+          ],
+          "baseline_bias_mse_x10000": 46.82769998908043,
+          "experiment_bias_mse_x10000": 17.386352410539985,
+          "bias_mse_gap_x10000": -29.441347578540444
+        },
+        {
+          "file_id": "811000000005",
+          "image_path": "8_change_background_80/1_artificial/1_animal/811000000005.jpg",
+          "category": "change_background",
+          "source_group": "artificial_graphic",
+          "original_prompt": "an illustration of an owl sitting [on a branch]",
+          "editing_prompt": "an illustration of an owl sitting [in a cave]",
+          "instruction": "Add a cave to the owl illustration",
+          "unedited_fraction": 0.42691802978515625,
+          "baseline_normalized_mse_x10000": 284.21027585864067,
+          "experiment_normalized_mse_x10000": 713.6480510234833,
+          "normalized_mse_gap_x10000": 429.4377751648426,
+          "baseline_normalized_psnr": 15.463602238468802,
+          "experiment_normalized_psnr": 11.4651591593044,
+          "normalized_psnr_worsening": 3.9984430791644012,
+          "baseline_rgb_bias": [
+            0.03939817100763321,
+            0.039917778223752975,
+            -0.014195205643773079
+          ],
+          "experiment_rgb_bias": [
+            0.007143036928027868,
+            0.017473801970481873,
+            0.004733665846288204
+          ],
+          "baseline_bias_mse_x10000": 11.157161789014935,
+          "experiment_bias_mse_x10000": 1.262547739315778,
+          "bias_mse_gap_x10000": -9.894614049699157
+        },
+        {
+          "file_id": "821000000001",
+          "image_path": "8_change_background_80/2_natural/1_animal/821000000001.jpg",
+          "category": "change_background",
+          "source_group": "photographic",
+          "original_prompt": "a crow standing on the [snow]",
+          "editing_prompt": "a crow standing on the [grass]",
+          "instruction": "Change the snow to grass",
+          "unedited_fraction": 0.2550392150878906,
+          "baseline_normalized_mse_x10000": 640.8706307411194,
+          "experiment_normalized_mse_x10000": 1051.0598868131638,
+          "normalized_mse_gap_x10000": 410.1892560720444,
+          "baseline_normalized_psnr": 11.93229630427675,
+          "experiment_normalized_psnr": 9.78372538232908,
+          "normalized_psnr_worsening": 2.1485709219476705,
+          "baseline_rgb_bias": [
+            -0.007108543999493122,
+            0.0065507907420396805,
+            0.024472154676914215
+          ],
+          "experiment_rgb_bias": [
+            0.07301440834999084,
+            0.08318451046943665,
+            0.09174832701683044
+          ],
+          "baseline_bias_mse_x10000": 2.3077685909811407,
+          "experiment_bias_mse_x10000": 68.89507174491882,
+          "bias_mse_gap_x10000": 66.58730315393768
+        },
+        {
+          "file_id": "213000000005",
+          "image_path": "2_add_object_80/1_artificial/3_indoor/213000000005.jpg",
+          "category": "add_object",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a large brown teddy bear sitting on a white couch",
+          "editing_prompt": "a large brown teddy bear [and a girl] sitting on a white couch",
+          "instruction": "Add a girl to the couch with the teddy bear",
+          "unedited_fraction": 0.5344505310058594,
+          "baseline_normalized_mse_x10000": 71.74160797148943,
+          "experiment_normalized_mse_x10000": 446.9368979334831,
+          "normalized_mse_gap_x10000": 375.1952899619937,
+          "baseline_normalized_psnr": 21.44228893546324,
+          "experiment_normalized_psnr": 13.497537896506412,
+          "normalized_psnr_worsening": 7.94475103895683,
+          "baseline_rgb_bias": [
+            0.016646798700094223,
+            -0.002608690643683076,
+            0.0038396604359149933
+          ],
+          "experiment_rgb_bias": [
+            0.019597792997956276,
+            0.02191428281366825,
+            0.060364022850990295
+          ],
+          "baseline_bias_mse_x10000": 0.995547161437571,
+          "experiment_bias_mse_x10000": 15.02708182670176,
+          "bias_mse_gap_x10000": 14.03153466526419
+        },
+        {
+          "file_id": "811000000007",
+          "image_path": "8_change_background_80/1_artificial/1_animal/811000000007.jpg",
+          "category": "change_background",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a colorful cat with splashes of paint on its head",
+          "editing_prompt": "a colorful cat with splashes of paint on its head [with a blue background]",
+          "instruction": "Add a blue background to the cat with paint on its head",
+          "unedited_fraction": 0.35607147216796875,
+          "baseline_normalized_mse_x10000": 331.2453627586365,
+          "experiment_normalized_mse_x10000": 687.9459321498871,
+          "normalized_mse_gap_x10000": 356.7005693912506,
+          "baseline_normalized_psnr": 14.798501928813463,
+          "experiment_normalized_psnr": 11.62445693002375,
+          "normalized_psnr_worsening": 3.174044998789713,
+          "baseline_rgb_bias": [
+            -0.02034785784780979,
+            0.04043880105018616,
+            0.12463803589344025
+          ],
+          "experiment_rgb_bias": [
+            0.010945024900138378,
+            0.07316693663597107,
+            0.17573203146457672
+          ],
+          "baseline_bias_mse_x10000": 58.61323792487383,
+          "experiment_bias_mse_x10000": 121.1831346154213,
+          "bias_mse_gap_x10000": 62.569896690547466
+        },
+        {
+          "file_id": "611000000001",
+          "image_path": "6_change_attribute_color_40/1_artificial/1_animal/611000000001.jpg",
+          "category": "change_color",
+          "source_group": "artificial_graphic",
+          "original_prompt": "otter in the water with [pink] hearts",
+          "editing_prompt": "otter in the water with [green] hearts",
+          "instruction": "Change the raven from pink to green",
+          "unedited_fraction": 0.7882194519042969,
+          "baseline_normalized_mse_x10000": 324.79144632816315,
+          "experiment_normalized_mse_x10000": 681.2029331922531,
+          "normalized_mse_gap_x10000": 356.41148686408997,
+          "baseline_normalized_psnr": 14.88395416812004,
+          "experiment_normalized_psnr": 11.667234906764548,
+          "normalized_psnr_worsening": 3.2167192613554922,
+          "baseline_rgb_bias": [
+            -0.009120714850723743,
+            0.028288327157497406,
+            0.026084186509251595
+          ],
+          "experiment_rgb_bias": [
+            -0.01165545079857111,
+            0.03307317942380905,
+            0.015110659413039684
+          ],
+          "baseline_bias_mse_x10000": 5.212672404013574,
+          "experiment_bias_mse_x10000": 4.860055923927575,
+          "bias_mse_gap_x10000": -0.3526164800859988
+        },
+        {
+          "file_id": "313000000003",
+          "image_path": "3_delete_object_80/1_artificial/3_indoor/313000000003.jpg",
+          "category": "delete_object",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a row of colorful chairs [and tables] outside a restaurant",
+          "editing_prompt": "a row of colorful chairs outside a restaurant",
+          "instruction": "Remove the tables",
+          "unedited_fraction": 0.9504508972167969,
+          "baseline_normalized_mse_x10000": 132.68392533063889,
+          "experiment_normalized_mse_x10000": 447.5133866071701,
+          "normalized_mse_gap_x10000": 314.8294612765312,
+          "baseline_normalized_psnr": 18.771816887638067,
+          "experiment_normalized_psnr": 13.491939689677999,
+          "normalized_psnr_worsening": 5.2798771979600705,
+          "baseline_rgb_bias": [
+            -0.00738230487331748,
+            -0.031169336289167404,
+            -0.028924375772476196
+          ],
+          "experiment_rgb_bias": [
+            0.005941877141594887,
+            -0.03563059866428375,
+            -0.043647781014442444
+          ],
+          "baseline_bias_mse_x10000": 6.208818522281945,
+          "experiment_bias_mse_x10000": 10.699913837015629,
+          "bias_mse_gap_x10000": 4.491095314733684
+        },
+        {
+          "file_id": "000000000133",
+          "image_path": "0_random_140/000000000133.jpg",
+          "category": "random",
+          "source_group": "random_unknown",
+          "original_prompt": "a lion in the sky with a [blue background]",
+          "editing_prompt": "a lion in the sky with a [red background]",
+          "instruction": "Change the background color to red",
+          "unedited_fraction": 0.2526512145996094,
+          "baseline_normalized_mse_x10000": 130.4235588759184,
+          "experiment_normalized_mse_x10000": 424.90486055612564,
+          "normalized_mse_gap_x10000": 294.48130168020725,
+          "baseline_normalized_psnr": 18.84643953345815,
+          "experiment_normalized_psnr": 13.717083009165323,
+          "normalized_psnr_worsening": 5.129356524292827,
+          "baseline_rgb_bias": [
+            -0.03481311351060867,
+            -0.043795082718133926,
+            0.0008708439418114722
+          ],
+          "experiment_rgb_bias": [
+            -0.08957501500844955,
+            -0.1309712529182434,
+            -0.10961069911718369
+          ],
+          "baseline_bias_mse_x10000": 10.435734875500202,
+          "experiment_bias_mse_x10000": 123.97219426929951,
+          "bias_mse_gap_x10000": 113.5364593937993
+        },
+        {
+          "file_id": "812000000001",
+          "image_path": "8_change_background_80/1_artificial/2_human/812000000001.jpg",
+          "category": "change_background",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a painting of a woman in red dress [with gray background]",
+          "editing_prompt": "a painting of a woman in red dress [with army background]",
+          "instruction": "Add an army in the background of the painting",
+          "unedited_fraction": 0.4436302185058594,
+          "baseline_normalized_mse_x10000": 259.3981847167015,
+          "experiment_normalized_mse_x10000": 552.1218106150627,
+          "normalized_mse_gap_x10000": 292.7236258983612,
+          "baseline_normalized_psnr": 15.860330674588708,
+          "experiment_normalized_psnr": 12.57965096470305,
+          "normalized_psnr_worsening": 3.2806797098856553,
+          "baseline_rgb_bias": [
+            0.032207440584897995,
+            -0.07221522927284241,
+            -0.09942330420017242
+          ],
+          "experiment_rgb_bias": [
+            0.04133795574307442,
+            -0.08775602281093597,
+            -0.0981825739145279
+          ],
+          "baseline_bias_mse_x10000": 53.791175596416,
+          "experiment_bias_mse_x10000": 63.49921226501465,
+          "bias_mse_gap_x10000": 9.708036668598652
+        },
+        {
+          "file_id": "121000000003",
+          "image_path": "1_change_object_80/2_natural/1_animal/121000000003.jpg",
+          "category": "change_object",
+          "source_group": "photographic",
+          "original_prompt": "a white [bulldog] is walking on the grass",
+          "editing_prompt": "a white [rat] is walking on the grass",
+          "instruction": "Change the animal from bulldog to rat",
+          "unedited_fraction": 0.7380599975585938,
+          "baseline_normalized_mse_x10000": 94.88824754953384,
+          "experiment_normalized_mse_x10000": 381.35480135679245,
+          "normalized_mse_gap_x10000": 286.4665538072586,
+          "baseline_normalized_psnr": 20.227875740896145,
+          "experiment_normalized_psnr": 14.18670781359615,
+          "normalized_psnr_worsening": 6.041167927299995,
+          "baseline_rgb_bias": [
+            -0.02520725317299366,
+            0.05379018560051918,
+            -0.05085602402687073
+          ],
+          "experiment_rgb_bias": [
+            0.005228902213275433,
+            0.05662437155842781,
+            0.020104845985770226
+          ],
+          "baseline_bias_mse_x10000": 20.38374776020646,
+          "experiment_bias_mse_x10000": 12.126219226047397,
+          "bias_mse_gap_x10000": -8.257528534159064
+        },
+        {
+          "file_id": "811000000004",
+          "image_path": "8_change_background_80/1_artificial/1_animal/811000000004.jpg",
+          "category": "change_background",
+          "source_group": "artificial_graphic",
+          "original_prompt": "the lion head is on a [black] background",
+          "editing_prompt": "the lion head is on a [red] background",
+          "instruction": "Change the background color to red",
+          "unedited_fraction": 0.28338623046875,
+          "baseline_normalized_mse_x10000": 210.13187244534492,
+          "experiment_normalized_mse_x10000": 478.4895107150078,
+          "normalized_mse_gap_x10000": 268.35763826966286,
+          "baseline_normalized_psnr": 16.775080695487482,
+          "experiment_normalized_psnr": 13.201275782393262,
+          "normalized_psnr_worsening": 3.573804913094217,
+          "baseline_rgb_bias": [
+            0.07588639110326767,
+            -0.046582624316215515,
+            -0.03046588972210884
+          ],
+          "experiment_rgb_bias": [
+            0.06907090544700623,
+            -0.08722475171089172,
+            -0.052842527627944946
+          ],
+          "baseline_bias_mse_x10000": 29.5228511095047,
+          "experiment_bias_mse_x10000": 50.57093221694231,
+          "bias_mse_gap_x10000": 21.04808110743761
+        },
+        {
+          "file_id": "512000000004",
+          "image_path": "5_change_attribute_pose_40/1_artificial/2_human/512000000004.jpg",
+          "category": "change_pose",
+          "source_group": "artificial_graphic",
+          "original_prompt": "graduation girl [hands up] with confetti in background",
+          "editing_prompt": "graduation girl [hands down] with confetti in background",
+          "instruction": "Make girl's hands down",
+          "unedited_fraction": 0.9510917663574219,
+          "baseline_normalized_mse_x10000": 83.44700559973717,
+          "experiment_normalized_mse_x10000": 343.3489054441452,
+          "normalized_mse_gap_x10000": 259.90189984440804,
+          "baseline_normalized_psnr": 20.785892428654186,
+          "experiment_normalized_psnr": 14.642643327472058,
+          "normalized_psnr_worsening": 6.1432491011821275,
+          "baseline_rgb_bias": [
+            -0.00045076414244249463,
+            -0.01165269035845995,
+            -0.008965074084699154
+          ],
+          "experiment_rgb_bias": [
+            -0.006354609038680792,
+            -0.04522233083844185,
+            -0.04138300567865372
+          ],
+          "baseline_bias_mse_x10000": 0.721203105058521,
+          "experiment_bias_mse_x10000": 12.659977655857801,
+          "bias_mse_gap_x10000": 11.93877455079928
+        },
+        {
+          "file_id": "112000000003",
+          "image_path": "1_change_object_80/1_artificial/2_human/112000000003.jpg",
+          "category": "change_object",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a girl with black hair and a white shirt is holding a [phone]",
+          "editing_prompt": "a girl with black hair and a white shirt is holding a [coffee]",
+          "instruction": "Change the phone to a coffee",
+          "unedited_fraction": 0.989288330078125,
+          "baseline_normalized_mse_x10000": 79.56428453326225,
+          "experiment_normalized_mse_x10000": 331.5545618534088,
+          "normalized_mse_gap_x10000": 251.99027732014656,
+          "baseline_normalized_psnr": 20.992818381789267,
+          "experiment_normalized_psnr": 14.79444992260695,
+          "normalized_psnr_worsening": 6.198368459182321,
+          "baseline_rgb_bias": [
+            -0.007959866896271706,
+            -0.007565527223050594,
+            -0.0075731584802269936
+          ],
+          "experiment_rgb_bias": [
+            -0.02232414297759533,
+            -0.022506309673190117,
+            -0.02625245228409767
+          ],
+          "baseline_bias_mse_x10000": 0.5931646956014447,
+          "experiment_bias_mse_x10000": 5.646974896080792,
+          "bias_mse_gap_x10000": 5.053810200479347
+        },
+        {
+          "file_id": "000000000087",
+          "image_path": "0_random_140/000000000087.jpg",
+          "category": "random",
+          "source_group": "random_unknown",
+          "original_prompt": "a jockey rides a [horse] on a grassy field",
+          "editing_prompt": "a jockey rides a [dragon] on a grassy field",
+          "instruction": "Replace the horse with a dragon",
+          "unedited_fraction": 0.8198204040527344,
+          "baseline_normalized_mse_x10000": 68.59283428639174,
+          "experiment_normalized_mse_x10000": 299.8362109065056,
+          "normalized_mse_gap_x10000": 231.24337662011385,
+          "baseline_normalized_psnr": 21.637212515297804,
+          "experiment_normalized_psnr": 15.231159190286878,
+          "normalized_psnr_worsening": 6.4060533250109275,
+          "baseline_rgb_bias": [
+            -0.0373542495071888,
+            -0.007848036475479603,
+            -0.04151013866066933
+          ],
+          "experiment_rgb_bias": [
+            -0.06268670409917831,
+            -0.04961525276303291,
+            -0.07441286742687225
+          ],
+          "baseline_bias_mse_x10000": 10.600077221170068,
+          "experiment_bias_mse_x10000": 39.76190462708473,
+          "bias_mse_gap_x10000": 29.161827405914664
+        },
+        {
+          "file_id": "823000000002",
+          "image_path": "8_change_background_80/2_natural/3_indoor/823000000002.jpg",
+          "category": "change_background",
+          "source_group": "photographic",
+          "original_prompt": "a row of red apples with one cut in half [on table]",
+          "editing_prompt": "a row of red apples with one cut in half [on grass]",
+          "instruction": "Change the location of the cut apple from a table to grass",
+          "unedited_fraction": 0.4089508056640625,
+          "baseline_normalized_mse_x10000": 222.81549870967865,
+          "experiment_normalized_mse_x10000": 453.3597081899643,
+          "normalized_mse_gap_x10000": 230.54420948028564,
+          "baseline_normalized_psnr": 16.52054603579164,
+          "experiment_normalized_psnr": 13.435570799049605,
+          "normalized_psnr_worsening": 3.0849752367420376,
+          "baseline_rgb_bias": [
+            -0.0025417644064873457,
+            -2.2675772925140336e-05,
+            -0.03363221138715744
+          ],
+          "experiment_rgb_bias": [
+            0.01465695258229971,
+            0.0034073384013026953,
+            -0.03061596490442753
+          ],
+          "baseline_bias_mse_x10000": 3.7919555325061083,
+          "experiment_bias_mse_x10000": 3.8792449049651623,
+          "bias_mse_gap_x10000": 0.087289372459054
+        },
+        {
+          "file_id": "411000000000",
+          "image_path": "4_change_attribute_content_40/1_artificial/1_animal/411000000000.jpg",
+          "category": "change_content",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a cartoon painting of a fox with [big] eyes in a car",
+          "editing_prompt": "a cartoon painting of a fox with [small] eyes in a car",
+          "instruction": "Decrease the size of the fox's eyes.",
+          "unedited_fraction": 0.9581489562988281,
+          "baseline_normalized_mse_x10000": 83.50483141839504,
+          "experiment_normalized_mse_x10000": 313.59411776065826,
+          "normalized_mse_gap_x10000": 230.08928634226322,
+          "baseline_normalized_psnr": 20.78288396400864,
+          "experiment_normalized_psnr": 15.036320921867265,
+          "normalized_psnr_worsening": 5.746563042141371,
+          "baseline_rgb_bias": [
+            0.008426999673247337,
+            -0.006346588488668203,
+            -0.09830931574106216
+          ],
+          "experiment_rgb_bias": [
+            0.0027202991768717766,
+            -0.008000917732715607,
+            -0.06979518383741379
+          ],
+          "baseline_bias_mse_x10000": 32.5867161154747,
+          "experiment_bias_mse_x10000": 16.47594035603106,
+          "bias_mse_gap_x10000": -16.11077575944364
+        },
+        {
+          "file_id": "112000000006",
+          "image_path": "1_change_object_80/1_artificial/2_human/112000000006.jpg",
+          "category": "change_object",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a cartoon man sitting at a desk with [laptop]",
+          "editing_prompt": "a cartoon man sitting at a desk with [notebook]",
+          "instruction": "Replace the laptop with a notebook",
+          "unedited_fraction": 0.7911262512207031,
+          "baseline_normalized_mse_x10000": 205.31544461846352,
+          "experiment_normalized_mse_x10000": 428.4088686108589,
+          "normalized_mse_gap_x10000": 223.0934239923954,
+          "baseline_normalized_psnr": 16.875783800970893,
+          "experiment_normalized_psnr": 13.68141547296551,
+          "normalized_psnr_worsening": 3.1943683280053845,
+          "baseline_rgb_bias": [
+            -0.00807122141122818,
+            0.0006694894982501864,
+            0.0005274946452118456
+          ],
+          "experiment_rgb_bias": [
+            0.010398234240710735,
+            0.023743748664855957,
+            0.03079324960708618
+          ],
+          "baseline_bias_mse_x10000": 0.21957026547170244,
+          "experiment_bias_mse_x10000": 5.400376976467669,
+          "bias_mse_gap_x10000": 5.180806710995967
+        }
+      ]
+    },
+    "pix2pix-zero": {
+      "n": 556,
+      "official_mse_recompute_max_abs_error": 3.428189643273072e-08,
+      "normalized_mask_metrics": {
+        "baseline_mse_x10000": 200.35704832303742,
+        "experiment_mse_x10000": 210.6674753730717,
+        "mse_gap_x10000": 10.310427050034304,
+        "baseline_psnr": 19.301604096811747,
+        "experiment_psnr": 19.047854650098508,
+        "psnr_worsening": 0.2537494467132433
+      },
+      "global_rgb_bias_component": {
+        "baseline_bias_mse_x10000": 15.203366990999385,
+        "experiment_bias_mse_x10000": 16.80134035513115,
+        "bias_mse_gap_x10000": 1.597973364131766,
+        "share_of_total_signed_mse_gap": 0.15498614716705153
+      },
+      "by_mask_distance": {
+        "boundary_0_4": {
+          "pixels": 6749983,
+          "baseline_mse_x10000": 228.86452097782282,
+          "experiment_mse_x10000": 242.78728507510206,
+          "signed_gap_mse_x10000": 13.922762633563918,
+          "share_of_positive_excess_sse": 0.07833820149124561
+        },
+        "near_5_16": {
+          "pixels": 18120508,
+          "baseline_mse_x10000": 199.3139874133189,
+          "experiment_mse_x10000": 209.64109267429836,
+          "signed_gap_mse_x10000": 10.32710854645087,
+          "share_of_positive_excess_sse": 0.1826477062047437
+        },
+        "mid_17_32": {
+          "pixels": 20202853,
+          "baseline_mse_x10000": 183.84734458621892,
+          "experiment_mse_x10000": 190.97179837178015,
+          "signed_gap_mse_x10000": 7.124452776378779,
+          "share_of_positive_excess_sse": 0.1854979455276462
+        },
+        "far_gt_32": {
+          "pixels": 54501687,
+          "baseline_mse_x10000": 194.2284774178129,
+          "experiment_mse_x10000": 204.71538265883274,
+          "signed_gap_mse_x10000": 10.486904889809896,
+          "share_of_positive_excess_sse": 0.5535161467763645
+        }
+      },
+      "by_source_texture": {
+        "smooth": {
+          "pixels": 36638697,
+          "baseline_mse_x10000": 117.61888033676773,
+          "experiment_mse_x10000": 126.43405770415394,
+          "signed_gap_mse_x10000": 8.815175875435736,
+          "share_of_positive_excess_sse": 0.23989497444009733
+        },
+        "medium": {
+          "pixels": 30433907,
+          "baseline_mse_x10000": 181.1955175505968,
+          "experiment_mse_x10000": 191.31787814093101,
+          "signed_gap_mse_x10000": 10.122358984998536,
+          "share_of_positive_excess_sse": 0.2931012778264396
+        },
+        "edge": {
+          "pixels": 32502427,
+          "baseline_mse_x10000": 296.36657120181474,
+          "experiment_mse_x10000": 307.6137165931391,
+          "signed_gap_mse_x10000": 11.247148203004711,
+          "share_of_positive_excess_sse": 0.4670037477334632
+        }
+      },
+      "by_source_group": {
+        "random_unknown": {
+          "pixels": 21002018,
+          "baseline_mse_x10000": 189.80847350946385,
+          "experiment_mse_x10000": 189.61889584389291,
+          "signed_gap_mse_x10000": -0.18958718936443042,
+          "share_of_positive_excess_sse": 0.16940147646419473
+        },
+        "artificial_graphic": {
+          "pixels": 40042746,
+          "baseline_mse_x10000": 184.2712127957217,
+          "experiment_mse_x10000": 195.70173649203065,
+          "signed_gap_mse_x10000": 11.4305198416037,
+          "share_of_positive_excess_sse": 0.39554074845215503
+        },
+        "photographic": {
+          "pixels": 38530267,
+          "baseline_mse_x10000": 210.00208933860364,
+          "experiment_mse_x10000": 224.0915662958101,
+          "signed_gap_mse_x10000": 14.089477708817194,
+          "share_of_positive_excess_sse": 0.4350577750836502
+        }
+      },
+      "by_category": {
+        "random": {
+          "pixels": 21002018,
+          "baseline_mse_x10000": 189.80847350946385,
+          "experiment_mse_x10000": 189.61889584389291,
+          "signed_gap_mse_x10000": -0.18958718936443042,
+          "share_of_positive_excess_sse": 0.16940147646419473
+        },
+        "change_object": {
+          "pixels": 16022814,
+          "baseline_mse_x10000": 163.63408315128382,
+          "experiment_mse_x10000": 183.98665146189495,
+          "signed_gap_mse_x10000": 20.352567870958364,
+          "share_of_positive_excess_sse": 0.1451749255025361
+        },
+        "add_object": {
+          "pixels": 8488606,
+          "baseline_mse_x10000": 212.25487052026818,
+          "experiment_mse_x10000": 245.56020968857908,
+          "signed_gap_mse_x10000": 33.30534134944548,
+          "share_of_positive_excess_sse": 0.11999326759553311
+        },
+        "delete_object": {
+          "pixels": 17728310,
+          "baseline_mse_x10000": 249.3865600442005,
+          "experiment_mse_x10000": 266.28122714278874,
+          "signed_gap_mse_x10000": 16.894661176242323,
+          "share_of_positive_excess_sse": 0.23461329391697736
+        },
+        "change_content": {
+          "pixels": 6672651,
+          "baseline_mse_x10000": 176.32821004060665,
+          "experiment_mse_x10000": 161.0458038723376,
+          "signed_gap_mse_x10000": -15.282387483964527,
+          "share_of_positive_excess_sse": 0.05040221086779068
+        },
+        "change_pose": {
+          "pixels": 7302442,
+          "baseline_mse_x10000": 111.62699175225552,
+          "experiment_mse_x10000": 124.15936668613578,
+          "signed_gap_mse_x10000": 12.532364621895534,
+          "share_of_positive_excess_sse": 0.05107971010299355
+        },
+        "change_color": {
+          "pixels": 7420476,
+          "baseline_mse_x10000": 169.36576271296724,
+          "experiment_mse_x10000": 162.33970545603728,
+          "signed_gap_mse_x10000": -7.026062950280997,
+          "share_of_positive_excess_sse": 0.0457077803431429
+        },
+        "change_material": {
+          "pixels": 7051385,
+          "baseline_mse_x10000": 284.9271261343486,
+          "experiment_mse_x10000": 299.05352420911606,
+          "signed_gap_mse_x10000": 14.126403669459485,
+          "share_of_positive_excess_sse": 0.1182184096504936
+        },
+        "change_background": {
+          "pixels": 7473788,
+          "baseline_mse_x10000": 161.69430221626655,
+          "experiment_mse_x10000": 170.35292092310817,
+          "signed_gap_mse_x10000": 8.658614417482328,
+          "share_of_positive_excess_sse": 0.05586014922579308
+        },
+        "change_style": {
+          "pixels": 412541,
+          "baseline_mse_x10000": 385.980141279392,
+          "experiment_mse_x10000": 362.9914224308412,
+          "signed_gap_mse_x10000": -22.988831290026326,
+          "share_of_positive_excess_sse": 0.0095487763305449
+        }
+      },
+      "grid_signed_gap_mse_x10000": [
+        [
+          -0.4199364508742772,
+          2.4184623962212934,
+          4.245784113727099,
+          21.296089717858003,
+          1.534599969167522,
+          4.394404577717324,
+          4.867136081359231,
+          -0.327124828158336
+        ],
+        [
+          11.06399497988058,
+          -0.6980391556694535,
+          -3.5652466923083805,
+          11.580194236796508,
+          8.715121923765379,
+          8.805989611718417,
+          5.175496533476708,
+          0.3940139755250874
+        ],
+        [
+          5.91011222142382,
+          5.680782109655218,
+          5.607562698518758,
+          7.971789515699784,
+          1.3784065014130094,
+          3.780205673944927,
+          -11.73029544236255,
+          -18.725574910331467
+        ],
+        [
+          -2.8834780290379216,
+          -8.071147223351035,
+          15.766517769592982,
+          15.952205404676372,
+          36.99202530890092,
+          34.4204139702545,
+          8.148196808882721,
+          -12.666243572712993
+        ],
+        [
+          7.892229945348975,
+          1.8365793382398503,
+          14.236862517501281,
+          3.8584085076797954,
+          27.415676682325447,
+          28.15149311848047,
+          5.051608746430202,
+          14.775296076801688
+        ],
+        [
+          18.96533272126244,
+          12.032418653404253,
+          21.909679615014852,
+          20.11767998551305,
+          12.099686240176858,
+          5.1373346616826305,
+          9.733143412411868,
+          4.842657150676497
+        ],
+        [
+          16.51132578209077,
+          20.35048171675909,
+          28.159891545081656,
+          26.36010700684618,
+          6.707406814992612,
+          12.419843355950155,
+          23.19268784011342,
+          12.449026272790796
+        ],
+        [
+          12.725680669305103,
+          7.324365993634541,
+          0.43586783375600097,
+          31.547441269573163,
+          21.426811834448575,
+          36.6647897253343,
+          25.30168111744555,
+          6.446822018829042
+        ]
+      ],
+      "normalized_mse_outlier_concentration": {
+        "top_10pct_share_of_positive_per_image_gap": 0.6435350521358296
+      },
+      "worst_normalized_mse": [
+        {
+          "file_id": "211000000001",
+          "image_path": "2_add_object_80/1_artificial/1_animal/211000000001.jpg",
+          "category": "add_object",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a cat",
+          "editing_prompt": "a cat [with a gold chain and a star on its head]",
+          "instruction": "Add a gold chain and a star to the cat's head",
+          "unedited_fraction": 0.7742118835449219,
+          "baseline_normalized_mse_x10000": 712.682232260704,
+          "experiment_normalized_mse_x10000": 1695.927381515503,
+          "normalized_mse_gap_x10000": 983.2451492547989,
+          "baseline_normalized_psnr": 11.471040683776215,
+          "experiment_normalized_psnr": 7.705927478825512,
+          "normalized_psnr_worsening": 3.765113204950703,
+          "baseline_rgb_bias": [
+            -0.046087149530649185,
+            -0.10371037572622299,
+            -0.2240775227546692
+          ],
+          "experiment_rgb_bias": [
+            -0.0984240472316742,
+            -0.1924179643392563,
+            -0.33579394221305847
+          ],
+          "baseline_bias_mse_x10000": 210.30202507972717,
+          "experiment_bias_mse_x10000": 531.5651372075081,
+          "bias_mse_gap_x10000": 321.2631121277809
+        },
+        {
+          "file_id": "711000000003",
+          "image_path": "7_change_attribute_material_40/1_artificial/1_animal/711000000003.jpg",
+          "category": "change_material",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a deer with large antlers in low polygonal style",
+          "editing_prompt": "a [iron] deer [sculpture] with large antlers in low polygonal style",
+          "instruction": "Transform the deer into an iron sculpture",
+          "unedited_fraction": 0.4342193603515625,
+          "baseline_normalized_mse_x10000": 408.49514305591583,
+          "experiment_normalized_mse_x10000": 902.3549407720566,
+          "normalized_mse_gap_x10000": 493.85979771614075,
+          "baseline_normalized_psnr": 13.888131027951019,
+          "experiment_normalized_psnr": 10.446225993787252,
+          "normalized_psnr_worsening": 3.4419050341637645,
+          "baseline_rgb_bias": [
+            -0.012084990739822388,
+            0.0576745867729187,
+            0.06697249412536621
+          ],
+          "experiment_rgb_bias": [
+            0.012372367084026337,
+            0.13586099445819855,
+            0.15942667424678802
+          ],
+          "baseline_bias_mse_x10000": 26.52573399245739,
+          "experiment_bias_mse_x10000": 146.760493516922,
+          "bias_mse_gap_x10000": 120.23475952446461
+        },
+        {
+          "file_id": "123000000000",
+          "image_path": "1_change_object_80/2_natural/3_indoor/123000000000.jpg",
+          "category": "change_object",
+          "source_group": "photographic",
+          "original_prompt": "a table with [green napkin], food and drinks putting on it",
+          "editing_prompt": "a table with [dilicious pizza], food and drinks putting on it",
+          "instruction": "change the green napkin to dilicious pizza",
+          "unedited_fraction": 0.82086181640625,
+          "baseline_normalized_mse_x10000": 445.7942768931389,
+          "experiment_normalized_mse_x10000": 935.4119002819061,
+          "normalized_mse_gap_x10000": 489.61762338876724,
+          "baseline_normalized_psnr": 13.508655112924872,
+          "experiment_normalized_psnr": 10.289971093111047,
+          "normalized_psnr_worsening": 3.218684019813823,
+          "baseline_rgb_bias": [
+            0.06437887996435165,
+            -0.05904344096779823,
+            -0.06503422558307648
+          ],
+          "experiment_rgb_bias": [
+            0.08224495500326157,
+            -0.06669806689023972,
+            -0.07541918754577637
+          ],
+          "baseline_bias_mse_x10000": 39.53406121581793,
+          "experiment_bias_mse_x10000": 56.336396373808384,
+          "bias_mse_gap_x10000": 16.802335157990456
+        },
+        {
+          "file_id": "512000000004",
+          "image_path": "5_change_attribute_pose_40/1_artificial/2_human/512000000004.jpg",
+          "category": "change_pose",
+          "source_group": "artificial_graphic",
+          "original_prompt": "graduation girl [hands up] with confetti in background",
+          "editing_prompt": "graduation girl [hands down] with confetti in background",
+          "instruction": "Make girl's hands down",
+          "unedited_fraction": 0.9510917663574219,
+          "baseline_normalized_mse_x10000": 56.02835677564144,
+          "experiment_normalized_mse_x10000": 428.7373647093773,
+          "normalized_mse_gap_x10000": 372.70900793373585,
+          "baseline_normalized_psnr": 22.515921145257632,
+          "experiment_normalized_psnr": 13.67808665824634,
+          "normalized_psnr_worsening": 8.837834487011293,
+          "baseline_rgb_bias": [
+            -0.011051132343709469,
+            -0.01709282025694847,
+            -0.017714131623506546
+          ],
+          "experiment_rgb_bias": [
+            -0.050745997577905655,
+            -0.08057285845279694,
+            -0.0739893987774849
+          ],
+          "baseline_bias_mse_x10000": 2.4269416462630033,
+          "experiment_bias_mse_x10000": 48.47191274166107,
+          "bias_mse_gap_x10000": 46.04497109539807
+        },
+        {
+          "file_id": "812000000006",
+          "image_path": "8_change_background_80/1_artificial/2_human/812000000006.jpg",
+          "category": "change_background",
+          "source_group": "artificial_graphic",
+          "original_prompt": "illustration of a woman meditating in a yoga pose",
+          "editing_prompt": "illustration of a woman meditating in a yoga pose [in the sky with stars]",
+          "instruction": "Add stars to the background",
+          "unedited_fraction": 0.26808929443359375,
+          "baseline_normalized_mse_x10000": 216.50830283761024,
+          "experiment_normalized_mse_x10000": 569.6532502770424,
+          "normalized_mse_gap_x10000": 353.14494743943214,
+          "baseline_normalized_psnr": 16.645254443109998,
+          "experiment_normalized_psnr": 12.443894203182843,
+          "normalized_psnr_worsening": 4.201360239927156,
+          "baseline_rgb_bias": [
+            -0.11631661653518677,
+            -0.05578293651342392,
+            0.012769279070198536
+          ],
+          "experiment_rgb_bias": [
+            -0.11685401946306229,
+            -0.05025271326303482,
+            0.029902556911110878
+          ],
+          "baseline_bias_mse_x10000": 56.014484725892544,
+          "experiment_bias_mse_x10000": 56.914533488452435,
+          "bias_mse_gap_x10000": 0.9000487625598907
+        },
+        {
+          "file_id": "323000000002",
+          "image_path": "3_delete_object_80/2_natural/3_indoor/323000000002.jpg",
+          "category": "delete_object",
+          "source_group": "photographic",
+          "original_prompt": "olive oil being poured into a bowl [with olive] on table",
+          "editing_prompt": "olive oil being poured into a bowl on table",
+          "instruction": "Remove olives from the table",
+          "unedited_fraction": 0.9068946838378906,
+          "baseline_normalized_mse_x10000": 476.1836305260658,
+          "experiment_normalized_mse_x10000": 828.9638161659241,
+          "normalized_mse_gap_x10000": 352.78018563985825,
+          "baseline_normalized_psnr": 13.222255381507813,
+          "experiment_normalized_psnr": 10.814644257614656,
+          "normalized_psnr_worsening": 2.407611123893157,
+          "baseline_rgb_bias": [
+            -0.003962130285799503,
+            -0.015750685706734657,
+            -0.05973351001739502
+          ],
+          "experiment_rgb_bias": [
+            -0.04148619621992111,
+            -0.02045748569071293,
+            -0.07214828580617905
+          ],
+          "baseline_bias_mse_x10000": 12.772915652021766,
+          "experiment_bias_mse_x10000": 24.483294691890478,
+          "bias_mse_gap_x10000": 11.710379039868712
+        },
+        {
+          "file_id": "322000000002",
+          "image_path": "3_delete_object_80/2_natural/2_human/322000000002.jpg",
+          "category": "delete_object",
+          "source_group": "photographic",
+          "original_prompt": "a woman in a purple dress sitting on a swing [holding a coconut]",
+          "editing_prompt": "a woman in a purple dress sitting on a swing",
+          "instruction": "Remove the coconut from the woman's hand",
+          "unedited_fraction": 0.9860267639160156,
+          "baseline_normalized_mse_x10000": 238.75821381807327,
+          "experiment_normalized_mse_x10000": 511.1489072442055,
+          "normalized_mse_gap_x10000": 272.3906934261322,
+          "baseline_normalized_psnr": 16.220416787829436,
+          "experiment_normalized_psnr": 12.914525633215938,
+          "normalized_psnr_worsening": 3.3058911546134997,
+          "baseline_rgb_bias": [
+            -0.036387182772159576,
+            -0.03682875633239746,
+            -0.01714474707841873
+          ],
+          "experiment_rgb_bias": [
+            -0.04282671958208084,
+            -0.05195888876914978,
+            -0.06327150017023087
+          ],
+          "baseline_bias_mse_x10000": 9.914422407746315,
+          "experiment_bias_mse_x10000": 28.457120060920715,
+          "bias_mse_gap_x10000": 18.5426976531744
+        },
+        {
+          "file_id": "724000000000",
+          "image_path": "7_change_attribute_material_40/2_natural/4_outdoor/724000000000.jpg",
+          "category": "change_material",
+          "source_group": "photographic",
+          "original_prompt": "snowdrops in the garden",
+          "editing_prompt": "[plastic] snowdrops in the garden",
+          "instruction": "Make the snowdrops plastic",
+          "unedited_fraction": 0.6674728393554688,
+          "baseline_normalized_mse_x10000": 151.2913778424263,
+          "experiment_normalized_mse_x10000": 414.03111070394516,
+          "normalized_mse_gap_x10000": 262.73973286151886,
+          "baseline_normalized_psnr": 18.201858218919238,
+          "experiment_normalized_psnr": 13.829670243394485,
+          "normalized_psnr_worsening": 4.372187975524751,
+          "baseline_rgb_bias": [
+            -0.0466327928006649,
+            -0.04826678708195686,
+            -0.021370934322476387
+          ],
+          "experiment_rgb_bias": [
+            -0.017754215747117996,
+            -0.01897762343287468,
+            -0.0014640620211139321
+          ],
+          "baseline_bias_mse_x10000": 16.53672195971012,
+          "experiment_bias_mse_x10000": 2.258352906210348,
+          "bias_mse_gap_x10000": -14.278369053499773
+        },
+        {
+          "file_id": "312000000009",
+          "image_path": "3_delete_object_80/1_artificial/2_human/312000000009.jpg",
+          "category": "delete_object",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a digital art boy with glasses [and tie] sitting on a laptop",
+          "editing_prompt": "a digital art boy with glasses sitting on a laptop",
+          "instruction": "Remove the tie from the cartoon boy",
+          "unedited_fraction": 0.9851493835449219,
+          "baseline_normalized_mse_x10000": 863.0543202161789,
+          "experiment_normalized_mse_x10000": 1117.718294262886,
+          "normalized_mse_gap_x10000": 254.66397404670715,
+          "baseline_normalized_psnr": 10.639618691425834,
+          "experiment_normalized_psnr": 9.516676406922898,
+          "normalized_psnr_worsening": 1.1229422845029369,
+          "baseline_rgb_bias": [
+            -0.011758343316614628,
+            -0.01125066913664341,
+            -0.02082732878625393
+          ],
+          "experiment_rgb_bias": [
+            -0.010503600351512432,
+            -0.009213504381477833,
+            -0.019010983407497406
+          ],
+          "baseline_bias_mse_x10000": 2.3287127260118723,
+          "experiment_bias_mse_x10000": 1.855439186329022,
+          "bias_mse_gap_x10000": -0.47327353968285024
+        },
+        {
+          "file_id": "721000000000",
+          "image_path": "7_change_attribute_material_40/2_natural/1_animal/721000000000.jpg",
+          "category": "change_material",
+          "source_group": "photographic",
+          "original_prompt": "a photo of a horse in the field",
+          "editing_prompt": "a photo of a [bronze] horse in the field",
+          "instruction": "change the horse to a bronze horse",
+          "unedited_fraction": 0.7615432739257812,
+          "baseline_normalized_mse_x10000": 409.33970361948013,
+          "experiment_normalized_mse_x10000": 655.6157022714615,
+          "normalized_mse_gap_x10000": 246.27599865198135,
+          "baseline_normalized_psnr": 13.87916129220879,
+          "experiment_normalized_psnr": 11.833506534417086,
+          "normalized_psnr_worsening": 2.0456547577917066,
+          "baseline_rgb_bias": [
+            0.06932047754526138,
+            0.0008199260919354856,
+            0.04527776688337326
+          ],
+          "experiment_rgb_bias": [
+            0.13835641741752625,
+            0.04017925634980202,
+            0.07152411341667175
+          ],
+          "baseline_bias_mse_x10000": 22.853591945022345,
+          "experiment_bias_mse_x10000": 86.24189533293247,
+          "bias_mse_gap_x10000": 63.38830338791013
+        },
+        {
+          "file_id": "000000000021",
+          "image_path": "0_random_140/000000000021.jpg",
+          "category": "random",
+          "source_group": "random_unknown",
+          "original_prompt": "two parrots sitting on a stick, city street background",
+          "editing_prompt": "two [kissing] parrots sitting on a stick, city street background",
+          "instruction": "Make the parrots kiss each other",
+          "unedited_fraction": 0.7149429321289062,
+          "baseline_normalized_mse_x10000": 517.0450732111931,
+          "experiment_normalized_mse_x10000": 750.4965364933014,
+          "normalized_mse_gap_x10000": 233.4514632821083,
+          "baseline_normalized_psnr": 12.864715957964748,
+          "experiment_normalized_psnr": 11.24651307664972,
+          "normalized_psnr_worsening": 1.618202881315026,
+          "baseline_rgb_bias": [
+            -0.020735444501042366,
+            -0.04834859073162079,
+            -0.04537304490804672
+          ],
+          "experiment_rgb_bias": [
+            -0.03588538244366646,
+            -0.0522131584584713,
+            -0.03625261411070824
+          ],
+          "baseline_bias_mse_x10000": 16.087526455521584,
+          "experiment_bias_mse_x10000": 17.76075572706759,
+          "bias_mse_gap_x10000": 1.6732292715460062
+        },
+        {
+          "file_id": "223000000007",
+          "image_path": "2_add_object_80/2_natural/3_indoor/223000000007.jpg",
+          "category": "add_object",
+          "source_group": "photographic",
+          "original_prompt": "a red apple sitting on top of a wooden table",
+          "editing_prompt": "a red apple [and a bird] sitting on top of a wooden table",
+          "instruction": "Add a bird to the image",
+          "unedited_fraction": 0.18206405639648438,
+          "baseline_normalized_mse_x10000": 375.83477795124054,
+          "experiment_normalized_mse_x10000": 606.4865738153458,
+          "normalized_mse_gap_x10000": 230.65179586410522,
+          "baseline_normalized_psnr": 14.250030348435983,
+          "experiment_normalized_psnr": 12.171788089481904,
+          "normalized_psnr_worsening": 2.078242258954081,
+          "baseline_rgb_bias": [
+            0.015904834493994713,
+            -0.03569800779223442,
+            -0.09015537798404694
+          ],
+          "experiment_rgb_bias": [
+            -0.028658805415034294,
+            0.013212237507104874,
+            -0.036084290593862534
+          ],
+          "baseline_bias_mse_x10000": 32.18434518203139,
+          "experiment_bias_mse_x10000": 7.659887778572738,
+          "bias_mse_gap_x10000": -24.524457403458655
+        },
+        {
+          "file_id": "000000000056",
+          "image_path": "0_random_140/000000000056.jpg",
+          "category": "random",
+          "source_group": "random_unknown",
+          "original_prompt": "a [meerkat] puppy wrapped in a blue towel",
+          "editing_prompt": "a [lion] puppy wrapped in a blue towel",
+          "instruction": "Replace the meerkat with a lion",
+          "unedited_fraction": 0.710418701171875,
+          "baseline_normalized_mse_x10000": 1119.4612085819244,
+          "experiment_normalized_mse_x10000": 1347.099244594574,
+          "normalized_mse_gap_x10000": 227.63803601264954,
+          "baseline_normalized_psnr": 9.509909509377426,
+          "experiment_normalized_psnr": 8.706004074009615,
+          "normalized_psnr_worsening": 0.8039054353678109,
+          "baseline_rgb_bias": [
+            0.016074586659669876,
+            -0.05796092748641968,
+            -0.01590612158179283
+          ],
+          "experiment_rgb_bias": [
+            -0.0041956533677875996,
+            -0.07372047752141953,
+            -0.0697772428393364
+          ],
+          "baseline_bias_mse_x10000": 12.902887538075447,
+          "experiment_bias_mse_x10000": 34.40391970798373,
+          "bias_mse_gap_x10000": 21.501032169908285
+        },
+        {
+          "file_id": "123000000002",
+          "image_path": "1_change_object_80/2_natural/3_indoor/123000000002.jpg",
+          "category": "change_object",
+          "source_group": "photographic",
+          "original_prompt": "a [book] on the table",
+          "editing_prompt": "a [painting] on the table",
+          "instruction": "change the book to a painting",
+          "unedited_fraction": 0.7532157897949219,
+          "baseline_normalized_mse_x10000": 141.63954183459282,
+          "experiment_normalized_mse_x10000": 368.1867942214012,
+          "normalized_mse_gap_x10000": 226.5472523868084,
+          "baseline_normalized_psnr": 18.488154867362223,
+          "experiment_normalized_psnr": 14.339317924197983,
+          "normalized_psnr_worsening": 4.14883694316424,
+          "baseline_rgb_bias": [
+            -0.002664785133674741,
+            -0.01227110717445612,
+            -0.017357725650072098
+          ],
+          "experiment_rgb_bias": [
+            -0.007085667457431555,
+            0.01540295872837305,
+            -0.020514456555247307
+          ],
+          "baseline_bias_mse_x10000": 1.5299060032702982,
+          "experiment_bias_mse_x10000": 2.3610024072695524,
+          "bias_mse_gap_x10000": 0.8310964039992541
+        },
+        {
+          "file_id": "121000000002",
+          "image_path": "1_change_object_80/2_natural/1_animal/121000000002.jpg",
+          "category": "change_object",
+          "source_group": "photographic",
+          "original_prompt": "a [horse] in a grass field",
+          "editing_prompt": "a [zebra] in a grass field",
+          "instruction": "change the horse to zebra",
+          "unedited_fraction": 0.7198867797851562,
+          "baseline_normalized_mse_x10000": 487.7059534192085,
+          "experiment_normalized_mse_x10000": 704.168900847435,
+          "normalized_mse_gap_x10000": 216.46294742822647,
+          "baseline_normalized_psnr": 13.118419429498939,
+          "experiment_normalized_psnr": 11.523231591701125,
+          "normalized_psnr_worsening": 1.5951878377978148,
+          "baseline_rgb_bias": [
+            0.03894159942865372,
+            0.11316514015197754,
+            0.14742562174797058
+          ],
+          "experiment_rgb_bias": [
+            0.031822383403778076,
+            0.09314469993114471,
+            0.12459254264831543
+          ],
+          "baseline_bias_mse_x10000": 120.19037269055843,
+          "experiment_bias_mse_x10000": 84.03967134654522,
+          "bias_mse_gap_x10000": -36.150701344013214
+        },
+        {
+          "file_id": "212000000002",
+          "image_path": "2_add_object_80/1_artificial/2_human/212000000002.jpg",
+          "category": "add_object",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a pink cartoon girl surrounded by flowers",
+          "editing_prompt": "a pink cartoon girl [with a graffiti on her face] surrounded by flowers",
+          "instruction": "Add a graffiti to the girl's face",
+          "unedited_fraction": 0.9254035949707031,
+          "baseline_normalized_mse_x10000": 77.02920120209455,
+          "experiment_normalized_mse_x10000": 293.0346317589283,
+          "normalized_mse_gap_x10000": 216.00543055683374,
+          "baseline_normalized_psnr": 21.13344605777915,
+          "experiment_normalized_psnr": 15.330810503182242,
+          "normalized_psnr_worsening": 5.802635554596907,
+          "baseline_rgb_bias": [
+            -0.009960314258933067,
+            -0.016080252826213837,
+            -0.015023896470665932
+          ],
+          "experiment_rgb_bias": [
+            -0.02884870208799839,
+            -0.013992727734148502,
+            -0.02765687182545662
+          ],
+          "baseline_bias_mse_x10000": 1.944999530678615,
+          "experiment_bias_mse_x10000": 5.976488464511931,
+          "bias_mse_gap_x10000": 4.031488933833316
+        },
+        {
+          "file_id": "813000000007",
+          "image_path": "8_change_background_80/1_artificial/3_indoor/813000000007.jpg",
+          "category": "change_background",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a potted plant sits on a wooden table in front of the [mottled walls]",
+          "editing_prompt": "a potted plant sits on a wooden table in front of the [marble walls]",
+          "instruction": "Change the walls to marble ones",
+          "unedited_fraction": 0.3143424987792969,
+          "baseline_normalized_mse_x10000": 433.06414037942886,
+          "experiment_normalized_mse_x10000": 647.9673087596893,
+          "normalized_mse_gap_x10000": 214.90316838026047,
+          "baseline_normalized_psnr": 13.634477762796296,
+          "experiment_normalized_psnr": 11.884469045976422,
+          "normalized_psnr_worsening": 1.7500087168198717,
+          "baseline_rgb_bias": [
+            -0.006360938306897879,
+            0.057082973420619965,
+            0.14508584141731262
+          ],
+          "experiment_rgb_bias": [
+            -0.01954454928636551,
+            0.051693886518478394,
+            0.1465623378753662
+          ],
+          "baseline_bias_mse_x10000": 81.16276003420353,
+          "experiment_bias_mse_x10000": 81.78255520761013,
+          "bias_mse_gap_x10000": 0.619795173406601
+        },
+        {
+          "file_id": "213000000000",
+          "image_path": "2_add_object_80/1_artificial/3_indoor/213000000000.jpg",
+          "category": "add_object",
+          "source_group": "artificial_graphic",
+          "original_prompt": "two red flowers on a pink background",
+          "editing_prompt": "two red flowers on a pink [hearts] background",
+          "instruction": "Add hearts to the pink background",
+          "unedited_fraction": 0.035614013671875,
+          "baseline_normalized_mse_x10000": 421.8780994415283,
+          "experiment_normalized_mse_x10000": 630.2816420793533,
+          "normalized_mse_gap_x10000": 208.403542637825,
+          "baseline_normalized_psnr": 13.748130191513399,
+          "experiment_normalized_psnr": 12.004653421838313,
+          "normalized_psnr_worsening": 1.7434767696750844,
+          "baseline_rgb_bias": [
+            0.009632840752601624,
+            0.07050320506095886,
+            0.08049621433019638
+          ],
+          "experiment_rgb_bias": [
+            0.010132807306945324,
+            -0.002721955068409443,
+            0.05020759999752045
+          ],
+          "baseline_bias_mse_x10000": 38.477114867419004,
+          "experiment_bias_mse_x10000": 8.76961974427104,
+          "bias_mse_gap_x10000": -29.707495123147964
+        },
+        {
+          "file_id": "112000000008",
+          "image_path": "1_change_object_80/1_artificial/2_human/112000000008.jpg",
+          "category": "change_object",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a painting of two women walking on the [beach]",
+          "editing_prompt": "a painting of two women walking on the [grass]",
+          "instruction": "Change the beach to grass in the painting",
+          "unedited_fraction": 0.3597373962402344,
+          "baseline_normalized_mse_x10000": 404.9603268504143,
+          "experiment_normalized_mse_x10000": 581.8703770637512,
+          "normalized_mse_gap_x10000": 176.91005021333694,
+          "baseline_normalized_psnr": 13.925875216591663,
+          "experiment_normalized_psnr": 12.35173752112698,
+          "normalized_psnr_worsening": 1.5741376954646844,
+          "baseline_rgb_bias": [
+            0.04513579607009888,
+            -0.002355532720685005,
+            -0.0882689580321312
+          ],
+          "experiment_rgb_bias": [
+            0.028209500014781952,
+            -0.017442943528294563,
+            -0.11130830645561218
+          ],
+          "baseline_bias_mse_x10000": 32.780657056719065,
+          "experiment_bias_mse_x10000": 44.96523644775152,
+          "bias_mse_gap_x10000": 12.184579391032457
+        },
+        {
+          "file_id": "311000000006",
+          "image_path": "3_delete_object_80/1_artificial/1_animal/311000000006.jpg",
+          "category": "delete_object",
+          "source_group": "artificial_graphic",
+          "original_prompt": "a Ukiyo-e of seagull flying over the ocean waves [with sun rise]",
+          "editing_prompt": "a Ukiyo-e of seagull flying over the ocean waves",
+          "instruction": "Remove the sun",
+          "unedited_fraction": 0.8926544189453125,
+          "baseline_normalized_mse_x10000": 143.9390704035759,
+          "experiment_normalized_mse_x10000": 317.59824603796005,
+          "normalized_mse_gap_x10000": 173.65917563438416,
+          "baseline_normalized_psnr": 18.418213064276078,
+          "experiment_normalized_psnr": 14.981219046647738,
+          "normalized_psnr_worsening": 3.4369940176283373,
+          "baseline_rgb_bias": [
+            -0.0747644454240799,
+            0.04535973072052002,
+            0.03081350214779377
+          ],
+          "experiment_rgb_bias": [
+            -0.09499642997980118,
+            0.0576435849070549,
+            0.04279544577002525
+          ],
+          "baseline_bias_mse_x10000": 28.655666392296553,
+          "experiment_bias_mse_x10000": 47.261849977076054,
+          "bias_mse_gap_x10000": 18.6061835847795
+        }
+      ]
+    }
+  }
+}

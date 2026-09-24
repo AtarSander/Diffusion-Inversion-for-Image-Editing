@@ -1,0 +1,16 @@
+[
+  {
+    "sample": "sample_000000",
+    "prompt": "A person is flying a kite on a beach with a clear blue sky. The kite is white with a blue tail and is flying high in the sky. The person is wearing a blue sweater and is holding onto the kite string. The beach is sandy, and there are some buildings in the distance.",
+    "input_noise_path": "/tmp/sdxl-tada-metrics-84439/tmp/sdxl_tada_matched_metric_views/ddim/sample_000000/latents/x_000.pt",
+    "inverted_noise_path": "/tmp/sdxl-tada-metrics-84439/tmp/sdxl_tada_matched_metric_views/ddim/sample_000000/inverted_noise.pt",
+    "sample_size": 5000,
+    "num_quantiles": 201,
+    "initial_shapiro_p_value": 0.7464751927667852,
+    "inverted_shapiro_p_value": 0.1714684856918492,
+    "shapiro_available": true,
+    "gaussian_kl_initial_to_inverted": 0.012076526880264282,
+    "gaussian_kl_inverted_to_initial": 0.010484576225280762,
+    "gaussian_kl_symmetric": 0.011280551552772522
+  }
+]

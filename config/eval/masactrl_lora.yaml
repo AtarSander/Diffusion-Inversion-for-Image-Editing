@@ -8,3 +8,7 @@ defaults:
 edit_method_list:
   - lora+masactrl
   - lora+directinversion+masactrl
+
+masactrl:
+  # source: legacy fused path; empty: unconditional branch-pair adapter.
+  lora_inversion_prompt_mode: source

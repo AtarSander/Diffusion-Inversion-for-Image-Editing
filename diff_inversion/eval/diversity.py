@@ -1,4 +1,7 @@
 import math
+import os
+from pathlib import Path
+import tempfile
 from typing import Callable, List, Tuple, Union
 
 import lpips
@@ -6,12 +9,28 @@ import numpy as np
 import PIL
 import torch
 from diffusers.utils import pt_to_pil
-from dreamsim import dreamsim
 from tqdm import tqdm
 
 
 def dreamsim_init(device: torch.device) -> Tuple[torch.nn.Module, Callable]:
-    model, preprocess = dreamsim(pretrained=True, device=device, cache_dir="./res/dreamsim")
+    try:
+        from dreamsim import dreamsim
+    except ImportError as exc:
+        raise ImportError(
+            "DreamSim metrics require the optional `dreamsim` package."
+        ) from exc
+    cache_dir = Path(
+        os.environ.get(
+            "DREAMSIM_CACHE_DIR",
+            str(Path(tempfile.gettempdir()) / "dreamsim"),
+        )
+    )
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    model, preprocess = dreamsim(
+        pretrained=True,
+        device=device,
+        cache_dir=cache_dir.as_posix(),
+    )
     return model, preprocess
 
 

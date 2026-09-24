@@ -15,8 +15,10 @@ from models.pix2pix_zero.scheduler import DDIMInverseScheduler
 from models.pix2pix_zero.edit_directions import construct_direction
 from models.pix2pix_zero.edit_pipeline import EditingPipeline
 from utils.utils import txt_draw
+from utils.one_step_endpoint import one_step_endpoint_latent
 
 from diffusers import DDIMScheduler
+from diff_inversion.eval.editor_controls import PIX2PIX_ATTENTION_LOSS_REDUCTIONS
 
 NUM_DDIM_STEPS = 50
 XA_GUIDANCE=0.1
@@ -141,7 +143,11 @@ def edit_image_ddim_pix2pix_zero(image_path,
                 prompt_tar,
                 guidance_scale=7.5,
                 inversion_guidance_scale=1.0,
-                image_size=[512,512]):
+                image_size=[512,512],
+                pix2pix_guidance_amount=XA_GUIDANCE,
+                pix2pix_attention_loss_reduction="legacy_sum",
+                pix2pix_attention_loss_scale=1.0,
+                pix2pix_attention_grad_clip_norm=None):
     image_gt = Image.open(image_path).resize(image_size, Image.Resampling.LANCZOS)
     # generate the caption
     prompt_str = generate_caption(image_gt)
@@ -161,7 +167,10 @@ def edit_image_ddim_pix2pix_zero(image_path,
                 num_inference_steps=NUM_DDIM_STEPS,
                 x_in=inversion_latent,
                 edit_dir=(mean_emb_tar.mean(0)-mean_emb_src.mean(0)).unsqueeze(0),
-                guidance_amount=XA_GUIDANCE,
+                guidance_amount=pix2pix_guidance_amount,
+                attention_loss_reduction=pix2pix_attention_loss_reduction,
+                attention_loss_scale=pix2pix_attention_loss_scale,
+                attention_grad_clip_norm=pix2pix_attention_grad_clip_norm,
                 guidance_scale=guidance_scale,
                 negative_prompt=prompt_str # use the unedited prompt for the negative prompt
         )
@@ -177,7 +186,11 @@ def edit_image_directinversion_pix2pix_zero(image_path,
                 prompt_src,
                 prompt_tar,
                 guidance_scale=7.5,
-                image_size=[512,512]):
+                image_size=[512,512],
+                pix2pix_guidance_amount=XA_GUIDANCE,
+                pix2pix_attention_loss_reduction="legacy_sum",
+                pix2pix_attention_loss_scale=1.0,
+                pix2pix_attention_grad_clip_norm=None):
     image_gt = Image.open(image_path).resize(image_size, Image.Resampling.LANCZOS)
     # generate the caption
     prompt_str = generate_caption(image_gt)
@@ -197,7 +210,10 @@ def edit_image_directinversion_pix2pix_zero(image_path,
                 num_inference_steps=NUM_DDIM_STEPS,
                 x_in=inversion_latent,
                 edit_dir=(mean_emb_tar.mean(0)-mean_emb_src.mean(0)).unsqueeze(0),
-                guidance_amount=XA_GUIDANCE,
+                guidance_amount=pix2pix_guidance_amount,
+                attention_loss_reduction=pix2pix_attention_loss_reduction,
+                attention_loss_scale=pix2pix_attention_loss_scale,
+                attention_grad_clip_norm=pix2pix_attention_grad_clip_norm,
                 guidance_scale=guidance_scale,
                 negative_prompt=prompt_str, # use the unedited prompt for the negative prompt
                 latent_list=latent_list
@@ -210,11 +226,29 @@ def edit_image_directinversion_pix2pix_zero(image_path,
     return Image.fromarray(out_image)
 
 
+def endpoint_invert_pix2pix_zero(image_gt, prompt_str):
+    """Encode and invert once with the enabled endpoint LoRA."""
+    pipe.scheduler.set_timesteps(NUM_DDIM_STEPS, device=device)
+    vae_dtype = pipe.vae.dtype
+    x0 = torch.from_numpy(np.array(image_gt) / 255.0).to(dtype=vae_dtype)
+    x0 = (x0.permute(2, 0, 1).unsqueeze(0).to(device) - 0.5) * 2.0
+    z0 = 0.18215 * pipe.vae.encode(x0).latent_dist.sample().to(dtype=vae_dtype)
+    prompt_embeds = pipe._encode_prompt(
+        prompt_str, device, 1, False, None,
+    ).to(device=device, dtype=pipe.unet.dtype)
+    return one_step_endpoint_latent(pipe.unet, pipe.scheduler, z0, prompt_embeds)
+
+
 def edit_image_lora_pix2pix_zero(image_path,
                 prompt_src,
                 prompt_tar,
                 guidance_scale=7.5,
-                image_size=[512,512]):
+                lora_inversion_mode="iterative",
+                image_size=[512,512],
+                pix2pix_guidance_amount=XA_GUIDANCE,
+                pix2pix_attention_loss_reduction="legacy_sum",
+                pix2pix_attention_loss_scale=1.0,
+                pix2pix_attention_grad_clip_norm=None):
     image_gt = Image.open(image_path).resize(image_size, Image.Resampling.LANCZOS)
     prompt_str = generate_caption(image_gt)
 
@@ -222,15 +256,20 @@ def edit_image_lora_pix2pix_zero(image_path,
     # pass use the untouched SD1.5 editing pipeline.
     set_lora_enabled(True)
     try:
-        latent_list, _, _ = pipe(
-            prompt_str,
-            guidance_scale=1,
-            num_inversion_steps=NUM_DDIM_STEPS,
-            img=image_gt,
-        )
+        if lora_inversion_mode == "one_step_endpoint":
+            inversion_latent = endpoint_invert_pix2pix_zero(image_gt, prompt_str).detach()
+        elif lora_inversion_mode == "iterative":
+            latent_list, _, _ = pipe(
+                prompt_str,
+                guidance_scale=1,
+                num_inversion_steps=NUM_DDIM_STEPS,
+                img=image_gt,
+            )
+            inversion_latent = latent_list[-1].detach()
+        else:
+            raise ValueError(f"Unknown LoRA inversion mode: {lora_inversion_mode!r}")
     finally:
         set_lora_enabled(False)
-    inversion_latent = latent_list[-1].detach()
 
     mean_emb_src = load_sentence_embeddings([prompt_src], edit_pipe.tokenizer, edit_pipe.text_encoder, device=device)
     mean_emb_tar = load_sentence_embeddings([prompt_tar], edit_pipe.tokenizer, edit_pipe.text_encoder, device=device)
@@ -239,7 +278,10 @@ def edit_image_lora_pix2pix_zero(image_path,
         num_inference_steps=NUM_DDIM_STEPS,
         x_in=inversion_latent,
         edit_dir=(mean_emb_tar.mean(0)-mean_emb_src.mean(0)).unsqueeze(0),
-        guidance_amount=XA_GUIDANCE,
+        guidance_amount=pix2pix_guidance_amount,
+        attention_loss_reduction=pix2pix_attention_loss_reduction,
+        attention_loss_scale=pix2pix_attention_loss_scale,
+        attention_grad_clip_norm=pix2pix_attention_grad_clip_norm,
         guidance_scale=guidance_scale,
         negative_prompt=prompt_str,
     )
@@ -254,7 +296,11 @@ def edit_image_lora_directinversion_pix2pix_zero(
                 prompt_tar,
                 guidance_scale=7.5,
                 inversion_guidance_scale=1.0,
-                image_size=[512,512]):
+                image_size=[512,512],
+                pix2pix_guidance_amount=XA_GUIDANCE,
+                pix2pix_attention_loss_reduction="legacy_sum",
+                pix2pix_attention_loss_scale=1.0,
+                pix2pix_attention_grad_clip_norm=None):
     image_gt = Image.open(image_path).resize(image_size, Image.Resampling.LANCZOS)
     prompt_str = generate_caption(image_gt)
 
@@ -281,7 +327,10 @@ def edit_image_lora_directinversion_pix2pix_zero(
         num_inference_steps=NUM_DDIM_STEPS,
         x_in=inversion_latent,
         edit_dir=(mean_emb_tar.mean(0)-mean_emb_src.mean(0)).unsqueeze(0),
-        guidance_amount=XA_GUIDANCE,
+        guidance_amount=pix2pix_guidance_amount,
+        attention_loss_reduction=pix2pix_attention_loss_reduction,
+        attention_loss_scale=pix2pix_attention_loss_scale,
+        attention_grad_clip_norm=pix2pix_attention_grad_clip_norm,
         guidance_scale=guidance_scale,
         negative_prompt=prompt_str,
         # Algorithm 1, editing: this enables the existing base-UNet Direct
@@ -335,7 +384,17 @@ if __name__ == "__main__":
     parser.add_argument('--lora_scale', type=float, default=1.0)
     parser.add_argument('--lora_mode', choices=["single", "branch_pair"], default="single")
     parser.add_argument('--inversion_guidance_scale', type=float, default=1.0)
+    parser.add_argument('--lora_inversion_mode', choices=['iterative', 'one_step_endpoint'], default='iterative')
+    parser.add_argument('--pix2pix_guidance_amount', type=float, default=XA_GUIDANCE)
+    parser.add_argument('--pix2pix_attention_loss_reduction', choices=PIX2PIX_ATTENTION_LOSS_REDUCTIONS, default='legacy_sum')
+    parser.add_argument('--pix2pix_attention_loss_scale', type=float, default=1.0)
+    parser.add_argument('--pix2pix_attention_grad_clip_norm', type=float, default=None)
     args = parser.parse_args()
+    if args.pix2pix_attention_loss_scale <= 0:
+        raise ValueError("--pix2pix_attention_loss_scale must be positive")
+    if args.pix2pix_attention_grad_clip_norm is not None and args.pix2pix_attention_grad_clip_norm <= 0:
+        raise ValueError("--pix2pix_attention_grad_clip_norm must be positive")
+
     
     rerun_exist_images=args.rerun_exist_images
     data_path=args.data_path
@@ -353,6 +412,8 @@ if __name__ == "__main__":
         raise ValueError(
             "Branch-pair LoRAs are supported only by lora+directinversion+pix2pix-zero."
         )
+    if args.lora_inversion_mode == "one_step_endpoint" and "lora+directinversion+pix2pix-zero" in edit_method_list:
+        raise ValueError("One-step endpoint inversion supports lora+pix2pix-zero only; Direct Inversion requires a full trajectory.")
     model_key = args.model_key or ("runwayml/stable-diffusion-v1-5" if use_lora else "CompVis/stable-diffusion-v1-4")
     pipe, edit_pipe = load_pipelines(model_key)
     if use_lora:
@@ -393,6 +454,10 @@ if __name__ == "__main__":
                         prompt_tar=editing_prompt,
                         guidance_scale=7.5,
                         inversion_guidance_scale=args.inversion_guidance_scale,
+                        pix2pix_guidance_amount=args.pix2pix_guidance_amount,
+                        pix2pix_attention_loss_reduction=args.pix2pix_attention_loss_reduction,
+                        pix2pix_attention_loss_scale=args.pix2pix_attention_loss_scale,
+                        pix2pix_attention_grad_clip_norm=args.pix2pix_attention_grad_clip_norm,
                     )
                 elif edit_method=="directinversion+pix2pix-zero":
                     edited_image = edit_image_directinversion_pix2pix_zero(
@@ -400,6 +465,10 @@ if __name__ == "__main__":
                         prompt_src=original_prompt,
                         prompt_tar=editing_prompt,
                         guidance_scale=7.5,
+                        pix2pix_guidance_amount=args.pix2pix_guidance_amount,
+                        pix2pix_attention_loss_reduction=args.pix2pix_attention_loss_reduction,
+                        pix2pix_attention_loss_scale=args.pix2pix_attention_loss_scale,
+                        pix2pix_attention_grad_clip_norm=args.pix2pix_attention_grad_clip_norm,
                     )
                 elif edit_method=="lora+pix2pix-zero":
                     edited_image = edit_image_lora_pix2pix_zero(
@@ -407,6 +476,11 @@ if __name__ == "__main__":
                         prompt_src=original_prompt,
                         prompt_tar=editing_prompt,
                         guidance_scale=7.5,
+                        lora_inversion_mode=args.lora_inversion_mode,
+                        pix2pix_guidance_amount=args.pix2pix_guidance_amount,
+                        pix2pix_attention_loss_reduction=args.pix2pix_attention_loss_reduction,
+                        pix2pix_attention_loss_scale=args.pix2pix_attention_loss_scale,
+                        pix2pix_attention_grad_clip_norm=args.pix2pix_attention_grad_clip_norm,
                     )
                 elif edit_method=="lora+directinversion+pix2pix-zero":
                     edited_image = edit_image_lora_directinversion_pix2pix_zero(
@@ -415,6 +489,10 @@ if __name__ == "__main__":
                         prompt_tar=editing_prompt,
                         guidance_scale=7.5,
                         inversion_guidance_scale=args.inversion_guidance_scale,
+                        pix2pix_guidance_amount=args.pix2pix_guidance_amount,
+                        pix2pix_attention_loss_reduction=args.pix2pix_attention_loss_reduction,
+                        pix2pix_attention_loss_scale=args.pix2pix_attention_loss_scale,
+                        pix2pix_attention_grad_clip_norm=args.pix2pix_attention_grad_clip_norm,
                     )
                 else:
                     raise NotImplementedError(f"No edit method named {edit_method}")

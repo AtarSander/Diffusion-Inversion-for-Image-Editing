@@ -1,0 +1,22 @@
+# @package _global_
+
+input_dir: data/processed/sdxl_tada_matched
+start_index: 0
+num_samples: 1
+sample_dir_template: sample_{sample_idx:06d}
+forward_seed: 999
+overwrite: false
+
+variants:
+  - name: ddim
+    forward_steps: 0
+    noise_name: inverted_noise_ddim.pt
+    image_name: reconstructed_ddim.png
+  - name: forward_2pct
+    forward_steps: 1
+    noise_name: inverted_noise_forward_2pct.pt
+    image_name: reconstructed_forward_2pct.png
+  - name: forward_4pct
+    forward_steps: 2
+    noise_name: inverted_noise_forward_4pct.pt
+    image_name: reconstructed_forward_4pct.png

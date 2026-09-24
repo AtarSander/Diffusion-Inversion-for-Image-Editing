@@ -7,6 +7,7 @@ from diffusers.pipelines.stable_diffusion import StableDiffusionPipelineOutput
 sys.path.insert(0, "src/utils")
 from models.pix2pix_zero.base_pipeline import BasePipeline
 from models.pix2pix_zero.cross_attention import prep_unet
+from diff_inversion.eval.editor_controls import pix2pix_attention_alignment_loss
 
 
 if torch.cuda.is_available():
@@ -33,12 +34,26 @@ class EditingPipeline(BasePipeline):
 
         # pix2pix parameters
         guidance_amount=0.1,
+        attention_loss_reduction="legacy_sum",
+        attention_loss_scale=1.0,
+        attention_grad_clip_norm=None,
         edit_dir=None,
         x_in=None,
         only_sample=False, # only perform sampling, and no editing
-        latent_list=None
+        latent_list=None,
+        reference_attention_maps=None,
+        noise_loss_list_override=None,
+        return_reference_artifacts=False,
+        attention_gradient_diagnostics=None,
+        diagnostic_guidance_amounts=(0.025, 0.05, 0.075, 0.1),
+        diagnostic_clip_norm=1.0,
+        diagnostic_normalized_loss_scales=(1.0,),
     ):
 
+        if not np.isfinite(attention_loss_scale) or attention_loss_scale <= 0:
+            raise ValueError("attention_loss_scale must be finite and positive")
+        if any(not np.isfinite(scale) or scale <= 0 for scale in diagnostic_normalized_loss_scales):
+            raise ValueError("diagnostic_normalized_loss_scales must be finite and positive")
         x_in.to(dtype=self.unet.dtype, device=self._execution_device)
 
         # 0. modify the unet to be useful :D
@@ -119,7 +134,16 @@ class EditingPipeline(BasePipeline):
         # make the reference image (reconstruction)
         image_rec = self.numpy_to_pil(self.decode_latents(latents.detach()))
 
+        # Crossing diagnostics may independently replace the reference-attention
+        # cache and Direct-Inversion offsets while keeping the selected endpoint.
+        if reference_attention_maps is not None:
+            d_ref_t2attn = reference_attention_maps
+        if noise_loss_list_override is not None:
+            noise_loss_list = [value.to(device=device, dtype=self.unet.dtype) for value in noise_loss_list_override]
+
         if only_sample:
+            if return_reference_artifacts:
+                return image_rec, d_ref_t2attn, noise_loss_list
             return image_rec
 
 
@@ -144,14 +168,149 @@ class EditingPipeline(BasePipeline):
                 # predict the noise residual
                 noise_pred = self.unet(x_in,t,encoder_hidden_states=prompt_embeds_edit.detach(),cross_attention_kwargs=cross_attention_kwargs,).sample
 
-                loss = 0.0
+                attention_pairs = []
+                attention_names = []
                 for name, module in self.unet.named_modules():
                     module_name = type(module).__name__
-                    if module_name == "Attention" and 'attn2' in name:
-                        curr = module.attn_probs # size is num_channel,s*s,77
-                        ref = d_ref_t2attn[t.item()][name].detach().to(device)
-                        loss += ((curr-ref)**2).sum((1,2)).mean(0)
-                loss.backward(retain_graph=False)
+                    if module_name == "Attention" and "attn2" in name:
+                        curr = module.attn_probs
+                        ref = d_ref_t2attn[t.item()][name].detach().to(
+                            device=device, dtype=curr.dtype
+                        )
+                        attention_names.append(name)
+                        attention_pairs.append((curr, ref))
+
+                if attention_gradient_diagnostics is None:
+                    loss = pix2pix_attention_alignment_loss(
+                        attention_pairs, reduction=attention_loss_reduction
+                    ) * float(attention_loss_scale)
+                    loss.backward(retain_graph=False)
+                else:
+                    legacy_loss = pix2pix_attention_alignment_loss(
+                        attention_pairs, reduction="legacy_sum"
+                    )
+                    normalized_loss = pix2pix_attention_alignment_loss(
+                        attention_pairs, reduction="per_layer_mean"
+                    )
+                    legacy_grad = torch.autograd.grad(
+                        legacy_loss, x_in, retain_graph=True
+                    )[0]
+                    scale_candidates = list(dict.fromkeys([
+                        1.0,
+                        *[float(scale) for scale in diagnostic_normalized_loss_scales],
+                        *([float(attention_loss_scale)] if attention_loss_reduction == "per_layer_mean" else []),
+                    ]))
+                    normalized_grads = {}
+                    for scale_index, scale in enumerate(scale_candidates):
+                        normalized_grads[f"{scale:g}"] = torch.autograd.grad(
+                            normalized_loss * scale, x_in,
+                            retain_graph=scale_index < len(scale_candidates) - 1,
+                        )[0]
+                    normalized_grad = normalized_grads["1"]
+                    legacy_norm = float(legacy_grad.float().norm().item())
+                    normalized_norm = float(normalized_grad.float().norm().item())
+                    denominator = legacy_norm * normalized_norm
+                    cosine = (
+                        float(
+                            torch.sum(
+                                legacy_grad.float() * normalized_grad.float()
+                            ).item()
+                            / denominator
+                        )
+                        if denominator > 0.0
+                        else 0.0
+                    )
+                    clip_norm = (
+                        None
+                        if diagnostic_clip_norm is None
+                        else float(diagnostic_clip_norm)
+                    )
+                    layer_records = []
+                    for layer_name, (current, reference) in zip(
+                        attention_names, attention_pairs
+                    ):
+                        squared_error = (
+                            current.detach().float()
+                            - reference.detach().float()
+                        ).square()
+                        layer_records.append(
+                            {
+                                "name": layer_name,
+                                "shape": list(current.shape),
+                                "numel": current.numel(),
+                                "legacy_loss": float(
+                                    squared_error.sum((1, 2)).mean(0).item()
+                                ),
+                                "mean_loss": float(squared_error.mean().item()),
+                            }
+                        )
+                    scaled_gradient_records = {}
+                    for scale_key, gradient in normalized_grads.items():
+                        gradient_norm = float(gradient.float().norm().item())
+                        scaled_denominator = legacy_norm * gradient_norm
+                        scaled_gradient_records[scale_key] = {
+                            "grad_norm": gradient_norm,
+                            "cosine_to_legacy": (
+                                float(torch.sum(legacy_grad.float() * gradient.float()).item() / scaled_denominator)
+                                if scaled_denominator > 0.0 else 0.0
+                            ),
+                        }
+                    attention_gradient_diagnostics.append(
+                        {
+                            "step_index": i,
+                            "timestep": int(t.item()),
+                            "legacy_loss": float(legacy_loss.detach().item()),
+                            "normalized_loss": float(
+                                normalized_loss.detach().item()
+                            ),
+                            "legacy_grad_norm": legacy_norm,
+                            "normalized_grad_norm": normalized_norm,
+                            "gradient_cosine": cosine,
+                            "diagnostic_clip_norm": clip_norm,
+                            "legacy_post_clip_norm": (
+                                legacy_norm
+                                if clip_norm is None
+                                else min(legacy_norm, clip_norm)
+                            ),
+                            "normalized_post_clip_norm": (
+                                normalized_norm
+                                if clip_norm is None
+                                else min(normalized_norm, clip_norm)
+                            ),
+                            "normalized_scaled_gradients": scaled_gradient_records,
+                            "candidate_update_norms": {
+                                f"{float(amount):g}": {
+                                    "legacy": float(amount) * legacy_norm,
+                                    "normalized": float(amount) * normalized_norm,
+                                    "legacy_clipped": float(amount)
+                                    * (
+                                        legacy_norm
+                                        if clip_norm is None
+                                        else min(legacy_norm, clip_norm)
+                                    ),
+                                    "normalized_clipped": float(amount)
+                                    * (
+                                        normalized_norm
+                                        if clip_norm is None
+                                        else min(normalized_norm, clip_norm)
+                                    ),
+                                }
+                                for amount in diagnostic_guidance_amounts
+                            },
+                            "layers": layer_records,
+                        }
+                    )
+                    selected_grad = (
+                        legacy_grad
+                        if attention_loss_reduction == "legacy_sum"
+                        else normalized_grads[f"{float(attention_loss_scale):g}"]
+                    )
+                    x_in.grad = selected_grad.detach()
+
+                if attention_grad_clip_norm is not None:
+                    torch.nn.utils.clip_grad_norm_(
+                        [x_in], float(attention_grad_clip_norm)
+                    )
                 opt.step()
 
                 # recompute the noise
@@ -167,7 +326,7 @@ class EditingPipeline(BasePipeline):
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs).prev_sample.to(dtype=self.unet.dtype)
-                if latent_list is not None:
+                if latent_list is not None or noise_loss_list_override is not None:
                     latents=latents+noise_loss_list[i]
 
                 # call the callback, if provided
@@ -185,4 +344,6 @@ class EditingPipeline(BasePipeline):
         image_edit = self.numpy_to_pil(image)
 
 
+        if return_reference_artifacts:
+            return image_rec, image_edit, d_ref_t2attn, noise_loss_list
         return image_rec, image_edit

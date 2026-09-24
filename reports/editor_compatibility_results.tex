@@ -1,0 +1,274 @@
+\documentclass[10pt]{article}
+\usepackage[margin=1.4cm]{geometry}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage[table]{xcolor}
+
+\definecolor{lorarow}{RGB}{244,247,251}
+
+\title{Reconstruction Interventions by Editing Method}
+\date{}
+
+\begin{document}
+\maketitle
+
+This report records the editor-specific interventions considered after the
+LoRA+DirectInv models improved CLIP editing scores but remained behind
+DirectInv on reconstruction. The purpose was not to change LoRA training, but
+to test whether each editor consumes the LoRA-inverted trajectory in a way that
+is mismatched with its original DirectInv implementation.
+
+All numerical results use SD1.5 and the same 700-image PIE-Bench evaluation.
+Values are mean $\pm$ standard deviation. Structure distance and LPIPS are
+scaled by $10^3$, MSE by $10^4$, and SSIM by $10^2$. Bold denotes the better
+value in each matched DirectInv/LoRA+DirectInv pair after rounding; arrows give
+the preferred metric direction. Structure uses all 700 images. PSNR, LPIPS,
+MSE, and SSIM use the 556 images with a non-empty unedited mask.
+
+\section*{Interventions and outcomes}
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabular}{p{1.7cm}p{4.2cm}p{5.1cm}p{3.4cm}}
+    \toprule
+    Editor & Suspected mismatch & Intervention & Outcome \\
+    \midrule
+    P2P & No new editor mismatch was isolated; cycle-loss training had already
+    produced the strongest reconstruction result. & No additional editor-side
+    change in this round. & Not tested here. \\
+    \addlinespace
+    MasaCtrl & Standard DirectInv inverts its source branch with the empty
+    prompt, while fused LoRA inversion uses the source prompt. & Verify both
+    conditioning paths; next test LoRA inversion with its unconditional adapter
+    while leaving MasaCtrl generation unchanged. & Diagnosis confirmed;
+    intervention not run. \\
+    \addlinespace
+    PnP & The injected reference latent used an empty text embedding despite
+    originating from source-conditioned inversion. & Condition only PnP's
+    injected reference branch on the source prompt; preserve target CFG and
+    injection schedules. & Did not improve reconstruction; CLIP improved. \\
+    \addlinespace
+    Pix2Pix-Zero & A raw sum over cross-attention errors can let large maps or
+    numerous layers dominate the latent update. & Average each layer's MSE
+    equally, cap the latent-gradient norm at 1.0, and sweep attention guidance.
+    & Failed: reconstruction and editing degraded. \\
+    \bottomrule
+  \end{tabular}
+  \caption{Editor-specific reconstruction hypotheses and their status.}
+  \label{tab:intervention-summary}
+\end{table}
+
+\section*{PnP: source-conditioned reference features}
+
+At each denoising step, PnP evaluates a three-branch batch: the saved reference
+latent, the target unconditional branch, and the target conditional branch.
+Self-attention keys/queries and convolutional features from the first branch
+are injected into the target branches. The tested change replaced the empty
+text embedding of only that first branch with the source-prompt embedding. It
+did not alter the target prompt, target CFG, noisy trajectory, or injection
+timesteps. Partially projected trajectories were deliberately not tested.
+
+\begin{table}[htbp]
+  \centering
+  \scriptsize
+  \setlength{\tabcolsep}{2.5pt}
+  \caption{PnP with its injected source/reference branch conditioned on the
+  source prompt instead of the empty prompt.}
+  \label{tab:pnp-source-reference}
+  \resizebox{\textwidth}{!}{%
+  \begin{tabular}{llrrrrrrr}
+    \toprule
+    Editor & Inversion & Structure $\downarrow$ & PSNR $\uparrow$ & LPIPS $\downarrow$ & MSE $\downarrow$ & SSIM $\uparrow$ & CLIP target $\uparrow$ & CLIP edit $\uparrow$ \\
+    \midrule
+    PnP & DirectInv
+      & $\mathbf{23.38 \pm 19.79}$ & $\mathbf{22.21 \pm 4.31}$
+      & $\mathbf{108.38 \pm 61.33}$ & $\mathbf{83.84 \pm 59.81}$
+      & $\mathbf{80.21 \pm 12.80}$ & $25.75 \pm 3.82$ & $22.71 \pm 4.93$ \\
+    \rowcolor{lorarow}
+    PnP & LoRA+DirectInv
+      & $24.23 \pm 19.50$ & $22.13 \pm 4.55$
+      & $112.39 \pm 63.94$ & $85.93 \pm 60.86$
+      & $79.85 \pm 12.86$ & $\mathbf{25.91 \pm 3.81}$
+      & $\mathbf{22.90 \pm 4.95}$ \\
+    \bottomrule
+  \end{tabular}%
+  }
+\end{table}
+
+\paragraph{Verdict: no reconstruction improvement.}
+Within the new source-conditioned setup, LoRA+DirectInv is worse than DirectInv
+on all five reconstruction metrics, while CLIP target rises from 25.75 to 25.91
+and CLIP edit from 22.71 to 22.90. Compared with the previous empty-reference
+LoRA+DirectInv result, Structure improves slightly (24.38 to 24.23), but PSNR,
+LPIPS, MSE, and SSIM worsen (22.36 to 22.13, 110.28 to 112.39, 81.87 to 85.93,
+and 79.88 to 79.85). The corresponding DirectInv control also fails to improve
+reconstruction relative to its empty-reference result. The change improves
+semantic edit alignment, not preservation.
+
+\section*{Pix2Pix-Zero: normalized attention guidance}
+
+Pix2Pix-Zero first stores cross-attention maps, then optimizes the current
+latent during editing to match those maps. The legacy objective sums squared
+errors over all elements of all layers. The tested objective instead computes
+mean-squared error within each layer and averages layers equally; it also caps
+the latent-gradient norm at 1.0. Attention-guidance amounts 0.025, 0.050, 0.075,
+and 0.100 were applied identically to DirectInv and LoRA+DirectInv. This uses
+Pix2Pix-Zero's existing reference maps and does not add another inversion pass.
+
+\begin{table}[htbp]
+  \centering
+  \scriptsize
+  \setlength{\tabcolsep}{2.5pt}
+  \caption{Pix2Pix-Zero with equal per-layer attention-loss weighting and a
+  latent-gradient norm cap of 1.0. The guidance column is the Pix2Pix-Zero
+  attention-guidance amount, not diffusion CFG.}
+  \label{tab:pix2pix-normalized}
+  \resizebox{\textwidth}{!}{%
+  \begin{tabular}{llrrrrrrr}
+    \toprule
+    Guidance & Inversion & Structure $\downarrow$ & PSNR $\uparrow$ & LPIPS $\downarrow$ & MSE $\downarrow$ & SSIM $\uparrow$ & CLIP target $\uparrow$ & CLIP edit $\uparrow$ \\
+    \midrule
+    0.025 & DirectInv
+      & $\mathbf{79.73 \pm 49.91}$ & $\mathbf{18.44 \pm 4.39}$
+      & $\mathbf{223.36 \pm 120.66}$ & $\mathbf{201.66 \pm 151.16}$
+      & $\mathbf{70.95 \pm 16.26}$ & $\mathbf{21.96 \pm 4.61}$
+      & $20.68 \pm 4.72$ \\
+    \rowcolor{lorarow}
+    0.025 & LoRA+DirectInv
+      & $81.87 \pm 50.08$ & $18.17 \pm 4.23$
+      & $229.76 \pm 122.37$ & $211.61 \pm 157.69$
+      & $70.35 \pm 16.28$ & $\mathbf{21.96 \pm 4.78}$
+      & $\mathbf{20.82 \pm 4.68}$ \\
+    \addlinespace
+    0.050 & DirectInv
+      & $\mathbf{79.73 \pm 49.91}$ & $\mathbf{18.44 \pm 4.39}$
+      & $\mathbf{223.36 \pm 120.66}$ & $\mathbf{201.66 \pm 151.16}$
+      & $\mathbf{70.95 \pm 16.26}$ & $\mathbf{21.96 \pm 4.61}$
+      & $20.68 \pm 4.72$ \\
+    \rowcolor{lorarow}
+    0.050 & LoRA+DirectInv
+      & $81.87 \pm 50.08$ & $18.17 \pm 4.23$
+      & $229.76 \pm 122.37$ & $211.61 \pm 157.69$
+      & $70.35 \pm 16.28$ & $\mathbf{21.96 \pm 4.78}$
+      & $\mathbf{20.82 \pm 4.68}$ \\
+    \addlinespace
+    0.075 & DirectInv
+      & $\mathbf{79.92 \pm 50.41}$ & $\mathbf{18.45 \pm 4.43}$
+      & $\mathbf{223.48 \pm 120.68}$ & $\mathbf{201.74 \pm 150.73}$
+      & $\mathbf{70.96 \pm 16.24}$ & $\mathbf{21.93 \pm 4.62}$
+      & $20.69 \pm 4.74$ \\
+    \rowcolor{lorarow}
+    0.075 & LoRA+DirectInv
+      & $81.90 \pm 50.01$ & $18.17 \pm 4.27$
+      & $229.59 \pm 122.45$ & $211.71 \pm 157.57$
+      & $70.35 \pm 16.28$ & $\mathbf{21.93 \pm 4.81}$
+      & $\mathbf{20.80 \pm 4.64}$ \\
+    \addlinespace
+    0.100 & DirectInv
+      & $\mathbf{79.93 \pm 50.41}$ & $\mathbf{18.45 \pm 4.43}$
+      & $\mathbf{223.48 \pm 120.68}$ & $\mathbf{201.74 \pm 150.73}$
+      & $\mathbf{70.96 \pm 16.24}$ & $\mathbf{21.93 \pm 4.62}$
+      & $20.69 \pm 4.74$ \\
+    \rowcolor{lorarow}
+    0.100 & LoRA+DirectInv
+      & $81.90 \pm 50.01$ & $18.17 \pm 4.27$
+      & $229.59 \pm 122.45$ & $211.71 \pm 157.57$
+      & $70.35 \pm 16.28$ & $\mathbf{21.93 \pm 4.81}$
+      & $\mathbf{20.80 \pm 4.64}$ \\
+    \bottomrule
+  \end{tabular}%
+  }
+\end{table}
+
+\paragraph{Verdict: failed.}
+The four guidance values are almost indistinguishable: 0.025 and 0.050 round to
+the same results, as do 0.075 and 0.100. More importantly, even normalized
+DirectInv is much worse than the reproduced legacy SD1.5 DirectInv control:
+Structure changes from 49.09 to at least 79.73, PSNR from 21.57 to at most
+18.45, LPIPS from 138.39 to at least 223.36, MSE from 129.77 to at least 201.66,
+and SSIM from 77.73 to at most 70.96. CLIP target and edit also fall from 23.47
+and 21.08 to at most 21.96 and 20.69. LoRA+DirectInv remains worse on all
+reconstruction metrics and recovers only a small edited-region CLIP advantage
+within each normalized pair.
+
+Because layer normalization, gradient clipping, and guidance recalibration were
+changed together, this experiment rejects their current combination rather
+than identifying one component as the sole cause. The very small guidance
+sensitivity suggests that converting a summed loss to a mean reduced the update
+scale too strongly. A future ablation should log the pre/post-clipping gradient
+norms and calibrate the normalized update to the legacy update magnitude before
+changing its direction.
+
+\section*{MasaCtrl: conditioning mismatch identified, not yet tested}
+
+The reproduced standard DirectInv+MasaCtrl control already uses empty-prompt
+inversion: MasaCtrl constructs the pair \texttt{[empty, target]}, and
+DirectInv selects the first embedding for its inversion trajectory. Therefore
+rerunning the base control with an empty prompt would duplicate an existing
+result.
+
+The fused path is different: its LoRA trajectory is generated with the source
+prompt, after which DirectInv offsets and MasaCtrl generation use the standard
+empty/target contexts. This means the current comparison changes both the
+inversion model and its conditioning. The clean proposed experiment is
+base+empty versus LoRA+empty, using the unconditional adapter during LoRA
+inversion while leaving offset calculation and MasaCtrl generation unchanged.
+That experiment was not part of these jobs, so there is no positive or negative
+MasaCtrl result to report yet.
+
+\section*{P2P}
+
+No new P2P editor-side intervention was evaluated in this round. P2P already
+benefited most from the cycle-loss LoRA, so the investigation prioritized the
+editors whose reconstruction gap remained largest. Its status in
+Table~\ref{tab:intervention-summary} is a scope decision, not evidence that no
+further P2P improvement is possible.
+
+\section*{Source-image traits of worst reconstructions}
+
+This descriptive analysis uses the current cycle-loss r16 uniform
+LoRA+DirectInv outputs. For each editor, the 25 images that most degrade the
+five reconstruction metrics jointly were compared with the other 531 PIE-Bench
+images having all five valid metrics. No edit-category labels are used here:
+these are source-image properties only. Signed differences are standardized
+mean differences (worst minus remaining); they are descriptive, not causal.
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabular}{lrrrr}
+    \toprule
+    Editor & Artificial & Luminance contrast & Edge detail & Unedited area \\
+    & worst / remaining & $z$ & $z$ & worst / remaining \\
+    \midrule
+    Pix2Pix-Zero & 28\% / 39\% & $+0.10$ & $+0.41$ & 85\% / 67\% \\
+    MasaCtrl     & 52\% / 38\% & $+0.75$ & $+0.53$ & 84\% / 67\% \\
+    PnP          & 68\% / 37\% & $+0.16$ & $+0.78$ & 83\% / 67\% \\
+    \bottomrule
+  \end{tabular}
+  \caption{Source-image characteristics of the worst reconstruction cases.
+  Higher edge detail is the only common visual signal. The larger unedited area
+  shows these are not failures caused by evaluating a tiny residual region.}
+  \label{tab:worst-source-traits}
+\end{table}
+
+Pix2Pix-Zero's worst cases skew toward natural images and moderately higher
+edge detail. MasaCtrl's worst cases are more often artificial and have markedly
+higher luminance contrast. PnP has the strongest artificial-graphics and
+edge-detail enrichment. Mean saturation and grayscale entropy showed no
+consistent cross-editor effect.
+
+\section*{Overall conclusion}
+
+Neither completed editor-side modification solved reconstruction. PnP source
+conditioning shifted the trade-off toward better semantic editing but slightly
+worse preservation. The current Pix2Pix-Zero normalization-and-clipping setup
+caused a large regression and should not replace the legacy objective. The
+MasaCtrl conditioning hypothesis remains the most direct untested control; it
+must be evaluated with matched empty conditioning before attributing its gap to
+the LoRA itself.
+
+\end{document}

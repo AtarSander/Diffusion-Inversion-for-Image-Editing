@@ -8,7 +8,8 @@ from models.p2p.attention_control import EmptyControl, AttentionStore, make_cont
 from models.p2p.p2p_guidance_forward import p2p_guidance_forward, direct_inversion_p2p_guidance_forward, direct_inversion_p2p_guidance_forward_add_target,p2p_guidance_forward_single_branch
 from models.p2p.proximal_guidance_forward import proximal_guidance_forward
 from diffusers import StableDiffusionPipeline
-from utils.utils import load_512, latent2image, txt_draw
+from utils.utils import load_512, latent2image, txt_draw, image2latent
+from utils.one_step_endpoint import one_step_endpoint_latent
 from PIL import Image
 import numpy as np
 
@@ -137,6 +138,7 @@ class P2PEditor:
                 is_replace_controller=False,
                 use_inversion_guidance=False,
                 inversion_guidance_scale=1.0,
+                lora_inversion_mode="iterative",
                 dilate_mask=1,):
         if edit_method=="ddim+p2p":
             return self.edit_image_ddim(image_path, prompt_src, prompt_tar, guidance_scale=guidance_scale, 
@@ -146,7 +148,8 @@ class P2PEditor:
             return self.edit_image_lora_inversion(image_path=image_path, prompt_src=prompt_src, prompt_tar=prompt_tar,
                                         guidance_scale=guidance_scale, cross_replace_steps=cross_replace_steps,
                                         self_replace_steps=self_replace_steps, blend_word=blend_word, eq_params=eq_params,
-                                        is_replace_controller=is_replace_controller)
+                                        is_replace_controller=is_replace_controller,
+                                        lora_inversion_mode=lora_inversion_mode)
         elif edit_method == "lora+directinversion+p2p":
             return self.edit_image_directinversion(
                 image_path=image_path,
@@ -250,7 +253,8 @@ class P2PEditor:
 
     def edit_image_lora_inversion(self, image_path, prompt_src, prompt_tar, guidance_scale=7.5,
                                   cross_replace_steps=0.4, self_replace_steps=0.6, blend_word=None,
-                                  eq_params=None, is_replace_controller=False):
+                                  eq_params=None, is_replace_controller=False,
+                                  lora_inversion_mode="iterative"):
         if not self.lora_loaded:
             raise RuntimeError("LoRA inversion requested, but no LoRA checkpoint was loaded.")
 
@@ -265,10 +269,19 @@ class P2PEditor:
         self.set_lora_enabled(True)
         try:
             with self.autocast():
-                _, x_stars = inversion.ddim_inversion(image_gt)
+                if lora_inversion_mode == "one_step_endpoint":
+                    _, cond_embeddings = inversion.context.chunk(2)
+                    x_t = one_step_endpoint_latent(
+                        self.ldm_stable.unet, self.scheduler,
+                        image2latent(self.ldm_stable.vae, image_gt), cond_embeddings,
+                    )
+                elif lora_inversion_mode == "iterative":
+                    _, x_stars = inversion.ddim_inversion(image_gt)
+                    x_t = x_stars[-1]
+                else:
+                    raise ValueError(f"Unknown LoRA inversion mode: {lora_inversion_mode!r}")
         finally:
             self.set_lora_enabled(False)
-        x_t = x_stars[-1]
 
         controller = AttentionStore()
         with self.autocast():

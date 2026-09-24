@@ -1,0 +1,35 @@
+defaults:
+  - data: recap_coco
+  - model: sdxl
+  - _self_
+
+# Frozen held-out prompt set used by the existing SDXL LoRA inversion evaluation.
+data:
+  prompts_jsonl: data/processed/recap_coco/val.jsonl
+
+output_dir: data/processed/sdxl_tada_matched
+num_samples: 1522
+start_index: 0
+seed: 1234
+negative_prompt: ""
+overwrite: false
+
+save_final_image: true
+save_latents: true
+save_prompt: true
+save_meta: true
+save_timesteps: true
+save_training_cache: false
+save_pred_noises: false
+
+sample_dir_template: sample_{sample_idx:06d}
+latents_dir_name: latents
+latents_format: endpoints_pt
+latents_file_name: trajectory.pt
+per_step_latent_template: x_{step_idx:03d}.pt
+pred_noises_dir_name: pred_noises
+conditioning_file_name: conditioning.pt
+targets_dir_name: targets
+target_eps_file_name: target_eps.pt
+final_image_name: final.png
+run_config_name: run_config.json
