@@ -32,7 +32,18 @@ COLORS = {"DDIM Inv.": "#1f77b4", "DDIM Inv. + LoRA (Gen)": "#d62728",
 METRICS = {"lpaps": "lpaps", "clap": "clap", "muq": "muqt_sim_p0"}
 PANELS = [("clap", "Alignment = CLAP"), ("muq", "Alignment = MuQ")]
 BASELINE = "DDIM Inv."
+NUM_TRAIN_TIMESTEPS = 1000
 FS = 16
+
+
+def start_timestep(tstart: int, steps: int) -> int:
+    """Highest timestep an edit reaches on AudioLDM2's DDIM grid.
+
+    The scheduler uses diffusers' "leading" spacing, timesteps = arange(steps) * (1000 // steps)
+    reversed, + 1, and every method starts from timesteps[steps - tstart]. The floor makes this
+    lower than the nominal tstart/steps depth, and every steps > 500 collapses to ratio 1.
+    """
+    return (tstart - 1) * (NUM_TRAIN_TIMESTEPS // steps) + 1
 
 
 def collect(runs_root: Path, split: str, nfe: int) -> pd.DataFrame:
@@ -58,7 +69,8 @@ def collect(runs_root: Path, split: str, nfe: int) -> pd.DataFrame:
             tstart, steps = int(g["tstart"]), int(g["steps"])
             frame = pd.read_csv(csv)
             row = {"arm": arm, "tstart": tstart, "steps": steps, "nfe": int(g["nfe"]),
-                   "depth": round(100 * tstart / steps), "cfg_tar": float(g["cfg_tar"]),
+                   "depth": round(100 * tstart / steps), "t_max": start_timestep(tstart, steps),
+                   "cfg_tar": float(g["cfg_tar"]),
                    "n": len(frame), "run": run_dir.name}
             for name, col in METRICS.items():
                 row[name] = frame[col].mean()
@@ -75,11 +87,17 @@ def pareto_front(sub: pd.DataFrame, metric: str) -> pd.DataFrame:
 
 
 def paired_delta(df: pd.DataFrame) -> pd.DataFrame:
-    """Each arm minus DDIM Inv. at the same (depth, cfg_tar); LPAPS lower is better."""
-    base = df[df.arm == BASELINE].set_index(["depth", "cfg_tar"])[list(METRICS)]
+    """Each arm minus DDIM Inv. on cells with an identical schedule (tstart, steps, cfg_tar).
+
+    Only exact twins are paired: the same nominal depth reaches different noise levels on
+    different methods' grids, so a cross-method "same depth" pairing would compare unlike cells.
+    LPAPS lower is better.
+    """
+    key = ["tstart", "steps", "cfg_tar"]
+    base = df[df.arm == BASELINE].set_index(key)[list(METRICS)]
     out = []
     for arm, sub in df[df.arm != BASELINE].groupby("arm"):
-        d = sub.set_index(["depth", "cfg_tar"])[list(METRICS)] - base
+        d = sub.set_index(key)[list(METRICS)] - base
         d = d.dropna()
         out.append({"arm": arm, "cells": len(d),
                     **{f"d_{m}_mean": d[m].mean() for m in METRICS},
@@ -103,11 +121,15 @@ def main(runs_root: str, split: str = "hparam", nfe: int = 800,
     out.mkdir(parents=True, exist_ok=True)
 
     cfgs = sorted(df["cfg_tar"].unique())
-    show = df[["arm", "cfg_tar", "depth", "tstart", "steps", "lpaps", "clap", "muq"]]
+    dup = df[df.duplicated(["arm", "t_max", "cfg_tar"], keep=False)]
+    if len(dup):
+        print(f"WARNING: {len(dup)} cells share (arm, t_max, cfg_tar) -- identical edits:")
+        print(dup[["arm", "tstart", "steps", "t_max", "cfg_tar", "lpaps"]].to_string(index=False))
+    show = df[["arm", "cfg_tar", "depth", "t_max", "tstart", "steps", "lpaps", "clap", "muq"]]
     print(df.groupby("arm").size().to_string())
     print(show.to_string(index=False, float_format=lambda v: f"{v:.4f}"))
     delta = paired_delta(df)
-    print("\nArm - DDIM Inv., paired at matched (depth, cfg_tar):")
+    print("\nArm - DDIM Inv., paired on identical schedules (tstart, steps, cfg_tar):")
     print(delta.to_string(index=False, float_format=lambda v: f"{v:+.4f}"))
 
     fig, axes = plt.subplots(1, len(PANELS), figsize=(6.6 * len(PANELS), 5.8),
@@ -138,8 +160,11 @@ def main(runs_root: str, split: str = "hparam", nfe: int = 800,
              f"{len(df)} runs, {df['n'].iloc[0]} edits each, cfg_tar pooled "
              f"({', '.join(f'{c:g}' for c in cfgs)}). Lines are each arm's Pareto front over "
              "all (depth, cfg_tar) cells; faint dots are every cell.\n",
-             "Figure: `matched_nfe_front.png`.\n",
-             f"\n## Arm - {BASELINE}, paired at matched (depth, cfg_tar)\n",
+             "Figure: `matched_nfe_front.png`. `depth` = nominal tstart/steps; `t_max` = the "
+             "timestep the edit actually starts from on the leading-spaced DDIM grid.\n",
+             *([f"\n**{len(dup)} cells collide** (same arm, t_max, cfg_tar -> identical edits): "
+                + ", ".join(sorted(set(dup.run))) + "\n"] if len(dup) else []),
+             f"\n## Arm - {BASELINE}, paired on identical schedules (tstart, steps, cfg_tar)\n",
              delta.to_markdown(index=False, floatfmt="+.4f"),
              "\n\n## All runs\n", show.to_markdown(index=False, floatfmt=".4f")]
     (out / "REPORT.md").write_text("\n".join(lines) + "\n")
