@@ -9,7 +9,7 @@
 # Fixing the budget therefore fixes T per method, leaving N free; N sets how deep in sigma the
 # inversion reaches, so depth = T/N becomes the front axis. The adapter is merged into the base
 # weights, so ours costs no more than the no-LoRA arm.
-BUDGET=300
+BUDGET="${BUDGET:-300}"
 LORA_MODE="${METHOD:?set METHOD=odeinv, ddpm or sdedit}"
 # The guidance value changes no NFE: both CFG branches are computed per call whatever the scale,
 # so one budget's (tstart, steps) points stay valid across CFG_TARS.
@@ -23,12 +23,17 @@ LORA_STEPS=100  # per-row steps override this
 # live under medleymd/stable_audio relative to the edits root.
 LORA_EDITS_SUBDIR="${LORA_EDITS_SUBDIR:-medleymd/stable_audio}"
 
-# depth:tstart:steps, solved per method for BUDGET
-case "$LORA_MODE" in
-  odeinv) POINTS=(25:99:396 50:99:198 75:99:132 100:99:100) ;;   # 3T+2 = 299
-  ddpm)   POINTS=(25:30:120 50:50:100 75:64:86 100:75:75) ;;      # 2N+2T = 300
-  sdedit) POINTS=(25:150:600 50:150:300 75:150:200 100:150:150) ;; # 2T = 300
-  *) echo "unknown METHOD=$LORA_MODE" >&2; return 1 ;;
+# depth:tstart:steps, solved per method for BUDGET. The grid ends at sigma=0, which odeinv cannot
+# invert, so its full-depth point is steps = tstart + 1. The cosine sigma grid is continuous, so
+# every point starts from a distinct sigma (unlike AudioLDM2's leading-spaced DDIM grid).
+case "$LORA_MODE:$BUDGET" in
+  odeinv:300) POINTS=(25:99:396 50:99:198 75:99:132 100:99:100) ;;   # 3T+2 = 299
+  ddpm:300)   POINTS=(25:30:120 50:50:100 75:64:86 100:75:75) ;;      # 2N+2T = 300
+  sdedit:300) POINTS=(25:150:600 50:150:300 75:150:200 100:150:150) ;; # 2T = 300
+  odeinv:100) POINTS=(25:33:132 33:33:99 50:33:66 75:33:44 100:33:34) ;; # 3T+2 = 101
+  ddpm:100)   POINTS=(25:10:40 33:12:38 50:17:33 75:21:29 100:25:25) ;;  # 2N+2T = 100
+  sdedit:100) POINTS=(25:50:200 33:50:150 50:50:100 75:50:67 100:50:50) ;; # 2T = 100
+  *) echo "unsupported METHOD:BUDGET=$LORA_MODE:$BUDGET (BUDGET must be 100 or 300)" >&2; return 1 ;;
 esac
 
 # Only the odeinv arm has an adapter to test; the reference methods run without one.
