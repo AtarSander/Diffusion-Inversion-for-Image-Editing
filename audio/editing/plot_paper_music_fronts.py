@@ -18,7 +18,7 @@ FS = 14
 
 MODELS = {
     "AudioLDM2": {
-        "csv": AUDIO_ROOT / "output/matched_nfe_audioldm2/20260923_102222/matched_nfe_runs.csv",
+        "csv": AUDIO_ROOT / "output/matched_nfe_audioldm2/20260925_213426_full_nfe400/matched_nfe_runs.csv",
         "labels": {
             "DDIM Inv.": "DDIM Inv.",
             "DDIM Inv. + LoRA (Gen)": "DDIM Inv. + LoRA $\\mathbf{(ours)}$",
