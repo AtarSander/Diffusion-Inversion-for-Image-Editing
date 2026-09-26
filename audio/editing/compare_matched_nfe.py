@@ -68,7 +68,7 @@ def collect(runs_root: Path, split: str) -> pd.DataFrame:
     return pd.DataFrame(rows).sort_values(["arm", "cfg_tar", "depth"]).reset_index(drop=True)
 
 
-SPLIT_LABEL = {"hparam": "Real audio from MedleyMD",
+SPLIT_LABEL = {"hparam": "Real audio from MedleyMD", "full": "Real audio from MedleyMD (all 696 edits)",
                "genhparam": "Generated audio from MedleyMD prompts"}
 PANELS = [("clap", "Alignment = CLAP"), ("muq", "Alignment = MuQ")]
 FS = 16

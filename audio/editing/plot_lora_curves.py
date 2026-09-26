@@ -78,7 +78,7 @@ MODELS = {
             r"_nfe(?P<nfe>\d+)_t(?P<tstart>\d+)_s(?P<steps>\d+)_cfgtar(?P<cfg_tar>[\d.]+)$"
         ),
         "lora": re.compile(
-            r"stableaudio_odeinvlora_(?P<checkpoint>.+?)_(?P<split>hparam|genhparam)"
+            r"stableaudio_odeinvlora_(?P<checkpoint>.+?)_(?P<split>hparam|genhparam|full)"
             r"_nfe(?P<nfe>\d+)_t(?P<tstart>\d+)_s(?P<steps>\d+)_cfgtar(?P<cfg_tar>[\d.]+)$"
         ),
     },

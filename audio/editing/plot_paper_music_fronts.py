@@ -27,7 +27,7 @@ MODELS = {
         },
     },
     "Stable Audio Open": {
-        "csv": AUDIO_ROOT / "output/matched_nfe/20260915_120122/matched_nfe_runs_hparam.csv",
+        "csv": AUDIO_ROOT / "output/matched_nfe/20260926_023532/matched_nfe_runs_full.csv",
         "labels": {
             "ODEInv (no LoRA)": "DDIM Inv.",
             "ODEInv w/ LoRA bw": "DDIM Inv. + LoRA $\\mathbf{(ours)}$",
