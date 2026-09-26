@@ -21,7 +21,7 @@ MODELS = {
         "csv": AUDIO_ROOT / "output/matched_nfe_audioldm2/20260925_213426_full_nfe400/matched_nfe_runs.csv",
         "labels": {
             "DDIM Inv.": "DDIM Inv.",
-            "DDIM Inv. + LoRA (Gen)": "DDIM Inv. + LoRA $\\mathbf{(ours)}$",
+            "DDIM Inv. + LoRA (Gen)": "Moonwalker $\\mathbf{(ours)}$",
             "DDPM Inv.": "DDPM Inv.",
             "SDEdit": "SDEdit",
         },
@@ -30,7 +30,7 @@ MODELS = {
         "csv": AUDIO_ROOT / "output/matched_nfe/20260926_023532/matched_nfe_runs_full.csv",
         "labels": {
             "ODEInv (no LoRA)": "DDIM Inv.",
-            "ODEInv w/ LoRA bw": "DDIM Inv. + LoRA $\\mathbf{(ours)}$",
+            "ODEInv w/ LoRA bw": "Moonwalker $\\mathbf{(ours)}$",
             "DDPM-inv": "DDPM Inv.",
             "SDEdit": "SDEdit",
         },
@@ -39,7 +39,7 @@ MODELS = {
 
 STYLE = {
     "DDIM Inv.": ("#1f77b4", "o"),
-    "DDIM Inv. + LoRA $\\mathbf{(ours)}$": ("#d62728", "s"),
+    "Moonwalker $\\mathbf{(ours)}$": ("#d62728", "s"),
     "DDPM Inv.": ("#2ca02c", "^"),
     "SDEdit": ("#ff7f0e", "v"),
 }
