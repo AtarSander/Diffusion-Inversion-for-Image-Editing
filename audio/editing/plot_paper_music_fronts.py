@@ -56,7 +56,7 @@ def main(out_root: str = str(AUDIO_ROOT / "output/paper_figures"),
         out_root: Directory for the timestamped copy of the figure.
         paper_figures: Paper figures directory receiving the stable-named copy.
     """
-    fig, axes = plt.subplots(2, 2, figsize=(11, 7.5))
+    fig, axes = plt.subplots(2, 2, figsize=(11, 5.625))
     for col, (model, spec) in enumerate(MODELS.items()):
         df = pd.read_csv(spec["csv"])
         for row, (metric, metric_name) in enumerate(METRICS.items()):
