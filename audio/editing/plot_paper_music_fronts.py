@@ -56,11 +56,12 @@ def main(out_root: str = str(AUDIO_ROOT / "output/paper_figures"),
         out_root: Directory for the timestamped copy of the figure.
         paper_figures: Paper figures directory receiving the stable-named copy.
     """
-    fig, axes = plt.subplots(2, 2, figsize=(11, 7.5), sharex="col")
+    fig, axes = plt.subplots(2, 2, figsize=(11, 7.5))
     for col, (model, spec) in enumerate(MODELS.items()):
         df = pd.read_csv(spec["csv"])
         for row, (metric, metric_name) in enumerate(METRICS.items()):
             ax = axes[row, col]
+            front_x = []
             for arm, label in spec["labels"].items():
                 color, marker = STYLE[label]
                 sub = df[df.arm == arm].sort_values("lpaps")
@@ -72,6 +73,12 @@ def main(out_root: str = str(AUDIO_ROOT / "output/paper_figures"),
                             color=color, marker=marker, markersize=6,
                             markeredgecolor="black", markeredgewidth=0.8,
                             linewidth=1.6, elinewidth=0.9, capsize=2, label=label)
+                front_x += [front.lpaps - front.lpaps_sem, front.lpaps + front.lpaps_sem]
+            # Each panel spans its own fronts, so dominated points past the last front point of
+            # any arm fall outside it.
+            x_lo, x_hi = pd.concat(front_x).min(), pd.concat(front_x).max()
+            margin = 0.03 * (x_hi - x_lo)
+            ax.set_xlim(x_lo - margin, x_hi + margin)
             ax.grid(True, linestyle="--", alpha=0.2)
             lo, hi = ax.get_ylim()
             span = hi - lo
