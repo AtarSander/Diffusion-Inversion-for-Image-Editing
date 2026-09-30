@@ -23,6 +23,18 @@ def next_step(ldm_model, model_output: Union[torch.FloatTensor, np.ndarray],
 
 
 def get_noise_pred(ldm_model, latent, t, text_emb, uncond_emb, cfg_scale):
+    # At scale 1 the unconditional branch has weight 0, so it is not computed: an unguided
+    # inversion costs one denoiser call per step instead of two (what the matched-NFE grids
+    # count), and the prediction is the conditional one either way.
+    if float(cfg_scale) == 1.0:
+        return ldm_model.unet_forward(
+            latent,
+            timestep=t,
+            encoder_hidden_states=text_emb.embedding_hidden_states,
+            class_labels=text_emb.embedding_class_lables,
+            encoder_attention_mask=text_emb.boolean_prompt_mask,
+        )[0].sample
+
     noise_pred_uncond, _, _ = ldm_model.unet_forward(
             latent,
             timestep=t,
