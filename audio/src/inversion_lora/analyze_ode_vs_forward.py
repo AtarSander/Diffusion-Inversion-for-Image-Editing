@@ -480,13 +480,21 @@ def aggregate(
     table["gap_ratio"] = table["gap_fwd_mean"] / table["gap_ode_mean"]
     table["mmd2"] = np.full(num_levels, np.nan)
     table["mmd_p"] = np.full(num_levels, np.nan)
+    # ODE and forward states of the SAME sample are near-twins at low noise, which biases a paired
+    # test toward "no difference" (p -> 1). Compare ODE states of one half of the samples with
+    # forward states of the other half, so the two sets are independent draws.
+    half_a, half_b = torch.arange(0, n_samples, 2), torch.arange(1, n_samples, 2)
     for j, level in enumerate(meta["mmd_levels"]):
-        mmd2, p, _ = mmd_test(feats_ode[:, j], feats_fwd[:, j], num_permutations, seed=level)
+        mmd2, p, _ = mmd_test(feats_ode[half_a, j], feats_fwd[half_b, j], num_permutations,
+                              seed=level)
         table["mmd2"][level], table["mmd_p"][level] = mmd2, p
     df = pd.DataFrame(table)
     df.to_csv(out_dir / "levels.csv", index=False)
 
-    shown = sorted(set(np.linspace(0, num_levels - 1, report_levels).round().astype(int)))
+    # Rows on the forward-gap level grid, so the gap columns are filled, plus the last level.
+    step = int(meta["gap_every"])
+    shown = sorted(set((np.linspace(0, num_levels - 2, report_levels) / step).round().astype(int)
+                       * step) | {num_levels - 1})
     cols = ["level", "sigma_equiv", "rms_ode_mean", "rms_fwd_mean", "nstd_ode_mean",
             "nkurt_ode_mean", "nlagt_ode_mean", "nlagt_fwd_mean", "cosx0_ode_mean", "cosz_mean",
             "straight_mean", "mmd2", "mmd_p", "gap_ode_mean", "gap_fwd_mean", "gap_ratio"]
@@ -508,7 +516,8 @@ def aggregate(
         "",
         f"**One-step gap, pooled over gap levels: forward/ODE = {g_all_f / g_all_o:.3g}x** "
         f"(ODE {g_all_o:.3e}, forward {g_all_f:.3e}; the LoRA-disabled loss in the trainer's units).",
-        f"**MMD (ODE vs forward states, {meta['proj_dim']}-d random projection):** "
+        f"**MMD (ODE states of half the samples vs forward states of the other half, "
+        f"{meta['proj_dim']}-d random projection):** "
         f"{int(np.sum(df['mmd_p'] < 0.01))}/{len(mmd_idx)} kept levels at p < 0.01 "
         f"({num_permutations} permutations; smallest attainable p = {1 / (1 + num_permutations):.4f}).",
         "",
