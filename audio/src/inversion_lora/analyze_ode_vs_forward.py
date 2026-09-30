@@ -314,6 +314,11 @@ def run(
         proj_dim: Dimension of the random projection the two-sample test runs on.
         keep_trajectories: Full trajectories of this shard to save for later inspection.
     """
+    from dotenv import load_dotenv
+
+    # HF_HOME / HF_TOKEN (Stable Audio Open is gated) come from the ignored audio/.env, as in the
+    # trajectory generators; loaded before any model import so the hub cache path takes effect.
+    load_dotenv(AUDIO_ROOT / ".env", override=True)
     from src.inversion_lora.generate_trajectories import load_captions
 
     assert model in PROBES, f"model must be one of {sorted(PROBES)}, got {model!r}"
