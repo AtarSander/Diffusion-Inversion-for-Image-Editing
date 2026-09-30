@@ -93,6 +93,7 @@ EXPORTS=("SWEEP_CONFIGS=$SWEEP_CONFIGS")
 [ -n "${PROBE:-}" ] && EXPORTS+=("PROBE=$PROBE")
 [ -n "${METHOD:-}" ] && EXPORTS+=("METHOD=$METHOD")
 [ -n "${BUDGET:-}" ] && EXPORTS+=("BUDGET=$BUDGET")
+[ -n "${CFG_SRC:-}" ] && EXPORTS+=("CFG_SRC=$CFG_SRC")
 # The grid file reads these, so the job must see the same values this preview used.
 [ -n "${SPLIT:-}" ] && EXPORTS+=("SPLIT=$SPLIT")
 [ -n "${SRC:-}" ] && EXPORTS+=("SRC=$SRC")

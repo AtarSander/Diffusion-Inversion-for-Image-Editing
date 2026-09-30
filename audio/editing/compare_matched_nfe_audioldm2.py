@@ -19,7 +19,10 @@ sys.path.insert(0, str(AUDIO_ROOT / "editing"))
 from run_metrics import PER_EXAMPLE_CSV  # noqa: E402
 
 SUBDIRS = ("audioldm2_ddim", "audioldm2_ddpm", "audioldm2_sdedit")
-TAIL = r"_(?P<split>[a-z]+)_nfe(?P<nfe>\d+)_t(?P<tstart>\d+)_s(?P<steps>\d+)_cfgtar(?P<cfg_tar>[\d.]+)$"
+TAIL = (r"_(?P<split>[a-z]+)_nfe(?P<nfe>\d+)_t(?P<tstart>\d+)_s(?P<steps>\d+)_cfgtar(?P<cfg_tar>[\d.]+)"
+        r"(?:_cfgsrc(?P<cfg_src>[\d.]+))?$")
+# Runs without the suffix used the benchmark's inversion guidance.
+DEFAULT_CFG_SRC = 3.0
 BASE = re.compile(r"^audioldm2_(?P<mode>ddim|ddpm|sdedit)_nolora" + TAIL)
 LORA = re.compile(r"^audioldm2_ddimlora_(?P<adapter>.+?)_checkpoint_step_\d+" + TAIL)
 
@@ -66,11 +69,14 @@ def collect(runs_root: Path, split: str, nfe: int) -> pd.DataFrame:
                 continue
             g = m.groupdict()
             arm = ADAPTER_ARM[g["adapter"]] if "adapter" in g else MODE_ARM[g["mode"]]
+            cfg_src = float(g["cfg_src"]) if g.get("cfg_src") else DEFAULT_CFG_SRC
+            if cfg_src != DEFAULT_CFG_SRC:
+                arm = f"{arm} [cfg_src {cfg_src:g}]"
             tstart, steps = int(g["tstart"]), int(g["steps"])
             frame = pd.read_csv(csv)
             row = {"arm": arm, "tstart": tstart, "steps": steps, "nfe": int(g["nfe"]),
                    "depth": round(100 * tstart / steps), "t_max": start_timestep(tstart, steps),
-                   "cfg_tar": float(g["cfg_tar"]),
+                   "cfg_tar": float(g["cfg_tar"]), "cfg_src": cfg_src,
                    "n": len(frame), "run": run_dir.name}
             for name, col in METRICS.items():
                 row[name] = frame[col].mean()
@@ -94,12 +100,22 @@ def paired_delta(df: pd.DataFrame) -> pd.DataFrame:
     LPAPS lower is better.
     """
     key = ["tstart", "steps", "cfg_tar"]
-    base = df[df.arm == BASELINE].set_index(key)[list(METRICS)]
     out = []
-    for arm, sub in df[df.arm != BASELINE].groupby("arm"):
+    for arm, sub in df.groupby("arm"):
+        if arm == BASELINE:
+            continue
+        # Each arm is paired with the no-LoRA DDIM run at its own inversion guidance, so a
+        # cfg_src change is never mistaken for an adapter effect; a no-LoRA DDIM run at another
+        # cfg_src is paired with the default one, which isolates the guidance effect itself.
+        base_arm = BASELINE + (arm[arm.index(" ["):] if " [" in arm else "")
+        if arm == base_arm:
+            base_arm = BASELINE
+        if base_arm not in set(df.arm):
+            continue
+        base = df[df.arm == base_arm].set_index(key)[list(METRICS)]
         d = sub.set_index(key)[list(METRICS)] - base
         d = d.dropna()
-        out.append({"arm": arm, "cells": len(d),
+        out.append({"arm": arm, "vs": base_arm, "cells": len(d),
                     **{f"d_{m}_mean": d[m].mean() for m in METRICS},
                     "lpaps_better_cells": int((d["lpaps"] < 0).sum())})
     return pd.DataFrame(out)

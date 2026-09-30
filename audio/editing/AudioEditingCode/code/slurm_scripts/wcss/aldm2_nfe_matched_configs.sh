@@ -11,7 +11,10 @@
 BUDGET="${BUDGET:-400}"
 LORA_MODE="${METHOD:?set METHOD=ddim, ddpm or sdedit}"
 LORA_CFG_TAR=($(tr ":," "  " <<< "${CFG_TARS:-3.0 6.0 9.0 12.0 15.0}"))
-LORA_CFG_SRC=3.0
+# Inversion guidance. 3.0 is the benchmark setting; the inversion adapters were trained at w=1,
+# so CFG_SRC=1.0 runs the DDIM arms in the adapter's own regime. get_noise_pred computes both
+# branches at any scale, so the per-cell NFE (4T) and hence the matched grid are unchanged.
+LORA_CFG_SRC="${CFG_SRC:-3.0}"
 LORA_SPLIT="${SPLIT:-hparam}"
 LORA_STEPS=200          # per-row steps override this
 LORA_EDITS_SUBDIR="${LORA_EDITS_SUBDIR:-audioldm2_ddim}"
@@ -55,6 +58,9 @@ lora_sweep_configs() {
 lora_sweep_run_name() {
   local ckpt="${1?checkpoint}" tstart="${2:?tstart}" cfg="${3:?cfg_tar}" steps="${4:?steps}"
   local tail="${LORA_SPLIT}_nfe${BUDGET}_t${tstart}_s${steps}_cfgtar${cfg}"
+  # A non-default inversion guidance gets its own name, so its runs cannot overwrite (or be
+  # SKIP_EXISTING-skipped onto) the cfg_src=3.0 outputs. Default names stay unchanged.
+  [ "$LORA_CFG_SRC" = "3.0" ] || tail="${tail}_cfgsrc${LORA_CFG_SRC}"
   if [ -z "$ckpt" ]; then
     echo "audioldm2_${LORA_MODE}_nolora_${tail}"
   else
