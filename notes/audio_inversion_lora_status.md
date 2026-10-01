@@ -8,6 +8,38 @@ Most recent first. Keep this file current — it is the handover doc between ses
 
 ---
 
+## 2026-10-01 — ROOT CAUSE: the real-audio pairs' 370x gap is a duration-conditioning mismatch
+
+`generate_real_pairs_stable_audio.py` sets the teacher's duration to each clip's length (10 s for
+MusicCaps) before computing the targets (the stored prompt embedding carries the 10 s timing
+tokens too), but the trainer loads its teacher once at `duration_s: null` = 47.55 s and never
+changes it. So the student and the LoRA-off baseline see a different *global* timing input than
+the targets were computed with. Rebuilt the pairs for 16 of the same clips with the generator's own
+code (`src/inversion_lora/check_duration_conditioning.py`) and scored the LoRA-off loss both ways:
+
+| global timing at query | pooled | pairs 0-23 (noisy) | 24-48 | 49-73 | 74-98 (clean) |
+|---|---|---|---|---|---|
+| 47.55 s (what the trainer did) | 1.016e-1 | 2.53e-1 | 1.46e-1 | 3.8e-3 | 8.8e-3 |
+| 10 s (matched) | 1.85e-4 | 9.5e-7 | 3.1e-5 | 3.9e-4 | 3.1e-4 |
+
+The mismatched value reproduces the dataset's logged 9.75e-2 and its noisy-end concentration;
+matched, real-audio forward-noise pairs sit at the trajectory datasets' scale (2.63e-4). So
+realfn was trained to undo a conditioning change ("silence after 10 s"), consistent with it tying
+no-LoRA on 10 s MusicCaps clips and collapsing on long MedleyDB tracks. The phantom-gap,
+"objective miscalibrated" and "audio-OOD" readings below are superseded by this.
+
+Generated-audio control (`src/inversion_lora/analyze_ode_vs_forward.py`, 1000 samples x 200 steps,
+both models, outputs under `audio/outputs/ode_vs_forward/`): ODE and forward-diffused states agree
+in norm (AudioLDM2 within 0.5%; SAO within 3%, the excess at the clean end), in a two-sample MMD
+test (0/41 levels), and in the one-step gap (forward/ODE 1.01x AudioLDM2, 0.997x SAO). The
+forward-noise construction itself is sound.
+
+Next: retrain realfn with matched timing -- per-sample global timing from each sample's
+`clip_duration_s` (MedleyDB deployment uses track-length durations, so a single `duration_s=10.0`
+would only move the mismatch to inference).
+
+---
+
 ## 2026-09-16 (correction) — the cfg_src=1.0 "pair-branch" arm never used the second adapter
 
 `guided()` returns after the conditional call when `scale == 1.0`:
