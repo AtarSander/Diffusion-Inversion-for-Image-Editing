@@ -9,6 +9,7 @@ if [ "$LORA_MODE" = "odeinv" ]; then
     ""
     "saocos_r8_a4_lr5e-5/checkpoint_step_4000.pt"
     "saocos_realfn_r8_a4_lr5e-5/checkpoint_step_3000.pt"
+    "saocos_realfndur_r8_a4_lr5e-5/checkpoint_step_3000.pt"  # per-sample duration fix
   )
 else
   LORA_CHECKPOINTS=("")

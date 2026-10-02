@@ -13,6 +13,7 @@ if [ "$LORA_MODE" = "odeinv" ]; then
     ""                                                    # exists: ..._nolora
     "saocos_r8_a4_lr5e-5/checkpoint_step_4000.pt"         # exists: acc_recon ladder
     "saocos_realfn_r8_a4_lr5e-5/checkpoint_step_3000.pt"  # new
+    "saocos_realfndur_r8_a4_lr5e-5/checkpoint_step_3000.pt"  # per-sample duration fix
   )
 else
   LORA_CHECKPOINTS=("")

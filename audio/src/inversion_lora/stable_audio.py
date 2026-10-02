@@ -139,7 +139,34 @@ class StableAudioTeacher:
         prompt_embeds = self.pipe.encode_prompt([prompt], self.device, False)
         return torch.cat([prompt_embeds, *self.seconds_hidden_states], dim=1)
 
-    def forward(self, x: torch.Tensor, t: torch.Tensor, text_audio: torch.Tensor) -> torch.Tensor:
+    @torch.no_grad()
+    def global_states_for(self, durations_s: torch.Tensor) -> torch.Tensor:
+        """Global timing states `[B, ...]`, one per declared duration in seconds.
+
+        `set_duration` holds a single duration for every forward. A batch whose targets were
+        computed at different durations (real clips of their own length) needs each element's
+        own, or the student is queried under different conditioning than its targets.
+
+        Args:
+            durations_s: Durations `[B]`, each in (0, max_duration_s].
+
+        Returns:
+            The states `forward` passes as `global_hidden_states`.
+        """
+        ends = [float(d) for d in durations_s.reshape(-1)]
+        assert all(0 < d <= self.max_duration_s + 1e-4 for d in ends), (ends, self.max_duration_s)
+        start, end = self.pipe.encode_duration([0.0] * len(ends), ends, self.device, False,
+                                               len(ends))
+        states = torch.cat([start, end], dim=2)
+        assert states.shape[1:] == self.global_states.shape[1:], (
+            states.shape, self.global_states.shape,
+        )
+        return states
+
+    def forward(
+        self, x: torch.Tensor, t: torch.Tensor, text_audio: torch.Tensor,
+        global_states: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         """Run the DiT on a batch of latents with one timestep per element.
 
         The pipeline passes a single scalar timestep for the whole batch; training needs one per
@@ -151,6 +178,8 @@ class StableAudioTeacher:
             x: Latents `[B, C, L]`.
             t: Timesteps `[B]`, in the scheduler's own units.
             text_audio: Cross-attention states `[B, S, D]` or `[1, S, D]`.
+            global_states: Per-element timing states from `global_states_for`; None uses the
+                duration last given to `set_duration` for the whole batch.
 
         Returns:
             The DiT's prediction, same shape as `x`.
@@ -159,11 +188,14 @@ class StableAudioTeacher:
         assert x.ndim == 3, x.shape
         assert t.shape == (batch,), (t.shape, x.shape)
         assert text_audio.shape[0] in (1, batch), (text_audio.shape, batch)
+        if global_states is None:
+            global_states = self.global_states.expand(batch, -1, -1)
+        assert global_states.shape[0] == batch, (global_states.shape, batch)
         out = self.pipe.transformer(
             x,
             t,
             encoder_hidden_states=text_audio.expand(batch, -1, -1),
-            global_hidden_states=self.global_states.expand(batch, -1, -1),
+            global_hidden_states=global_states,
             rotary_embedding=self.rotary,
             return_dict=False,
         )[0]

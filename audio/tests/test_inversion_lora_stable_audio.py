@@ -104,3 +104,34 @@ def test_collate_stacks_conditioning_in_order(dataset_root: Path):
     assert batch["sample_idx"] == [item["sample_idx"] for item in items]
     for position, item in enumerate(items):
         assert torch.equal(batch["text_audio"][position], item["text_audio"])
+
+
+def write_duration(root: Path, sample_idx: int, **fields) -> None:
+    """Add duration fields to an existing synthetic sample's meta.json."""
+    meta_path = root / f"sample_{sample_idx:06d}" / "meta.json"
+    meta = json.loads(meta_path.read_text())
+    meta.update(fields)
+    meta_path.write_text(json.dumps(meta))
+
+
+def test_items_carry_each_samples_declared_duration(tmp_path: Path):
+    for idx in range(3):
+        write_sample(tmp_path, idx, num_transitions=2)
+    # Real-audio pairs declare the clip's own length next to the run-level value; trajectory
+    # datasets only the run-level one; AudioLDM2 neither.
+    write_duration(tmp_path, 0, duration_s=47.55, clip_duration_s=10.0)
+    write_duration(tmp_path, 1, duration_s=47.55)
+    ds = AudioLDM2TrajectoryDataset(tmp_path, conditioning_keys=STABLE_AUDIO_CONDITIONING_KEYS)
+    by_sample = {ds[i]["sample_idx"]: ds[i] for i in range(len(ds))}
+    assert float(by_sample[0]["duration_s"]) == 10.0
+    assert abs(float(by_sample[1]["duration_s"]) - 47.55) < 1e-4
+    assert "duration_s" not in by_sample[2]
+
+
+def test_collate_stacks_durations(tmp_path: Path):
+    for idx in range(2):
+        write_sample(tmp_path, idx, num_transitions=2)
+        write_duration(tmp_path, idx, duration_s=47.55, clip_duration_s=10.0 + idx)
+    ds = AudioLDM2TrajectoryDataset(tmp_path, conditioning_keys=STABLE_AUDIO_CONDITIONING_KEYS)
+    batch = collate_stable_audio_batch([ds[i] for i in range(len(ds))])
+    assert batch["duration_s"].tolist() == [10.0, 10.0, 11.0, 11.0]

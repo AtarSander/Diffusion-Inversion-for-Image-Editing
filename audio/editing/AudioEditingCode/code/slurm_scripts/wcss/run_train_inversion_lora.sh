@@ -179,6 +179,11 @@ CONFIGS=(
   # trajectory-trained attn adapter. 6000 steps, saving every 1000; recon eval off (its own
   # recon fixtures are MedleyDB, scored separately).
   "attn|8|4|5e-5|aldm2realfn_r8_a4_lr5e-5|data_root=\${oc.env:LORAINV_DATA_ROOT}/audioldm2_real_pairs_fp32 max_train_steps=3000 save_every_steps=500 eval_every_steps=500 recon_every_steps=0"
+  # 39: the real-audio forward-noise pairs of 37, retrained with per-sample duration conditioning
+  # (per_sample_duration=true, now the default). 37 queried the student at the run's 47.55 s
+  # while every target was computed at the clip's 10 s: a 550x LoRA-off loss that was all
+  # conditioning (notes, 2026-10-01). Same dataset, objective and schedule; Stable Audio only.
+  "attn|8|4|5e-5|realfndur_r8_a4_lr5e-5|data_root=\${oc.env:LORAINV_DATA_ROOT}/stable_audio_real_pairs_fp32 max_train_steps=3000 save_every_steps=500 eval_every_steps=500"
 )
 
 # Fail before the 12 GB model load rather than after it: wandb only reports a bad credential

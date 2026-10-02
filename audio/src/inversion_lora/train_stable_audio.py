@@ -92,11 +92,25 @@ class StableAudioInversionTrainer(AudioLDM2InversionTrainer):
     def log_first_batch(self, batch: dict[str, Any]) -> None:
         """Print the first training batch's shapes, Stable Audio's single conditioning included."""
         logger.info(
-            "First batch: x_clean={} t={} text_audio={}",
+            "First batch: x_clean={} t={} text_audio={} duration_s={} (run duration_s={})",
             tuple(batch["x_clean"].shape),
             batch["timestep"].tolist(),
             tuple(batch["text_audio"].shape),
+            batch["duration_s"].tolist() if "duration_s" in batch else "run-level",
+            self.ldm.duration_s,
         )
+
+    def timing_states(self, batch: dict[str, Any]) -> torch.Tensor | None:
+        """Each sample's own global timing conditioning, or None for the run-level duration.
+
+        Targets are computed at the duration the dataset declares per sample (a real clip's own
+        length). Querying the student at the run's single `duration_s` instead conditioned it
+        differently from its targets: a 550x LoRA-off loss on the real-audio pairs, all of it
+        conditioning (notes, 2026-10-01).
+        """
+        if "duration_s" not in batch or not bool(self.cfg.get("per_sample_duration", True)):
+            return None
+        return self.ldm.global_states_for(batch["duration_s"])
 
     def predict_noise(self, batch: dict[str, Any]) -> torch.Tensor:
         """The student's data prediction at the cleaner latent, at that latent's own timestep.
@@ -116,16 +130,19 @@ class StableAudioInversionTrainer(AudioLDM2InversionTrainer):
         )
         sigmas = self.solver.sigma_for(timestep).to(dtype=x_clean.dtype)
         model_input = self.solver.model_input_batch(x_clean, sigmas)
+        timing = self.timing_states(batch)
         conditional = self.solver.data_prediction_batch(
-            x_clean, self.ldm.forward(model_input, timestep, text_audio), sigmas
+            x_clean, self.ldm.forward(model_input, timestep, text_audio, timing), sigmas
         )
         if self.uncond is None:
             return conditional
+        self.check_uncond_timing(batch)
         # The step this is distilled from was driven by the guided combination, so the student
         # must be guided too -- a merged adapter perturbs both branches at deployment.
         unconditional = self.solver.data_prediction_batch(
             x_clean,
-            self.ldm.forward(model_input, timestep, self.uncond.expand(x_clean.shape[0], -1, -1)),
+            self.ldm.forward(model_input, timestep, self.uncond.expand(x_clean.shape[0], -1, -1),
+                             timing),
             sigmas,
         )
         return unconditional + self.guidance_scale * (conditional - unconditional)
@@ -182,13 +199,24 @@ class StableAudioInversionTrainer(AudioLDM2InversionTrainer):
             for parameter_name, parameter in self.unet.named_parameters():
                 parameter.requires_grad_("lora" in parameter_name.lower())
 
+    def check_uncond_timing(self, batch: dict[str, Any]) -> None:
+        """The cached empty-prompt states carry the run duration's timing tokens, so they are only
+        valid for samples declared at that duration."""
+        if "duration_s" in batch:
+            assert torch.allclose(batch["duration_s"].float(),
+                                  torch.tensor(float(self.ldm.duration_s)), atol=1e-3), (
+                "per-sample durations differ from duration_s; the unconditional branch's cached "
+                f"timing tokens would not match (durations {batch['duration_s'].tolist()})"
+            )
+
     def branch_prediction(self, batch: dict[str, Any], conditioning: torch.Tensor) -> torch.Tensor:
         """The student's data prediction for one branch, under whichever adapter is active."""
         x_clean = batch["x_clean"].to(device=self.device, dtype=self.unet.dtype)
         timestep = batch["timestep"].to(device=self.device, dtype=torch.float32)
         sigmas = self.solver.sigma_for(timestep).to(dtype=x_clean.dtype)
         raw = self.ldm.forward(
-            self.solver.model_input_batch(x_clean, sigmas), timestep, conditioning
+            self.solver.model_input_batch(x_clean, sigmas), timestep, conditioning,
+            self.timing_states(batch),
         )
         return self.solver.data_prediction_batch(x_clean, raw, sigmas)
 
@@ -201,6 +229,7 @@ class StableAudioInversionTrainer(AudioLDM2InversionTrainer):
         """
         assert "uncond_eps" in batch, "pair_branch needs a dataset built with both branches"
         text_audio = batch["text_audio"].to(device=self.device, dtype=self.unet.dtype)
+        self.check_uncond_timing(batch)
         uncond = self.uncond.expand(text_audio.shape[0], -1, -1)
         target_c = batch["target_eps"].to(device=self.device, dtype=self.unet.dtype)
         target_u = batch["uncond_eps"].to(device=self.device, dtype=self.unet.dtype)
@@ -248,7 +277,8 @@ class StableAudioInversionTrainer(AudioLDM2InversionTrainer):
         return ldm.encode_prompt("").detach()
 
     def data_prediction_at(
-        self, x: torch.Tensor, index: torch.Tensor, text_audio: torch.Tensor
+        self, x: torch.Tensor, index: torch.Tensor, text_audio: torch.Tensor,
+        timing: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """The network's data prediction at latent `x`, read at grid step `index`.
 
@@ -256,6 +286,7 @@ class StableAudioInversionTrainer(AudioLDM2InversionTrainer):
             x: Latents `[B, C, L]`.
             index: Grid step indices `[B]`, on the CPU.
             text_audio: Cross-attention states `[B, S, D]`.
+            timing: Per-sample global timing states from `timing_states`, or None.
 
         Returns:
             Data predictions `[B, C, L]`.
@@ -265,7 +296,8 @@ class StableAudioInversionTrainer(AudioLDM2InversionTrainer):
         timestep = torch.tensor(
             [self.solver.timesteps[int(i)] for i in index], device=x.device, dtype=torch.float32
         )
-        raw = self.ldm.forward(self.solver.model_input_batch(x, sigmas), timestep, text_audio)
+        raw = self.ldm.forward(self.solver.model_input_batch(x, sigmas), timestep, text_audio,
+                               timing)
         return self.solver.data_prediction_batch(x, raw, sigmas)
 
     def cycle_per_example(self, batch: dict[str, Any], student: torch.Tensor) -> torch.Tensor:
@@ -289,6 +321,7 @@ class StableAudioInversionTrainer(AudioLDM2InversionTrainer):
         x_clean = batch["x_clean"].to(device=self.device, dtype=self.unet.dtype)
         timestep = batch["timestep"].to(device=self.device, dtype=torch.float32)
         text_audio = batch["text_audio"].to(device=self.device, dtype=self.unet.dtype)
+        timing = self.timing_states(batch)
         k = int(self.cycle_steps)
 
         # The stored timestep is the cleaner latent's own, at grid index `top`; the reverse step
@@ -309,7 +342,7 @@ class StableAudioInversionTrainer(AudioLDM2InversionTrainer):
                 prediction = student
             else:
                 with torch.no_grad():
-                    prediction = self.data_prediction_at(x, index + 1, text_audio)
+                    prediction = self.data_prediction_at(x, index + 1, text_audio, timing)
             a, b = (c.to(device=x.device, dtype=x.dtype) for c in
                     self.solver.coefficients_batch(index))
             x = (x - b * prediction) / a
@@ -320,7 +353,7 @@ class StableAudioInversionTrainer(AudioLDM2InversionTrainer):
         # ON and the saved activations would not match. Memory has to come from the batch size.
         with self.lora_disabled():
             for index in reversed(indices):
-                prediction = self.data_prediction_at(x, index, text_audio)
+                prediction = self.data_prediction_at(x, index, text_audio, timing)
                 a, b = (c.to(device=x.device, dtype=x.dtype) for c in
                         self.solver.coefficients_batch(index))
                 x = a * x + b * prediction

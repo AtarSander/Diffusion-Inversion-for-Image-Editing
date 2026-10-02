@@ -11,6 +11,9 @@ model_id: stabilityai/stable-audio-open-1.0
 schedule: cosine # must match the trajectory dataset's scheduler
 num_inference_steps: 100 # must match the trajectory dataset's grid
 duration_s: null # must match the dataset's duration; null uses the model's maximum
+# Condition each sample on the duration its targets were computed at (real clips declare their
+# own length). false reproduces the old single-duration behaviour, for comparison only.
+per_sample_duration: true
 adapter_name: inversion
 
 data_root: ${oc.env:LORAINV_DATA_ROOT}/stable_audio_cosine_ode_fp32

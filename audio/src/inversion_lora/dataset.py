@@ -91,6 +91,9 @@ class AudioLDM2TrajectoryDataset(Dataset):
                     "timesteps": timesteps,
                     "num_transitions": num_transitions,
                     "sample_idx": int(meta["sample_idx"]),
+                    # The duration the targets were computed at: real-audio pairs declare each
+                    # clip's own length, every other Stable Audio dataset one run-level value.
+                    "duration_s": meta.get("clip_duration_s", meta.get("duration_s")),
                 }
             )
             total = num_transitions + (
@@ -142,6 +145,8 @@ class AudioLDM2TrajectoryDataset(Dataset):
             "sample_idx": sample["sample_idx"],
             "step_idx": step_idx,
         }
+        if sample["duration_s"] is not None:
+            item["duration_s"] = torch.tensor(float(sample["duration_s"]), dtype=torch.float32)
         if sample["uncond_eps_path"] is not None:
             uncond = self._load(sample["uncond_eps_path"])[step_idx].clone()
             assert uncond.shape == eps.shape, (uncond.shape, eps.shape)
@@ -298,6 +303,8 @@ def collate_stable_audio_batch(items: list[dict[str, Any]]) -> dict[str, Any]:
     if "uncond_eps" in items[0]:
         batch["uncond_eps"] = torch.stack([item["uncond_eps"] for item in items])
         assert batch["uncond_eps"].shape == batch["target_eps"].shape
+    if "duration_s" in items[0]:
+        batch["duration_s"] = torch.stack([item["duration_s"] for item in items])
     assert batch["x_clean"].shape == batch["target_eps"].shape
     assert batch["timestep"].shape[0] == len(items)
     return batch
