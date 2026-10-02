@@ -154,7 +154,7 @@ def main(runs_root: str, split: str = "hparam", nfe: int = 800,
                  fontsize=19, fontweight="bold")
     for ax, (metric, name) in zip(axes, PANELS):
         for arm, sub in df.groupby("arm"):
-            color = COLORS.get(arm)
+            color = COLORS.get(arm.split(" [")[0])  # a cfg_src variant keeps its arm's color
             ax.scatter(sub["lpaps"], sub[metric], s=22, color=color, alpha=0.25,
                        edgecolor="black", linewidth=0.4)
             front = pareto_front(sub, metric)
