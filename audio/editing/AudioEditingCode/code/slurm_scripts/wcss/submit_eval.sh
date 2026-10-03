@@ -43,6 +43,9 @@ fi
 if .venv_eval/bin/python -V >/dev/null 2>&1; then
   # Non-fatal: a chained submission may be queued before the upstream job has built the
   # reference (e.g. genhparam behind its generation job); each task then builds the cache itself.
+  # One BLAS thread: the login node caps processes per user, and OpenBLAS's default pool there
+  # fails to start ("pthread_create failed"), crashing the import (harmless, but alarming).
+  OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
   PYTHONPATH="$AUDIO_ROOT:$AUDIO_ROOT/editing/AudioEditingCode" \
   .venv_eval/bin/python - "${SPLIT:-full}" "${UNIQUE_TRACKS:-}" <<'PYCODE' \
     || echo "    reference cache not warmed (reference missing?); tasks will build it themselves"
