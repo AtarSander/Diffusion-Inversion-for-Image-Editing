@@ -38,7 +38,13 @@ esac
 
 # Only the odeinv arm has an adapter to test; the reference methods run without one.
 if [ "$LORA_MODE" = "odeinv" ]; then
-  LORA_CHECKPOINTS=("" "saocos_r8_a4_lr5e-5/checkpoint_step_4000.pt")
+  # Rows per checkpoint = depth points x CFG_TARS (20 at BUDGET=100 with four guidances), so the
+  # fixed real-audio adapter is rows 40-59 there. Appending keeps the earlier rows' names.
+  LORA_CHECKPOINTS=(
+    ""
+    "saocos_r8_a4_lr5e-5/checkpoint_step_4000.pt"
+    "saocos_realfndur_r8_a4_lr5e-5/checkpoint_step_3000.pt"
+  )
 else
   LORA_CHECKPOINTS=("")
 fi

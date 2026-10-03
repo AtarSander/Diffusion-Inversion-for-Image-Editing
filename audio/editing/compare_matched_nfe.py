@@ -23,7 +23,20 @@ METRICS = {"lpaps": "lpaps", "clap": "clap", "muq": "muqt_sim_p0", "clap_dir": "
            "mulan_dir": "mulan_dir"}
 LABELS = {"odeinv": "ODEInv", "ddpm": "DDPM-inv", "sdedit": "SDEdit"}
 COLORS = {"ODEInv w/ LoRA bw": "#d62728", "ODEInv (no LoRA)": "#1f77b4",
-          "DDPM-inv": "#2ca02c", "SDEdit": "#ff7f0e"}
+          "DDPM-inv": "#2ca02c", "SDEdit": "#ff7f0e", "ODEInv w/ LoRA real": "#9467bd",
+          "ODEInv w/ LoRA rollout k=4": "#8c564b", "ODEInv w/ LoRA rollout k=8": "#e377c2"}
+# Adapter run -> arm label. The trajectory adapter keeps its original label so earlier reports and
+# the paper figure read the same; any other adapter is named by its run.
+LORA_ARMS = {"saocos_r8_a4_lr5e-5": "ODEInv w/ LoRA bw",
+             "saocos_realfndur_r8_a4_lr5e-5": "ODEInv w/ LoRA real",
+             "saocos_rollout4_r8_a4_lr5e-5": "ODEInv w/ LoRA rollout k=4",
+             "saocos_rollout8_r8_a4_lr5e-5": "ODEInv w/ LoRA rollout k=8"}
+
+
+def lora_arm(checkpoint: str) -> str:
+    """Arm label for a run-name checkpoint field like `saocos_r8_a4_lr5e-5_checkpoint_step_4000`."""
+    run = checkpoint.split("_checkpoint_")[0]
+    return LORA_ARMS.get(run, f"ODEInv w/ LoRA {run}")
 
 
 def collect(runs_root: Path, split: str) -> pd.DataFrame:
@@ -49,7 +62,7 @@ def collect(runs_root: Path, split: str) -> pd.DataFrame:
                 continue
             tstart, steps = int(g["tstart"]), int(g["steps"])
             if g.get("checkpoint"):
-                arm = "ODEInv w/ LoRA bw"
+                arm = lora_arm(g["checkpoint"])
             else:
                 arm = LABELS[g.get("mode") or "odeinv"]
                 if arm == "ODEInv":
@@ -75,19 +88,23 @@ FS = 16
 
 
 def lora_delta(df: pd.DataFrame) -> pd.DataFrame:
-    """Paired LoRA - no-LoRA delta at matched (tstart, steps, guidance).
+    """Paired LoRA - no-LoRA delta at matched (tstart, steps, guidance), one block per adapter.
 
-    Pairing must not mix operating points across guidances; the only arm with an adapter is
-    odeinv.
+    Pairing must not mix operating points across guidances; only the odeinv arms have adapters.
     """
-    lora = df[df.arm == "ODEInv w/ LoRA bw"].set_index(["tstart", "steps", "cfg_tar"])
-    base = df[df.arm == "ODEInv (no LoRA)"].set_index(["tstart", "steps", "cfg_tar"])
-    shared = lora.index.intersection(base.index)
-    return pd.DataFrame({
-        "depth": lora.loc[shared, "depth"].to_numpy(),
-        "cfg_tar": [ix[2] for ix in shared],
-        **{m: (lora.loc[shared, m] - base.loc[shared, m]).to_numpy() for m in METRICS},
-    }).sort_values(["cfg_tar", "depth"])
+    key = ["tstart", "steps", "cfg_tar"]
+    base = df[df.arm == "ODEInv (no LoRA)"].set_index(key)
+    blocks = []
+    for arm in sorted(a for a in df.arm.unique() if a.startswith("ODEInv w/ LoRA")):
+        lora = df[df.arm == arm].set_index(key)
+        shared = lora.index.intersection(base.index)
+        blocks.append(pd.DataFrame({
+            "arm": arm,
+            "depth": lora.loc[shared, "depth"].to_numpy(),
+            "cfg_tar": [ix[2] for ix in shared],
+            **{m: (lora.loc[shared, m] - base.loc[shared, m]).to_numpy() for m in METRICS},
+        }).sort_values(["cfg_tar", "depth"]))
+    return pd.concat(blocks, ignore_index=True)
 
 
 def main(runs_root: str, out_root: str = "output/matched_nfe", split: str = "hparam") -> None:
