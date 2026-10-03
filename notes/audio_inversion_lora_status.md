@@ -8,6 +8,34 @@ Most recent first. Keep this file current — it is the handover doc between ses
 
 ---
 
+## 2026-10-04 — Real-audio pairs retrained with matched timing; multi-step rollout loss built
+
+**realfndur** (`saocos_realfndur_r8_a4_lr5e-5`, same data/objective as realfn, per-sample duration
+conditioning): LoRA-off validation loss 1.79e-4 (was 9.75e-2), val 1.02e-5 at step 3000 = 94.3%
+of the gap closed. Reconstruction on the 180 MusicCaps clips (t99, cfg 1, 100 steps):
+
+| arm | mel PSNR | LPAPS | CLAP to source |
+|---|---|---|---|
+| DDPM-inv (exact) | 23.69 | 2.990 | 0.288 |
+| ODEInv no LoRA | 23.00 | 3.420 | 0.265 |
+| trajectory LoRA | 23.19 | 3.275 | 0.268 |
+| realfn (mismatched timing) | 23.04 | 3.664 | 0.264 |
+| **realfndur** | **23.43** | **3.164** | **0.277** |
+
+Best ODE arm on every metric: 62% of the no-LoRA -> DDPM mel-PSNR gap and 60% of the LPAPS gap
+(trajectory LoRA: 28% / 34%). The MedleyDB gate's edits exist but its eval was submitted without
+`UNIQUE_TRACKS=1` (expects 696 rows, found 35) -- rescore with EVAL_ONLY=1.
+
+**Rollout loss** (`rollout.enabled`, `rollout.steps=k`, `init_adapter`): k inversion steps from
+each stored latent with the adapter on, backprop through all of them, every stored noisier state
+matched in data-prediction units (m=1 is the one-step loss). Local check (A5000, batch 4, 4
+trajectories): peak 20 GB for k=4 and k=8; per-step losses grow m1 1.6e-4 -> m4 2.5e-3 (k=8: m8
+~1e-2), i.e. the errors compound; 20 rollout steps from a one-step adapter cut the k=4 loss 1.20e-3
+-> 7.7e-4 and the one-step val loss 2.3e-4 -> 1.7e-4. Refuses forward-noised real pairs (no chain).
+Presets rollout4/rollout8 fine-tune saocos_r8_a4_lr5e-5 @4000; gate: sao_rollout_recon_configs.sh.
+
+---
+
 ## 2026-10-01 — ROOT CAUSE: the real-audio pairs' 370x gap is a duration-conditioning mismatch
 
 `generate_real_pairs_stable_audio.py` sets the teacher's duration to each clip's length (10 s for

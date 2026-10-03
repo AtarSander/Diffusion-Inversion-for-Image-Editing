@@ -110,6 +110,15 @@ pair_branch: false
 # name and would otherwise write both adapters into one file.
 uncond_adapter_name: uncondbranch
 
+# Multi-step rollout: invert `steps` reverse steps from each stored latent with the adapter on,
+# backpropagate through all of them, and match every stored noisier state (in data-prediction
+# units, so m = 1 is the one-step loss). An alternative to `cycle`.
+rollout:
+  enabled: false
+  steps: 4
+  checkpoint: true # recompute each step in the backward; safe, the adapter stays on
+# Fine-tune from a trained adapter checkpoint (weights only; fresh optimizer and step count).
+init_adapter: null
 cycle:
   enabled: false
   steps: 1 # k: how many inversion steps to chain before generating back

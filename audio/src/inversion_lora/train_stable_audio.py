@@ -9,10 +9,16 @@ from typing import Any
 
 import hydra
 import torch
+import torch.utils.checkpoint
 from dotenv import load_dotenv
 from loguru import logger
 from omegaconf import DictConfig, OmegaConf
-from peft import LoraConfig, get_peft_model_state_dict, inject_adapter_in_model
+from peft import (
+    LoraConfig,
+    get_peft_model_state_dict,
+    inject_adapter_in_model,
+    set_peft_model_state_dict,
+)
 from torch.utils.data import DataLoader, Subset
 
 AUDIO_ROOT = Path(__file__).resolve().parents[2]
@@ -29,6 +35,7 @@ from src.inversion_lora.dataset import (  # noqa: E402
 from src.inversion_lora.stable_audio import ExactDPMSolver, load_teacher  # noqa: E402
 from src.inversion_lora.train import (  # noqa: E402
     AudioLDM2InversionTrainer,
+    LoRAEMA,
     NullTracker,
     band_labels,
 )
@@ -71,6 +78,17 @@ class StableAudioInversionTrainer(AudioLDM2InversionTrainer):
         )
         self.cycle_enabled = bool(cfg.get("cycle", {}).get("enabled", False))
         self.cycle_steps = int(cfg.get("cycle", {}).get("steps", 1))
+        rollout = cfg.get("rollout", {}) or {}
+        self.rollout_steps = int(rollout.get("steps", 0)) if rollout.get("enabled", False) else 0
+        self.rollout_checkpoint = bool(rollout.get("checkpoint", True))
+        if self.rollout_steps:
+            assert not self.cycle_enabled, "rollout and cycle are alternatives; enable one"
+            assert float(cfg.get("guidance_scale", 1.0)) == 1.0 and not cfg.get("pair_branch"), (
+                "the rollout inverts the unguided trajectory with one student call per step"
+            )
+            logger.info("rollout loss ON: {} inversion steps per example, full backprop{}",
+                        self.rollout_steps,
+                        ", activation checkpointing per step" if self.rollout_checkpoint else "")
         if self.cycle_enabled:
             # The balance is read off the deepest adapter tensor, so the two probe backwards stop
             # near the end of the network instead of traversing all 24 blocks.
@@ -360,6 +378,55 @@ class StableAudioInversionTrainer(AudioLDM2InversionTrainer):
 
         return ((x.float() - x_clean.float()) ** 2).flatten(1).mean(dim=1)
 
+    def rollout_per_example(self, batch: dict[str, Any], student: torch.Tensor) -> torch.Tensor:
+        """Error of a k-step inversion from the stored latent, against the stored noisier states.
+
+        Starts at the transition's input x_j (grid index j) and inverts k reverse steps with the
+        adapter on, each step feeding the next, so the gradient reaches every prediction and the
+        loss sees how per-step errors compound and how the student behaves on its own drifted
+        inputs -- neither of which the one-step loss or the last-step-only cycle can see. Each
+        state error is scaled by (A / B)^2 of its step, which puts it in data-prediction units:
+        the m = 1 term is exactly the one-step loss, and the sigma-scale states near the noisy end
+        do not dominate.
+
+        Args:
+            batch: One training batch carrying `x_noisier` `[B, k, C, L]`, nearest first.
+            student: The adapter's prediction at x_j, with graph (the first step).
+
+        Returns:
+            Per-example, per-step losses `[B, k]`.
+        """
+        x = batch["x_clean"].to(device=self.device, dtype=self.unet.dtype)
+        timestep = batch["timestep"].to(device=self.device, dtype=torch.float32)
+        text_audio = batch["text_audio"].to(device=self.device, dtype=self.unet.dtype)
+        targets = batch["x_noisier"].to(device=self.device, dtype=self.unet.dtype)
+        timing = self.timing_states(batch)
+        k = self.rollout_steps
+        assert targets.shape[1] == k, (targets.shape, k)
+        top = self.solver.index_for(timestep)
+        assert int(top.min()) >= k, (
+            f"a {k}-step rollout needs {k} stored states above the input, but one example sits "
+            f"at grid index {int(top.min())}"
+        )
+
+        prediction, terms = student, []
+        for m in range(1, k + 1):
+            index = top - m  # the reverse step index -> index + 1, undone here
+            a, b = (c.to(device=x.device, dtype=x.dtype) for c in
+                    self.solver.coefficients_batch(index))
+            x = (x - b * prediction) / a
+            error = (x - targets[:, m - 1]).float()
+            terms.append(((a / b).float() ** 2 * error**2).flatten(1).mean(dim=1))
+            if m < k:
+                if self.rollout_checkpoint:
+                    prediction = torch.utils.checkpoint.checkpoint(
+                        self.data_prediction_at, x, index, text_audio, timing,
+                        use_reentrant=False,
+                    )
+                else:
+                    prediction = self.data_prediction_at(x, index, text_audio, timing)
+        return torch.stack(terms, dim=1)
+
     def adaptive_weight(self, inversion: torch.Tensor, cycle: torch.Tensor) -> torch.Tensor:
         """Gradient-norm balance between the two terms, measured at the deepest adapter tensor.
 
@@ -394,11 +461,25 @@ class StableAudioInversionTrainer(AudioLDM2InversionTrainer):
                 {"train/loss_cond": float(per_example.mean()),
                  "train/loss_uncond": float(uncond_loss)},
             )
-        student = self.predict_noise(batch)
+        if self.rollout_steps and self.rollout_checkpoint:
+            # Recompute this first call in the backward too: otherwise its full activation graph
+            # stays alive under the k - 1 rollout forwards, and the peak is two forwards' worth.
+            student = torch.utils.checkpoint.checkpoint(self.predict_noise, batch,
+                                                        use_reentrant=False)
+        else:
+            student = self.predict_noise(batch)
         target = self.target_noise(batch)
         assert student.shape == target.shape, (student.shape, target.shape)
         per_example = ((student.float() - target.float()) ** 2).flatten(1).mean(dim=1)
         inversion = per_example.mean()
+        if self.rollout_steps:
+            per_step = self.rollout_per_example(batch, student).mean(dim=0)  # [k]
+            return (
+                per_step.mean(),
+                per_example,
+                {"train/loss_inv": float(inversion), "train/loss_rollout": float(per_step.mean()),
+                 **{f"train/rollout_m{m + 1}": float(v) for m, v in enumerate(per_step)}},
+            )
         if not self.cycle_enabled:
             return inversion, per_example, {}
 
@@ -461,12 +542,22 @@ def build_loaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader | None, set[i
     check_dataset_convention(cfg.data_root, float(cfg.get("guidance_scale", 1.0)))
     train_ids, val_ids = split_sample_ids(cfg.data_root, float(cfg.val_fraction), int(cfg.seed))
     load_uncond = float(cfg.get("guidance_scale", 1.0)) != 1.0
+    rollout = cfg.get("rollout", {}) or {}
+    rollout_steps = int(rollout.get("steps", 0)) if rollout.get("enabled", False) else 0
+    if rollout_steps:
+        # The rollout walks a stored chain; forward-noised real-audio pairs have no chain (each
+        # level is an independent draw), so their "noisier states" would be unrelated latents.
+        sources = {json.loads(p.read_text()).get("states_source", "trajectory")
+                   for p in sorted(Path(cfg.data_root).glob("sample_*/meta.json"))}
+        if sources != {"trajectory"}:
+            raise ValueError(f"rollout needs trajectory datasets only, found states {sources}")
     train_dataset = AudioLDM2TrajectoryDataset(
         cfg.data_root,
         sample_ids=train_ids,
         conditioning_keys=STABLE_AUDIO_CONDITIONING_KEYS,
         timestep_dtype=torch.float32,
         load_uncond=load_uncond,
+        noisier_states=rollout_steps,
     )
     logger.info("train: {:,} transitions from {} trajectories", len(train_dataset), len(train_ids))
     if cfg.train_max_timestep:
@@ -480,7 +571,9 @@ def build_loaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader | None, set[i
         train_dataset = Subset(train_dataset, keep)
 
     cycle_steps = int(cfg.get("cycle", {}).get("steps", 1))
-    if cfg.get("cycle", {}).get("enabled", False) and cycle_steps > 1:
+    if rollout_steps:
+        cycle_steps = rollout_steps  # the same room requirement: k stored states above the input
+    if (cfg.get("cycle", {}).get("enabled", False) or rollout_steps) and cycle_steps > 1:
         # Validation is deliberately left unfiltered: it scores the inversion loss alone, so
         # keeping the same transitions across every arm makes val/loss comparable.
         base = train_dataset.dataset if isinstance(train_dataset, Subset) else train_dataset
@@ -568,6 +661,13 @@ def main(cfg: DictConfig) -> None:
         )
 
     trainer = StableAudioInversionTrainer(teacher, cfg, tracker)
+    if cfg.get("init_adapter"):
+        # Fine-tune from a trained adapter: its weights, but a fresh optimizer, schedule and step.
+        state = torch.load(str(cfg.init_adapter), map_location="cpu", weights_only=True)
+        set_peft_model_state_dict(trainer.unet, state, adapter_name=str(cfg.adapter_name))
+        if trainer.ema is not None:
+            trainer.ema = LoRAEMA(trainer.lora_named_parameters, float(cfg.ema_decay))
+        logger.info("Initialised the adapter from {} ({} tensors)", cfg.init_adapter, len(state))
     initial_step = 0
     if cfg.resume_from:
         initial_step = trainer.load_training_state(cfg.resume_from)

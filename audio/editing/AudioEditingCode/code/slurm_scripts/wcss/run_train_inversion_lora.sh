@@ -184,6 +184,17 @@ CONFIGS=(
   # while every target was computed at the clip's 10 s: a 550x LoRA-off loss that was all
   # conditioning (notes, 2026-10-01). Same dataset, objective and schedule; Stable Audio only.
   "attn|8|4|5e-5|realfndur_r8_a4_lr5e-5|data_root=\${oc.env:LORAINV_DATA_ROOT}/stable_audio_real_pairs_fp32 max_train_steps=3000 save_every_steps=500 eval_every_steps=500"
+  # 40-41: multi-step rollout (Stable Audio only). Fine-tunes the one-step adapter
+  # saocos_r8_a4_lr5e-5 @4000 on the same trajectories: k inversion steps from each stored
+  # latent with the adapter on, full backprop (activation checkpointing per step), every stored
+  # noisier state matched in data-prediction units (m = 1 is the one-step loss). The first
+  # objective that trains against compounding error; the cycle variants never did. val/loss
+  # stays the one-step loss, comparable with every other run. Gate: sao_rollout_recon_configs.sh.
+  # Measured on an A5000 at batch 4: 20 GB peak for k=4 and k=8 (every step recomputed in the
+  # backward), 13 s/it and 24 s/it. Batch 8 x accum 2 (effective 16) fits an H100 and keeps
+  # 1000 steps near 6 h (k=4) and 12 h (k=8), inside the 24 h walltime.
+  "attn|8|4|5e-5|rollout4_r8_a4_lr5e-5|rollout.enabled=true rollout.steps=4 init_adapter=\${oc.env:LORAINV_CHECKPOINT_ROOT}/saocos_r8_a4_lr5e-5/checkpoint_step_4000.pt max_train_steps=1000 save_every_steps=250 eval_every_steps=250 batch_size=8 gradient_accumulation_steps=2"
+  "attn|8|4|5e-5|rollout8_r8_a4_lr5e-5|rollout.enabled=true rollout.steps=8 init_adapter=\${oc.env:LORAINV_CHECKPOINT_ROOT}/saocos_r8_a4_lr5e-5/checkpoint_step_4000.pt max_train_steps=1000 save_every_steps=250 eval_every_steps=250 batch_size=8 gradient_accumulation_steps=2"
 )
 
 # Fail before the 12 GB model load rather than after it: wandb only reports a bad credential

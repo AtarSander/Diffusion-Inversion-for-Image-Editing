@@ -29,6 +29,7 @@ class AudioLDM2TrajectoryDataset(Dataset):
         conditioning_keys: tuple[str, ...] = CONDITIONING_KEYS,
         timestep_dtype: torch.dtype = torch.long,
         load_uncond: bool = False,
+        noisier_states: int = 0,
     ):
         """Index the dataset without loading any latents.
 
@@ -45,12 +46,16 @@ class AudioLDM2TrajectoryDataset(Dataset):
             load_uncond: Also yield the cached unconditional epsilon, which the pair-branch loss
                 needs to form the CFG combination. Required for sets generated at guidance != 1,
                 where the conditional branch alone does not describe the step that was taken.
+            noisier_states: Also yield the k stored states above each transition's input
+                (`x_noisier`, nearest first), which the rollout loss compares a k-step inversion
+                against. Every transition must have k stored states above it.
         """
         self.root_dir = Path(root_dir)
         self.mmap = mmap
         self.conditioning_keys = conditioning_keys
         self.timestep_dtype = timestep_dtype
         self.load_uncond = load_uncond
+        self.noisier_states = int(noisier_states)
         self.samples: list[dict[str, Any]] = []
         self.cumulative_lengths: list[int] = []
 
@@ -147,6 +152,15 @@ class AudioLDM2TrajectoryDataset(Dataset):
         }
         if sample["duration_s"] is not None:
             item["duration_s"] = torch.tensor(float(sample["duration_s"]), dtype=torch.float32)
+        if self.noisier_states:
+            # The k stored states a k-step inversion from x_clean must reach, nearest first:
+            # row m - 1 is trajectory[step_idx + 1 - m].
+            k = self.noisier_states
+            assert step_idx + 1 - k >= 0, (
+                f"transition {step_idx} has fewer than {k} stored states above it; filter with "
+                "transitions_with_room_below"
+            )
+            item["x_noisier"] = trajectory[step_idx + 1 - k: step_idx + 1].flip(0).clone()
         if sample["uncond_eps_path"] is not None:
             uncond = self._load(sample["uncond_eps_path"])[step_idx].clone()
             assert uncond.shape == eps.shape, (uncond.shape, eps.shape)
@@ -305,6 +319,8 @@ def collate_stable_audio_batch(items: list[dict[str, Any]]) -> dict[str, Any]:
         assert batch["uncond_eps"].shape == batch["target_eps"].shape
     if "duration_s" in items[0]:
         batch["duration_s"] = torch.stack([item["duration_s"] for item in items])
+    if "x_noisier" in items[0]:
+        batch["x_noisier"] = torch.stack([item["x_noisier"] for item in items])
     assert batch["x_clean"].shape == batch["target_eps"].shape
     assert batch["timestep"].shape[0] == len(items)
     return batch
