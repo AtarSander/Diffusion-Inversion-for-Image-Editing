@@ -202,4 +202,11 @@ if [ -n "$SCRATCH" ]; then
   find "$METRICS_DIR" -maxdepth 1 \( -name '*.csv' -o -name '*.json' \) -exec cp {} "$RUN_PARENT/" \;
   echo "copied $written metric files back to $RUN_PARENT"
 fi
+
+# A scored loose run is archived: its wavs become one tar and its 32 kHz resample cache, which
+# only this scoring pass reads, is dropped. Re-scoring unpacks the tar to scratch (see above).
+if [ -z "$SCRATCH" ] && [ "$(basename "$RUN_DIR")" = audios ]; then
+  python -m editing.archive_run pack --run_dir "$RUN_PARENT" --remove || exit 6
+  rm -rf "$RUN_PARENT/audios_32k"
+fi
 echo "done: $RUN_DIR"
