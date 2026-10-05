@@ -56,6 +56,23 @@ def _branch_pair_states(
     return conditional, unconditional
 
 
+def single_lora_state(state: Any, checkpoint_path: str | Path) -> dict[str, torch.Tensor]:
+    """Extract a single-adapter state and reject branch-pair checkpoints."""
+    resolved_path = Path(checkpoint_path).expanduser().resolve()
+    if not isinstance(state, dict):
+        raise ValueError(f"LoRA checkpoint is not a state dictionary: {resolved_path}")
+    if state.get("branch_pair") is True or isinstance(state.get("adapters"), dict):
+        raise ValueError(
+            "Branch-pair LoRA checkpoint passed to the single-adapter loader: "
+            f"{resolved_path}. Select lora.mode=branch_pair."
+        )
+    if "lora_state_dict" in state:
+        state = state["lora_state_dict"]
+    if not isinstance(state, dict):
+        raise ValueError(f"Invalid single-adapter LoRA state: {resolved_path}")
+    return state
+
+
 def set_active_lora_adapter(unet, adapter_name: str, scale: float = 1.0) -> None:
     """Activate exactly one injected adapter for the next UNet forward."""
     if hasattr(unet, "set_adapters"):

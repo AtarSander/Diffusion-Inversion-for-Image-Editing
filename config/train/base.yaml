@@ -3,6 +3,7 @@
 learning_rate: 5e-5
 weight_decay: 0.0
 gradient_checkpointing: true
+offload_frozen_components: true
 max_grad_norm: 1.0
 save_training_state: true
 

@@ -102,8 +102,8 @@ class Preprocess(nn.Module):
             state_dict = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
         except TypeError:
             state_dict = torch.load(checkpoint_path, map_location="cpu")
-        if isinstance(state_dict, dict) and "lora_state_dict" in state_dict:
-            state_dict = state_dict["lora_state_dict"]
+        from utils.lora_adapters import single_lora_state
+        state_dict = single_lora_state(state_dict, checkpoint_path)
         set_peft_model_state_dict(self.unet, state_dict, adapter_name=adapter_name)
 
         if scale is not None and hasattr(self.unet, "set_adapters"):
@@ -546,13 +546,15 @@ def edit_image_ddim_PnP(
     prompt_src,
     prompt_tar,
     guidance_scale=7.5,
+    inversion_guidance_scale=1.0,
     image_shape=[512,512]
 ):
     torch.cuda.empty_cache()
     image_gt = load_512(image_path)
     _, rgb_reconstruction, latent_reconstruction = model.extract_latents(data_path=image_path,
                                          num_steps=NUM_DDIM_STEPS,
-                                         inversion_prompt=prompt_src)
+                                         inversion_prompt=prompt_src,
+                                         inversion_guidance_scale=inversion_guidance_scale)
     
     edited_image=pnp.run_pnp(image_path,latent_reconstruction,prompt_tar,guidance_scale)
     

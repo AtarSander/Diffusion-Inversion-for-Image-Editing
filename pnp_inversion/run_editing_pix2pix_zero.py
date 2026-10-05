@@ -71,8 +71,8 @@ def load_lora_inversion(checkpoint_path, rank=16, lora_alpha=8, lora_dropout=0.0
         state_dict = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     except TypeError:
         state_dict = torch.load(checkpoint_path, map_location="cpu")
-    if isinstance(state_dict, dict) and "lora_state_dict" in state_dict:
-        state_dict = state_dict["lora_state_dict"]
+    from utils.lora_adapters import single_lora_state
+    state_dict = single_lora_state(state_dict, checkpoint_path)
     set_peft_model_state_dict(pipe.unet, state_dict, adapter_name=adapter_name)
     if scale is not None and hasattr(pipe.unet, "set_adapters"):
         pipe.unet.set_adapters([adapter_name], weights=[float(scale)])
@@ -140,13 +140,14 @@ def edit_image_ddim_pix2pix_zero(image_path,
                 prompt_src,
                 prompt_tar,
                 guidance_scale=7.5,
+                inversion_guidance_scale=1.0,
                 image_size=[512,512]):
     image_gt = Image.open(image_path).resize(image_size, Image.Resampling.LANCZOS)
     # generate the caption
     prompt_str = generate_caption(image_gt)
     latent_list, x_inv_image, x_dec_img = pipe(
             prompt_str, 
-            guidance_scale=1,
+            guidance_scale=inversion_guidance_scale,
             num_inversion_steps=NUM_DDIM_STEPS,
             img=image_gt
         )
@@ -326,6 +327,7 @@ if __name__ == "__main__":
     parser.add_argument('--output_path', type=str, default="output") # the editing category that needed to run
     parser.add_argument('--edit_category_list', nargs = '+', type=str, default=["0","1","2","3","4","5","6","7","8","9"]) # the editing category that needed to run
     parser.add_argument('--edit_method_list', nargs = '+', type=str, default=["ddim+pix2pix-zero","directinversion+pix2pix-zero"]) # the editing methods that needed to run
+    parser.add_argument('--model_key', type=str, default=None)
     parser.add_argument('--lora_checkpoint', type=str, default=None)
     parser.add_argument('--lora_rank', type=int, default=16)
     parser.add_argument('--lora_alpha', type=int, default=8)
@@ -351,7 +353,7 @@ if __name__ == "__main__":
         raise ValueError(
             "Branch-pair LoRAs are supported only by lora+directinversion+pix2pix-zero."
         )
-    model_key = "runwayml/stable-diffusion-v1-5" if use_lora else "CompVis/stable-diffusion-v1-4"
+    model_key = args.model_key or ("runwayml/stable-diffusion-v1-5" if use_lora else "CompVis/stable-diffusion-v1-4")
     pipe, edit_pipe = load_pipelines(model_key)
     if use_lora:
         load_method = (

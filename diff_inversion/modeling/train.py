@@ -6,6 +6,7 @@ from typing import Any
 import hydra
 import torch
 import torch.nn.functional as F
+import torch.utils.checkpoint
 import wandb
 from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
 from diffusers.optimization import get_scheduler
@@ -29,20 +30,15 @@ CFG_SINGLE_PASS_MODES = frozenset({"cfg_single_pass"})
 CFG_PAIR_MODES = frozenset({"cfg_pair"})
 SHARED_BRANCH_LOSS_MODES = frozenset({"branch_pair_shared"})
 PAIR_BRANCH_LOSS_MODES = frozenset({"branch_pair"})
+CYCLE_LOSS_MODES = frozenset({"conditional_cycle"})
 PAIR_ADAPTER_MODES = CFG_PAIR_MODES | PAIR_BRANCH_LOSS_MODES
 CFG_REQUIRED_MODES = (
-    CFG_LOSS_MODES
-    | CFG_SINGLE_PASS_MODES
-    | SHARED_BRANCH_LOSS_MODES
-    | PAIR_BRANCH_LOSS_MODES
+    CFG_LOSS_MODES | CFG_SINGLE_PASS_MODES | SHARED_BRANCH_LOSS_MODES | PAIR_BRANCH_LOSS_MODES
 )
-TRAINING_TARGET_MODES = CFG_REQUIRED_MODES | {"conditional", "unconditional"}
+TRAINING_TARGET_MODES = CFG_REQUIRED_MODES | CYCLE_LOSS_MODES | {"conditional", "unconditional"}
 CFG_BRANCH_TARGET_MODES = CFG_REQUIRED_MODES | {"unconditional"}
 NEGATIVE_CONDITIONING_MODES = (
-    CFG_LOSS_MODES
-    | SHARED_BRANCH_LOSS_MODES
-    | PAIR_BRANCH_LOSS_MODES
-    | {"unconditional"}
+    CFG_LOSS_MODES | SHARED_BRANCH_LOSS_MODES | PAIR_BRANCH_LOSS_MODES | {"unconditional"}
 )
 
 
@@ -66,9 +62,11 @@ class SDXLInversionTrainer:
         max_val_batches: int | None,
         max_grad_norm: float | None = None,
         gradient_checkpointing: bool = False,
+        offload_frozen_components: bool = False,
         validation_preview_config: DictConfig | None = None,
         training_target_mode: str = "conditional",
         training_guidance_scale: float | None = None,
+        recon_lambda: float | None = None,
     ):
         self.pipe = pipe
         self.lora_config = lora_config
@@ -88,6 +86,13 @@ class SDXLInversionTrainer:
         self.height = int(height)
         self.width = int(width)
         self.training_target_mode = self._normalize_training_target_mode(training_target_mode)
+        self._base_forward_active = False
+        self.recon_lambda = None if recon_lambda is None else float(recon_lambda)
+        if self.training_target_mode in CYCLE_LOSS_MODES:
+            if self.recon_lambda is None:
+                raise ValueError("conditional_cycle training requires recon_lambda.")
+            if self.recon_lambda < 0.0:
+                raise ValueError(f"recon_lambda must be non-negative, got {self.recon_lambda}.")
         self.training_guidance_scale = (
             None if training_guidance_scale is None else float(training_guidance_scale)
         )
@@ -102,6 +107,13 @@ class SDXLInversionTrainer:
                 f"or null per-sample guidance; got {self.training_guidance_scale}."
             )
         self._freeze_pipeline_components()
+        if offload_frozen_components and validation_preview_config is not None:
+            raise ValueError(
+                "offload_frozen_components=true is incompatible with validation preview; "
+                "disable the preview or keep the pipeline components on GPU."
+            )
+        if offload_frozen_components:
+            self._offload_frozen_pipeline_components()
         self._inject_lora_adapters(lora_config)
         self._freeze_non_lora_parameters()
         self._cast_trainable_parameters(torch.float32)
@@ -111,7 +123,9 @@ class SDXLInversionTrainer:
             self._set_active_adapter(SINGLE_ADAPTER_NAME)
 
         if gradient_checkpointing and hasattr(self.model, "enable_gradient_checkpointing"):
-            self.model.enable_gradient_checkpointing()
+            self.model.enable_gradient_checkpointing(
+                gradient_checkpointing_func=self._gradient_checkpointing_func
+            )
 
         self.trainable_parameters = [p for p in self.model.parameters() if p.requires_grad]
         if not self.trainable_parameters:
@@ -132,6 +146,8 @@ class SDXLInversionTrainer:
             self.training_target_mode,
             self.training_guidance_scale,
         )
+        if self.training_target_mode in CYCLE_LOSS_MODES:
+            logger.info("Cycle reconstruction weight: {}", self.recon_lambda)
 
     def train(
         self,
@@ -280,6 +296,16 @@ class SDXLInversionTrainer:
                 device=self.model.device,
             )
 
+        if self.training_target_mode in CYCLE_LOSS_MODES:
+            return self._forward_loss_regularized(
+                x_clean=x_clean,
+                scheduler_timesteps=scheduler_timesteps,
+                prompt_embeds=prompt_embeds,
+                pooled_prompt_embeds=pooled_prompt_embeds,
+                add_time_ids=add_time_ids,
+                target_eps=target_eps,
+            )
+
         if self.training_target_mode in CFG_LOSS_MODES:
             assert target_eps_uncond is not None
             assert negative_prompt_embeds is not None
@@ -373,16 +399,189 @@ class SDXLInversionTrainer:
         x_clean: torch.Tensor,
         scheduler_timesteps: torch.Tensor,
         prompt_embeds: torch.Tensor,
-        negative_prompt_embeds: torch.Tensor,
         pooled_prompt_embeds: torch.Tensor | None,
-        negative_pooled_prompt_embeds: torch.Tensor | None,
         add_time_ids: torch.Tensor | None,
         target_eps: torch.Tensor,
-        target_eps_uncond: torch.Tensor,
-        guidance_scale: torch.Tensor,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        student_eps = self.predict_noise(
+            x_clean,
+            scheduler_timesteps,
+            prompt_embeds,
+            pooled_prompt_embeds,
+            add_time_ids,
+        )
+        loss_inversion = F.mse_loss(student_eps.float(), target_eps.float())
+        x_noisy_pred = self._ddim_inverse_step(
+            x_clean=x_clean,
+            eps=student_eps,
+            timesteps=scheduler_timesteps,
+        )
+        base_eps = self._predict_base_noise(
+            x_noisy_pred,
+            scheduler_timesteps,
+            prompt_embeds,
+            pooled_prompt_embeds,
+            add_time_ids,
+        )
+        x_recon = self._ddim_generation_step(
+            x_noisy=x_noisy_pred,
+            eps=base_eps,
+            timesteps=scheduler_timesteps,
+        )
+        loss_cycle = F.mse_loss(x_recon.float(), x_clean.float())
+        loss = loss_inversion + self.recon_lambda * loss_cycle
 
-    ):
-        pass
+        return loss, {
+            "loss": loss,
+            "loss_inversion": loss_inversion,
+            "loss_cycle": loss_cycle,
+        }
+
+    def _predict_base_noise(
+        self,
+        latents: torch.Tensor,
+        scheduler_timesteps: torch.Tensor,
+        prompt_embeds: torch.Tensor,
+        pooled_prompt_embeds: torch.Tensor | None,
+        add_time_ids: torch.Tensor | None,
+    ) -> torch.Tensor:
+        """Run frozen theta without LoRA while preserving gradients to latents."""
+        adapters_disabled = False
+        try:
+            self._base_forward_active = True
+            self._set_lora_enabled(False)
+            adapters_disabled = True
+            return self.predict_noise(
+                latents,
+                scheduler_timesteps,
+                prompt_embeds,
+                pooled_prompt_embeds,
+                add_time_ids,
+            )
+        finally:
+            self._base_forward_active = False
+            if adapters_disabled:
+                self._set_lora_enabled(True)
+
+    def _gradient_checkpointing_func(
+        self,
+        module: torch.nn.Module,
+        *args: torch.Tensor,
+    ) -> torch.Tensor:
+        """Checkpoint UNet blocks while preserving the adapter state of each forward pass.
+
+        The cycle loss runs the same UNet once with LoRA and once as the frozen base model.
+        Diffusers normally recomputes checkpointed blocks during backward using the model's
+        *current* adapter state. The base pass has returned by then, so blindly using the
+        default checkpoint function would incorrectly recompute it with LoRA enabled.
+        Capture which pass created each checkpoint and restore that state around recomputation.
+        """
+        checkpoint_without_lora = self._base_forward_active
+
+        if not checkpoint_without_lora:
+            return torch.utils.checkpoint.checkpoint(
+                module.__call__,
+                *args,
+                use_reentrant=False,
+            )
+
+        def base_module_forward(*module_args: torch.Tensor) -> torch.Tensor:
+            # During the original base forward, adapters are already disabled and must remain
+            # disabled for the following blocks. During backward recomputation, temporarily
+            # disable them for this block and then restore the student state.
+            restore_student_state = not self._base_forward_active
+            if restore_student_state:
+                self._set_lora_enabled(False)
+            try:
+                return module(*module_args)
+            finally:
+                if restore_student_state:
+                    self._set_lora_enabled(True)
+
+        return torch.utils.checkpoint.checkpoint(
+            base_module_forward,
+            *args,
+            use_reentrant=False,
+        )
+
+    def _ddim_alpha_pair(
+        self,
+        timesteps: torch.Tensor,
+        reference: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return alpha at the noisy and adjacent cleaner side of each transition."""
+        scheduler = self.pipe.scheduler
+        if str(scheduler.config.prediction_type) != "epsilon":
+            raise ValueError("Cycle loss currently requires scheduler prediction_type='epsilon'.")
+        if bool(getattr(scheduler.config, "thresholding", False)) or bool(
+            getattr(scheduler.config, "clip_sample", False)
+        ):
+            raise ValueError("Cycle loss requires DDIM thresholding=false and clip_sample=false.")
+
+        timesteps = timesteps.flatten().to(device=reference.device, dtype=torch.long)
+        if timesteps.numel() != reference.shape[0]:
+            raise ValueError(
+                "Cycle timestep batch does not match latent batch: "
+                f"{timesteps.numel()} versus {reference.shape[0]}."
+            )
+        schedule = scheduler.timesteps.to(device=reference.device, dtype=torch.long)
+        matches = timesteps[:, None].eq(schedule[None, :])
+        present = matches.any(dim=1)
+        if not bool(present.all().item()):
+            missing = timesteps[~present].detach().cpu().tolist()
+            raise ValueError(f"Cycle timesteps are absent from the DDIM schedule: {missing}")
+
+        positions = matches.to(torch.int64).argmax(dim=1)
+        cleaner_positions = positions + 1
+        has_cleaner_timestep = cleaner_positions < schedule.numel()
+        cleaner_timesteps = schedule[cleaner_positions.clamp(max=schedule.numel() - 1)]
+
+        alphas = scheduler.alphas_cumprod.to(device=reference.device, dtype=reference.dtype)
+        alpha_noisy = alphas[timesteps]
+        alpha_clean = alphas[cleaner_timesteps]
+        final_alpha = torch.as_tensor(
+            scheduler.final_alpha_cumprod,
+            device=reference.device,
+            dtype=reference.dtype,
+        )
+        alpha_clean = torch.where(
+            has_cleaner_timestep,
+            alpha_clean,
+            final_alpha.expand_as(alpha_clean),
+        )
+
+        broadcast_shape = (-1,) + (1,) * (reference.ndim - 1)
+        return alpha_noisy.reshape(broadcast_shape), alpha_clean.reshape(broadcast_shape)
+
+    def _ddim_inverse_step(
+        self,
+        x_clean: torch.Tensor,
+        eps: torch.Tensor,
+        timesteps: torch.Tensor,
+    ) -> torch.Tensor:
+        """Map the cleaner latent to the adjacent noisier latent."""
+        alpha_noisy, alpha_clean = self._ddim_alpha_pair(timesteps, x_clean)
+        mu_noisy = alpha_noisy.sqrt()
+        sigma_noisy = (1.0 - alpha_noisy).sqrt()
+        mu_clean = alpha_clean.sqrt()
+        sigma_clean = (1.0 - alpha_clean).sqrt()
+        predicted_x0 = (x_clean - sigma_clean * eps) / mu_clean
+        return mu_noisy * predicted_x0 + sigma_noisy * eps
+
+    def _ddim_generation_step(
+        self,
+        x_noisy: torch.Tensor,
+        eps: torch.Tensor,
+        timesteps: torch.Tensor,
+    ) -> torch.Tensor:
+        """Map the noisier latent to the adjacent cleaner latent."""
+        alpha_noisy, alpha_clean = self._ddim_alpha_pair(timesteps, x_noisy)
+        mu_noisy = alpha_noisy.sqrt()
+        sigma_noisy = (1.0 - alpha_noisy).sqrt()
+        mu_clean = alpha_clean.sqrt()
+        sigma_clean = (1.0 - alpha_clean).sqrt()
+        predicted_x0 = (x_noisy - sigma_noisy * eps) / mu_noisy
+        return mu_clean * predicted_x0 + sigma_clean * eps
 
     def _forward_unconditional_loss(
         self,
@@ -907,6 +1106,25 @@ class SDXLInversionTrainer:
                 component.requires_grad_(False)
                 component.eval()
 
+    def _offload_frozen_pipeline_components(self) -> None:
+        """Keep only the UNet on GPU when training from cached trajectory tensors."""
+        offloaded: list[str] = []
+        for name in (
+            "text_encoder",
+            "text_encoder_2",
+            "vae",
+            "safety_checker",
+            "image_encoder",
+        ):
+            component = getattr(self.pipe, name, None)
+            if component is None or component is self.model:
+                continue
+            component.to("cpu")
+            offloaded.append(name)
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        logger.info("Offloaded unused frozen pipeline components to CPU: {}", offloaded)
+
     def _freeze_non_lora_parameters(self) -> None:
         for name, parameter in self.model.named_parameters():
             parameter.requires_grad_("lora" in name.lower())
@@ -1072,8 +1290,8 @@ class SDXLInversionTrainer:
         if mode not in TRAINING_TARGET_MODES:
             raise ValueError(
                 "training_target.mode must be 'conditional', 'unconditional', "
-                "'cfg', 'cfg_single_pass', 'cfg_pair', 'branch_pair_shared', or "
-                f"'branch_pair', got {value!r}."
+                "'conditional_cycle', 'cfg', 'cfg_single_pass', 'cfg_pair', "
+                f"'branch_pair_shared', or 'branch_pair', got {value!r}."
             )
         return mode
 
@@ -1095,6 +1313,19 @@ class SDXLInversionTrainer:
         # PEFT marks only the active adapter trainable. Branch-pair training needs
         # gradients for both adapter graphs after two forward passes.
         self._set_lora_parameters_trainable()
+
+    def _set_lora_enabled(self, enabled: bool) -> None:
+        toggled = False
+        for module in self.model.modules():
+            if module is self.model:
+                continue
+            if hasattr(module, "enable_adapters"):
+                module.enable_adapters(bool(enabled))
+                toggled = True
+        if not toggled:
+            raise AttributeError("No injected LoRA adapter layers expose enable_adapters().")
+        if enabled:
+            self._set_lora_parameters_trainable()
 
     def _scheduler_timesteps(self, timestep: torch.Tensor, batch_size: int) -> torch.Tensor:
         timestep = timestep.flatten()
@@ -1247,7 +1478,10 @@ def build_train_sampler(
     logger.info(
         "Final-tail sampling: {} tail transitions, {} non-tail transitions; "
         "tail fraction={} target draw fraction={}",
-        tail_count, other_count, final_step_fraction, target_draw_fraction,
+        tail_count,
+        other_count,
+        final_step_fraction,
+        target_draw_fraction,
     )
     generator = torch.Generator().manual_seed(int(sampling_cfg.get("seed", 42)))
     return WeightedRandomSampler(
@@ -1287,6 +1521,8 @@ def main(cfg: DictConfig) -> None:
     training_guidance_scale = (
         None if training_guidance_scale is None else float(training_guidance_scale)
     )
+    recon_lambda = OmegaConf.select(cfg, "training_target.recon_lambda", default=None)
+    recon_lambda = None if recon_lambda is None else float(recon_lambda)
     run = wandb.init(
         project=cfg.wandb.project,
         name=cfg.run_name,
@@ -1314,11 +1550,15 @@ def main(cfg: DictConfig) -> None:
         max_val_batches=cfg.max_val_batches,
         max_grad_norm=cfg.max_grad_norm,
         gradient_checkpointing=cfg.gradient_checkpointing,
+        offload_frozen_components=cfg.offload_frozen_components,
         validation_preview_config=(
-            cfg if bool(OmegaConf.select(cfg, "validation_preview.enabled", default=False)) else None
+            cfg
+            if bool(OmegaConf.select(cfg, "validation_preview.enabled", default=False))
+            else None
         ),
         training_target_mode=training_target_mode,
         training_guidance_scale=training_guidance_scale,
+        recon_lambda=recon_lambda,
     )
 
     initial_global_step = 0
