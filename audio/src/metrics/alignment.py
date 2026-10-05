@@ -21,6 +21,36 @@ from tqdm import tqdm
 from transformers import AutoModel, Wav2Vec2FeatureExtractor, Wav2Vec2Processor
 
 
+def mel_stft(sampling_rate: int):
+    """The audioldm_eval STFT the paired mel metrics are computed with, per sampling rate."""
+    if sampling_rate == 16000:
+        return Audio.TacotronSTFT(512, 160, 512, 64, 16000, 50, 8000)
+    if sampling_rate == 32000:
+        return Audio.TacotronSTFT(1024, 320, 1024, 64, 32000, 50, 14000)
+    raise ValueError("We only support the evaluation on 16kHz and 32kHz sampling rate.")
+
+
+def mel_distances(mel_gen: np.ndarray, mel_target: np.ndarray) -> dict[str, float]:
+    """PSNR, SSIM and MAE between two mels from `MelPairedDataset`, as the benchmark scores them.
+
+    The mels are already clipped to [0, 1], so PSNR takes scikit-image's float default of 1.0 as
+    its peak, while SSIM uses the pair's empirical range.
+
+    Args:
+        mel_gen: Generated mel `[n_mels, frames]`.
+        mel_target: Reference mel, same shape.
+
+    Returns:
+        `psnr`, `ssim` and `mae`.
+    """
+    data_range = max(np.max(mel_gen), np.max(mel_target)) - min(np.min(mel_gen), np.min(mel_target))
+    return {
+        "psnr": float(psnr(mel_gen, mel_target)),
+        "ssim": float(ssim(mel_gen, mel_target, data_range=data_range)),
+        "mae": float(np.mean(np.abs(mel_gen - mel_target))),
+    }
+
+
 class MusicAlignmentEval:
     def __init__(self, sampling_rate, device, backbone="mert") -> None:
 
@@ -71,12 +101,7 @@ class MusicAlignmentEval:
         else:
             raise ValueError("Backbone not supported")
 
-        if self.sampling_rate == 16000:
-            self._stft = Audio.TacotronSTFT(512, 160, 512, 64, 16000, 50, 8000)
-        elif self.sampling_rate == 32000:
-            self._stft = Audio.TacotronSTFT(1024, 320, 1024, 64, 32000, 50, 14000)
-        else:
-            raise ValueError("We only support the evaluation on 16kHz and 32kHz sampling rate.")
+        self._stft = mel_stft(self.sampling_rate)
 
         self.mel_model.eval()
         self.mel_model.to(self.device)
@@ -178,13 +203,13 @@ class MusicAlignmentEval:
         for mel_gen, mel_target, filename, _ in tqdm(pairedloader):
             mel_gen = mel_gen.cpu().numpy()[0]
             mel_target = mel_target.cpu().numpy()[0]
-            psnrval = psnr(mel_gen, mel_target)
+            scores = mel_distances(mel_gen, mel_target)
+            psnrval = scores["psnr"]
             if np.isinf(psnrval):
                 print("Infinite value encountered in psnr %s " % filename)
                 continue
             psnr_avg.append(psnrval)
-            data_range = max(np.max(mel_gen), np.max(mel_target)) - min(np.min(mel_gen), np.min(mel_target))
-            ssimval = ssim(mel_gen, mel_target, data_range=data_range)
+            ssimval = scores["ssim"]
             ssim_avg.append(ssimval)
             per_file[filename[0]] = {"psnr": float(psnrval), "ssim": float(ssimval)}
         return {

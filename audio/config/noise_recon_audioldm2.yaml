@@ -1,0 +1,42 @@
+# Noise-normality vs reconstruction benchmark on AudioLDM2 (src/inversion_lora/noise_recon_benchmark.py).
+# N = num_prompts x seeds_per_prompt clips generated from known noise, each fully inverted and
+# reconstructed by DDIM, DDIM + LoRA (inversion only) and DDPM; plus a fresh-noise baseline.
+# Shard:  uv run --python .venv/bin/python src/inversion_lora/noise_recon_benchmark.py device=cuda:0 shard_id=3
+# Smoke:  ... device=cuda:0 limit=2 num_inference_steps=20 run_dir=outputs/noise_recon/smoke/audioldm2
+
+model: audioldm2
+model_id: cvssp/audioldm2-large
+device: cpu # set to cuda:N explicitly; never auto-grab a shared GPU
+
+num_inference_steps: 100 # inversion and reconstruction steps, every arm
+guidance_scale: 1.0 # generation, inversion and reconstruction alike
+duration_s: 10.24 # AudioLDM2's native window, which its LoRA trajectories used
+
+# The trajectory-trained adapter of the paper's AudioLDM2 matched-NFE front.
+lora_path: ${oc.env:LORAINV_CHECKPOINT_ROOT}/attn_r8_a4_lr5e-5/checkpoint_step_4000.pt
+
+# Captions: MedleyMD source + target captions, disjoint from the MusicCaps LoRA training prompts.
+prompts_csv: editing/AudioEditingCode/MedleyMDPrompts/captions_gpt5.csv
+num_prompts: 256
+seeds_per_prompt: 4
+prompt_seed: 0
+
+# Disjoint seed ranges (sample i uses base + i), also disjoint from training (42..5562), the
+# generated eval inputs (314159+) and the real-audio pairs (500000+).
+seed_gen: 7000000
+seed_gaussian: 8000000
+seed_ddpm: 9000000
+
+batch_size: 16 # deterministic arms; DDPM runs the editing code one clip at a time
+num_shards: 16
+shard_id: 0
+limit: null # first `limit` samples of the shard, for smoke runs
+
+# Heavy outputs (wavs, latents); git-ignored. The scorer writes the report under output/.
+run_dir: outputs/noise_recon/audioldm2/main
+overwrite: false
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
