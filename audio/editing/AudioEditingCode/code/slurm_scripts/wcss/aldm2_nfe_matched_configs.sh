@@ -52,6 +52,10 @@ if [ "$LORA_MODE" = "ddim" ]; then
     ""
     "attn_r8_a4_lr5e-5/checkpoint_step_4000.pt"          # LoRA-Gen (trajectory-trained)
     "aldm2realfn_r8_a4_lr5e-5/checkpoint_step_3000.pt"   # LoRA-Real (forward-noise real audio)
+    # Multi-step rollout adapters, trained from scratch with both losses; step 4000 matches the
+    # Gen adapter's. Rows 75-99 (k=4) and 100-124 (k=8) at five depths x five guidances.
+    "aldm2roll4_r8_a4_lr5e-5/checkpoint_step_4000.pt"
+    "aldm2roll8_r8_a4_lr5e-5/checkpoint_step_4000.pt"
   )
 else
   LORA_CHECKPOINTS=("")

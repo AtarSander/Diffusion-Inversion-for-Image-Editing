@@ -195,6 +195,15 @@ CONFIGS=(
   # 1000 steps near 6 h (k=4) and 12 h (k=8), inside the 24 h walltime.
   "attn|8|4|5e-5|rollout4_r8_a4_lr5e-5|rollout.enabled=true rollout.steps=4 init_adapter=\${oc.env:LORAINV_CHECKPOINT_ROOT}/saocos_r8_a4_lr5e-5/checkpoint_step_4000.pt max_train_steps=1000 save_every_steps=250 eval_every_steps=250 batch_size=8 gradient_accumulation_steps=2"
   "attn|8|4|5e-5|rollout8_r8_a4_lr5e-5|rollout.enabled=true rollout.steps=8 init_adapter=\${oc.env:LORAINV_CHECKPOINT_ROOT}/saocos_r8_a4_lr5e-5/checkpoint_step_4000.pt max_train_steps=1000 save_every_steps=250 eval_every_steps=250 batch_size=8 gradient_accumulation_steps=2"
+  # 43-44: multi-step rollout for AUDIOLDM2 (default SCRIPT=train.py, NO RUN_PREFIX), trained from
+  # scratch with both losses: loss_inv + rollout.weight * mean_m(rollout_m), k DDIM inversion
+  # steps from each stored latent with the adapter on (full backprop, activation checkpointing per
+  # step), every stored noisier state matched in epsilon units (m = 1 is the one-step loss). Same
+  # data, preset, batch 32 and lr as attn_r8_a4_lr5e-5, whose step 4000 is the paper's Moonwalker,
+  # so step 4000 here is the matched comparison. The one-step run took 1.18 s/it on an H100; the
+  # per-step recompute makes k=4 ~5x that (~7 h for 4000 steps) and k=8 ~11x (~14 h).
+  "attn|8|4|5e-5|aldm2roll4_r8_a4_lr5e-5|rollout.enabled=true rollout.steps=4 rollout.weight=1.0 max_train_steps=4000 save_every_steps=1000 eval_every_steps=1000"
+  "attn|8|4|5e-5|aldm2roll8_r8_a4_lr5e-5|rollout.enabled=true rollout.steps=8 rollout.weight=1.0 max_train_steps=4000 save_every_steps=1000 eval_every_steps=1000"
 )
 
 # Fail before the 12 GB model load rather than after it: wandb only reports a bad credential

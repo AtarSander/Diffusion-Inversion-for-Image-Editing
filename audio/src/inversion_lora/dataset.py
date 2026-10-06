@@ -294,6 +294,8 @@ def collate_trajectory_batch(items: list[dict[str, Any]]) -> dict[str, Any]:
     }
     if "uncond_eps" in items[0]:
         batch["uncond_eps"] = torch.stack([item["uncond_eps"] for item in items])
+    if "x_noisier" in items[0]:
+        batch["x_noisier"] = torch.stack([item["x_noisier"] for item in items])
     assert batch["x_clean"].shape == batch["target_eps"].shape
     assert batch["timestep"].shape[0] == len(items)
     return batch

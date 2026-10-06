@@ -28,10 +28,13 @@ LORA = re.compile(r"^audioldm2_ddimlora_(?P<adapter>.+?)_checkpoint_step_\d+" + 
 
 # Which adapter directory maps to which arm; the trajectory twin is "Gen", forward-noise is "Real".
 ADAPTER_ARM = {"attn_r8_a4_lr5e-5": "DDIM Inv. + LoRA (Gen)",
-               "aldm2realfn_r8_a4_lr5e-5": "DDIM Inv. + LoRA (Real)"}
+               "aldm2realfn_r8_a4_lr5e-5": "DDIM Inv. + LoRA (Real)",
+               "aldm2roll4_r8_a4_lr5e-5": "DDIM Inv. + LoRA (Rollout k=4)",
+               "aldm2roll8_r8_a4_lr5e-5": "DDIM Inv. + LoRA (Rollout k=8)"}
 MODE_ARM = {"ddim": "DDIM Inv.", "ddpm": "DDPM Inv.", "sdedit": "SDEdit"}
 COLORS = {"DDIM Inv.": "#1f77b4", "DDIM Inv. + LoRA (Gen)": "#d62728",
-          "DDIM Inv. + LoRA (Real)": "#9467bd", "DDPM Inv.": "#2ca02c", "SDEdit": "#ff7f0e"}
+          "DDIM Inv. + LoRA (Real)": "#9467bd", "DDIM Inv. + LoRA (Rollout k=4)": "#8c564b",
+          "DDIM Inv. + LoRA (Rollout k=8)": "#e377c2", "DDPM Inv.": "#2ca02c", "SDEdit": "#ff7f0e"}
 METRICS = {"lpaps": "lpaps", "clap": "clap", "muq": "muqt_sim_p0"}
 PANELS = [("clap", "Alignment = CLAP"), ("muq", "Alignment = MuQ")]
 BASELINE = "DDIM Inv."

@@ -11,6 +11,7 @@ from typing import Any
 import hydra
 import torch
 import torch.nn.functional as F
+import torch.utils.checkpoint
 from dotenv import load_dotenv
 from loguru import logger
 from omegaconf import DictConfig, OmegaConf
@@ -31,6 +32,7 @@ from src.inversion_lora.dataset import (  # noqa: E402
     collate_trajectory_batch,
     split_sample_ids,
     transitions_below_timestep,
+    transitions_with_room_below,
 )
 from src.inversion_lora.generate_trajectories import latent_height  # noqa: E402
 from src.inversion_lora.noise_metrics import noise_report  # noqa: E402
@@ -174,6 +176,19 @@ class AudioLDM2InversionTrainer:
         self._band_sums = torch.zeros(len(self.band_labels), dtype=torch.float64)
         self._band_counts = torch.zeros(len(self.band_labels), dtype=torch.float64)
         self.eval_fixtures: dict[str, Any] | None = None
+        # Multi-step (rollout) loss: k DDIM inversion steps from each stored latent with the
+        # adapter on, each fed its own previous output, added to the one-step loss with `weight`.
+        rollout = cfg.get("rollout", {}) or {}
+        self.rollout_steps = int(rollout.get("steps", 0)) if rollout.get("enabled", False) else 0
+        self.rollout_weight = float(rollout.get("weight", 1.0))
+        self.rollout_checkpoint = bool(rollout.get("checkpoint", True))
+        if self.rollout_steps:
+            assert self.guidance_scale == 1.0, (
+                "the rollout inverts the unguided trajectory with one student call per step"
+            )
+            logger.info("rollout loss ON: {} inversion steps per example, weight {}, full "
+                        "backprop{}", self.rollout_steps, self.rollout_weight,
+                        ", activation checkpointing per step" if self.rollout_checkpoint else "")
 
         self._freeze_components()
         lora_cfg = OmegaConf.to_container(cfg.lora, resolve=True)
@@ -249,6 +264,108 @@ class AudioLDM2InversionTrainer:
                 component.requires_grad_(False)
                 component.eval()
 
+    def conditional_eps(
+        self, x: torch.Tensor, timestep: torch.Tensor, batch: dict[str, Any]
+    ) -> torch.Tensor:
+        """The UNet's conditional epsilon at latent `x`, with the batch's prompt conditioning.
+
+        Args:
+            x: Latents `[B, C, H, W]`, already on the device in the UNet's dtype.
+            timestep: Timesteps `[B]` on the device.
+            batch: The training batch, read for its three conditioning streams.
+
+        Returns:
+            Epsilon predictions `[B, C, H, W]`.
+        """
+        hidden = batch["generated_prompt_embeds"].to(device=self.device, dtype=self.unet.dtype)
+        t5_embeds = batch["t5_prompt_embeds"].to(device=self.device, dtype=self.unet.dtype)
+        t5_mask = batch["t5_attention_mask"].to(device=self.device)
+        assert x.shape[0] == timestep.shape[0] == hidden.shape[0], (
+            x.shape,
+            timestep.shape,
+            hidden.shape,
+        )
+        model_input = self.ldm.model.scheduler.scale_model_input(x, timestep)
+        return self.ldm.unet_forward(
+            model_input,
+            timestep=timestep,
+            encoder_hidden_states=hidden,
+            class_labels=t5_embeds,
+            encoder_attention_mask=t5_mask,
+        )[0].sample
+
+    def ddim_inversion_coefficients(
+        self, timestep: torch.Tensor, ndim: int
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """`A, B` of the deployed DDIM inversion step `x_t = A x_prev + B eps` (ddim_inversion's
+        `next_step`), from the cleaner level `t - stride` up to the noisier timestep `t`.
+
+        It is the exact inverse of the reverse DDIM step that produced the cached trajectory, so
+        with the teacher's epsilon at the noisier latent it lands on the stored state exactly.
+
+        Args:
+            timestep: Noisier timesteps `[B]`.
+            ndim: Rank of the latents, for broadcasting.
+
+        Returns:
+            `(A, B)`, each `[B, 1, ...]` in float64.
+        """
+        scheduler = self.ldm.model.scheduler
+        stride = self.num_train_timesteps // int(self.cfg.num_inference_steps)
+        alphas = torch.as_tensor(scheduler.alphas_cumprod, dtype=torch.float64)
+        final = torch.as_tensor(scheduler.final_alpha_cumprod, dtype=torch.float64)
+        t = timestep.detach().to(device="cpu", dtype=torch.long)
+        prev = t - stride
+        alpha_t = alphas[t]
+        alpha_prev = torch.where(prev >= 0, alphas[prev.clamp(min=0)], final)
+        a = (alpha_t / alpha_prev).sqrt()
+        b = (1.0 - alpha_t).sqrt() - a * (1.0 - alpha_prev).sqrt()
+        shape = (-1,) + (1,) * (ndim - 1)
+        return a.reshape(shape).to(self.device), b.reshape(shape).to(self.device)
+
+    def rollout_per_example(self, batch: dict[str, Any], student: torch.Tensor) -> torch.Tensor:
+        """Error of a k-step DDIM inversion from the stored latent, against the stored states.
+
+        Starts at the transition's input (the cleaner latent, queried at the noisier timestep t)
+        and inverts k steps with the adapter on, each step fed its own previous output, so the
+        gradient reaches every prediction and the loss sees how per-step errors compound. Step m
+        goes up to the timestep `t + (m - 1) * stride`. Each state error is divided by that step's
+        `B`, which puts it in epsilon units: the m = 1 term is exactly the one-step loss.
+
+        Args:
+            batch: One training batch carrying `x_noisier` `[B, k, C, H, W]`, nearest first.
+            student: The adapter's epsilon at the stored latent, with graph (the first step).
+
+        Returns:
+            Per-example, per-step losses `[B, k]`.
+        """
+        x = batch["x_clean"].to(device=self.device, dtype=self.unet.dtype)
+        timestep = batch["timestep"].to(device=self.device)
+        targets = batch["x_noisier"].to(device=self.device, dtype=self.unet.dtype)
+        k = self.rollout_steps
+        assert targets.shape[1] == k, (targets.shape, k)
+        stride = self.num_train_timesteps // int(self.cfg.num_inference_steps)
+        assert int(timestep.max()) + (k - 1) * stride < self.num_train_timesteps, (
+            f"a {k}-step rollout from t={int(timestep.max())} leaves the {self.num_train_timesteps}"
+            "-step schedule; filter the dataset with transitions_with_room_below"
+        )
+
+        prediction, terms = student, []
+        for m in range(1, k + 1):
+            a, b = self.ddim_inversion_coefficients(timestep, x.dim())
+            x = a.to(x.dtype) * x + b.to(x.dtype) * prediction
+            error = (x - targets[:, m - 1]).float() / b.float()
+            terms.append((error**2).flatten(1).mean(dim=1))
+            if m < k:
+                timestep = timestep + stride
+                if self.rollout_checkpoint:
+                    prediction = torch.utils.checkpoint.checkpoint(
+                        self.conditional_eps, x, timestep, batch, use_reentrant=False
+                    )
+                else:
+                    prediction = self.conditional_eps(x, timestep, batch)
+        return torch.stack(terms, dim=1)
+
     def predict_noise(self, batch: dict[str, Any]) -> torch.Tensor:
         """Run the student UNet on the cleaner latent, combining CFG branches when w != 1.
 
@@ -257,27 +374,11 @@ class AudioLDM2InversionTrainer:
         """
         x_clean = batch["x_clean"].to(device=self.device, dtype=self.unet.dtype)
         timestep = batch["timestep"].to(device=self.device)
-        hidden = batch["generated_prompt_embeds"].to(device=self.device, dtype=self.unet.dtype)
-        t5_embeds = batch["t5_prompt_embeds"].to(device=self.device, dtype=self.unet.dtype)
-        t5_mask = batch["t5_attention_mask"].to(device=self.device)
-
-        assert x_clean.shape[0] == timestep.shape[0] == hidden.shape[0], (
-            x_clean.shape,
-            timestep.shape,
-            hidden.shape,
-        )
-
-        model_input = self.ldm.model.scheduler.scale_model_input(x_clean, timestep)
-        eps_cond = self.ldm.unet_forward(
-            model_input,
-            timestep=timestep,
-            encoder_hidden_states=hidden,
-            class_labels=t5_embeds,
-            encoder_attention_mask=t5_mask,
-        )[0].sample
+        eps_cond = self.conditional_eps(x_clean, timestep, batch)
         if self.uncond is None:
             return eps_cond
 
+        model_input = self.ldm.model.scheduler.scale_model_input(x_clean, timestep)
         u_hidden, u_t5, u_mask = self.uncond
         batch_size = x_clean.shape[0]
         eps_uncond = self.ldm.unet_forward(
@@ -316,8 +417,29 @@ class AudioLDM2InversionTrainer:
         Returns:
             `(loss, per_example_inversion_loss, extra_scalars_to_log)`.
         """
-        per_example = self.per_example_loss(batch)
-        return per_example.mean(), per_example, {}
+        if not self.rollout_steps:
+            per_example = self.per_example_loss(batch)
+            return per_example.mean(), per_example, {}
+
+        if self.rollout_checkpoint:
+            # Recompute this first call in the backward too: otherwise its full activation graph
+            # stays alive under the k - 1 rollout forwards, and the peak is two forwards' worth.
+            student = torch.utils.checkpoint.checkpoint(self.predict_noise, batch,
+                                                        use_reentrant=False)
+        else:
+            student = self.predict_noise(batch)
+        target = self.target_noise(batch)
+        assert student.shape == target.shape, (student.shape, target.shape)
+        per_example = ((student.float() - target.float()) ** 2).flatten(1).mean(dim=1)
+        inversion = per_example.mean()
+        per_step = self.rollout_per_example(batch, student).mean(dim=0)  # [k]
+        rollout = per_step.mean()
+        return (
+            inversion + self.rollout_weight * rollout,
+            per_example,
+            {"train/loss_inv": float(inversion), "train/loss_rollout": float(rollout),
+             **{f"train/rollout_m{m + 1}": float(v) for m, v in enumerate(per_step)}},
+        )
 
     def target_noise(self, batch: dict[str, Any]) -> torch.Tensor:
         """The cached teacher epsilon that advanced the trajectory, combined when w != 1."""
@@ -796,10 +918,17 @@ def main(cfg: DictConfig) -> None:
 
     train_ids, val_ids = split_sample_ids(cfg.data_root, float(cfg.val_fraction), int(cfg.seed))
     needs_uncond = float(cfg.get("guidance_scale", 1.0)) != 1.0
-    train_dataset = AudioLDM2TrajectoryDataset(cfg.data_root, sample_ids=train_ids, load_uncond=needs_uncond)
+    rollout = cfg.get("rollout", {}) or {}
+    rollout_steps = int(rollout.get("steps", 0)) if rollout.get("enabled", False) else 0
+    # Only the training set carries the stored noisier states; validation stays the one-step loss,
+    # so val/loss is comparable with every run trained without the rollout.
+    train_dataset = AudioLDM2TrajectoryDataset(cfg.data_root, sample_ids=train_ids,
+                                               load_uncond=needs_uncond,
+                                               noisier_states=rollout_steps)
     logger.info(
         "train: {:,} transitions from {} trajectories", len(train_dataset), len(train_ids)
     )
+    keep = None
     if cfg.train_max_timestep:
         keep = transitions_below_timestep(train_dataset, int(cfg.train_max_timestep))
         logger.info(
@@ -808,6 +937,14 @@ def main(cfg: DictConfig) -> None:
             len(keep),
             len(train_dataset),
         )
+    if rollout_steps:
+        # A k-step rollout needs k stored states above its input, which the k - 1 transitions
+        # nearest the noisy end of each trajectory do not have.
+        room = transitions_with_room_below(train_dataset, rollout_steps)
+        keep = room if keep is None else sorted(set(keep) & set(room))
+        logger.info("train: {}-step rollout keeps {:,} of {:,} transitions", rollout_steps,
+                    len(keep), len(train_dataset))
+    if keep is not None:
         train_dataset = Subset(train_dataset, keep)
     val_loader = None
     if val_ids:
