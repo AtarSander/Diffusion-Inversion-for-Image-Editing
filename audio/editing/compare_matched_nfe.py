@@ -39,16 +39,20 @@ def lora_arm(checkpoint: str) -> str:
     return LORA_ARMS.get(run, f"ODEInv w/ LoRA {run}")
 
 
-def collect(runs_root: Path, split: str) -> pd.DataFrame:
+def collect(runs_root: Path, split: str, inversion: str = "lift") -> pd.DataFrame:
     """Read every scored matched-NFE run of one split into one row each.
 
     Args:
         runs_root: Directory holding the model's run subdirectories.
         split: Benchmark split in the run names (`hparam` or `genhparam`).
+        inversion: Which odeinv runs to use: `lift` (ode_invert lifts the clean latent through the
+            sigma = 0 step, run names ending `_lift`) or `orig` (the pre-fix runs). DDPM-inv and
+            SDEdit do not invert by ODE and are shared by both.
 
     Returns:
         One row per run, with the arm label, depth, and the mean/SEM of each metric.
     """
+    assert inversion in ("lift", "orig"), inversion
     spec = MODELS["stable_audio_nfe"]
     rows = []
     for subdir in spec["subdirs"]:
@@ -60,6 +64,8 @@ def collect(runs_root: Path, split: str) -> pd.DataFrame:
             g = match.groupdict()
             if g.get("split") != split:
                 continue
+            if not g.get("mode") and (g.get("lift") is not None) != (inversion == "lift"):
+                continue  # an odeinv run of the other inversion
             tstart, steps = int(g["tstart"]), int(g["steps"])
             if g.get("checkpoint"):
                 arm = lora_arm(g["checkpoint"])
@@ -78,7 +84,11 @@ def collect(runs_root: Path, split: str) -> pd.DataFrame:
                 row[f"{name}_sem"] = frame[column].sem()
             rows.append(row)
     assert rows, f"no scored matched-NFE runs under {runs_root}"
-    return pd.DataFrame(rows).sort_values(["arm", "cfg_tar", "depth"]).reset_index(drop=True)
+    frame = pd.DataFrame(rows).sort_values(["arm", "cfg_tar", "depth"]).reset_index(drop=True)
+    if not frame.arm.str.startswith("ODEInv").any():
+        raise ValueError(f"no scored odeinv runs with inversion={inversion!r} on split={split}; "
+                         "pass --inversion orig for the pre-fix runs")
+    return frame
 
 
 SPLIT_LABEL = {"hparam": "Real audio from MedleyMD", "full": "Real audio from MedleyMD (all 696 edits)",
@@ -107,7 +117,8 @@ def lora_delta(df: pd.DataFrame) -> pd.DataFrame:
     return pd.concat(blocks, ignore_index=True)
 
 
-def main(runs_root: str, out_root: str = "output/matched_nfe", split: str = "hparam") -> None:
+def main(runs_root: str, out_root: str = "output/matched_nfe", split: str = "hparam",
+         inversion: str = "lift") -> None:
     """Write the matched-NFE table, the paired LoRA delta, and the front figure.
 
     Args:
@@ -115,9 +126,11 @@ def main(runs_root: str, out_root: str = "output/matched_nfe", split: str = "hpa
         out_root: Destination, relative to `audio/`.
         split: `hparam` (real audio), `genhparam` (generated inputs), or `both` for one figure
             with the real front on top and the generated one below, axes shared per column.
+        inversion: `lift` for the odeinv runs made with the sigma = 0 lift (`_lift` names), or
+            `orig` for the pre-fix ones.
     """
     splits = ["hparam", "genhparam"] if split == "both" else [split]
-    frames = {s: collect(Path(runs_root), s) for s in splits}
+    frames = {s: collect(Path(runs_root), s, inversion) for s in splits}
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out = AUDIO_ROOT / out_root / stamp
     out.mkdir(parents=True, exist_ok=True)
@@ -129,7 +142,8 @@ def main(runs_root: str, out_root: str = "output/matched_nfe", split: str = "hpa
              f"split={split}\n",
              f"{sum(len(f) for f in frames.values())} runs, {reference['n'].iloc[0]} edits "
              f"each, cfg_tar pooled ({', '.join(f'{c:g}' for c in cfgs)}). "
-             f"Points are labelled by inversion depth = tstart/steps.\n",
+             f"Points are labelled by inversion depth = tstart/steps. odeinv runs: "
+             f"{'sigma = 0 lift (_lift)' if inversion == 'lift' else 'pre-fix inversion'}.\n",
              "Figure: `matched_nfe_front.png`.\n"]
 
     # One centered title per row, over both panels: a subfigure per split carries it.

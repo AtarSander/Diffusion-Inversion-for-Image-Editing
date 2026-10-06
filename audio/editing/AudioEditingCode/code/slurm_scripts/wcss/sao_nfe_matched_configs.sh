@@ -73,6 +73,10 @@ lora_sweep_configs() {
 lora_sweep_run_name() {
   local ckpt="${1?checkpoint}" tstart="${2:?tstart}" cfg="${3:?cfg_tar}" steps="${4:?steps}"
   local tail="${LORA_SPLIT}_nfe${BUDGET}_t${tstart}_s${steps}_cfgtar${cfg}"
+  # Since 6b13dcd ode_invert lifts the clean latent through the sigma = 0 step first, which changes
+  # every odeinv edit. Those runs carry _lift, so they never overwrite (or SKIP_EXISTING onto) the
+  # pre-fix runs behind the earlier fronts; ddpm and sdedit do not invert by ODE and keep their names.
+  [ "$LORA_MODE" = "odeinv" ] && tail="${tail}_lift"
   if [ -z "$ckpt" ]; then
     echo "stableaudio_${LORA_MODE}_nolora_${tail}"
   else

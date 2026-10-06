@@ -75,11 +75,15 @@ MODELS = {
         # this needs its own patterns rather than a widened version of the ones above.
         "base": re.compile(
             r"stableaudio_(?:odeinv|(?P<mode>ddpm|sdedit))_nolora_(?P<split>[a-z]+)"
-            r"_nfe(?P<nfe>\d+)_t(?P<tstart>\d+)_s(?P<steps>\d+)_cfgtar(?P<cfg_tar>[\d.]+)$"
+            r"_nfe(?P<nfe>\d+)_t(?P<tstart>\d+)_s(?P<steps>\d+)_cfgtar(?P<cfg_tar>[\d.]+)"
+            r"(?P<lift>_lift)?$"
         ),
+        # _lift marks odeinv runs made after ode_invert started lifting the clean latent through
+        # the sigma = 0 step (6b13dcd); unsuffixed odeinv runs are the pre-fix inversion.
         "lora": re.compile(
             r"stableaudio_odeinvlora_(?P<checkpoint>.+?)_(?P<split>hparam|genhparam|full)"
-            r"_nfe(?P<nfe>\d+)_t(?P<tstart>\d+)_s(?P<steps>\d+)_cfgtar(?P<cfg_tar>[\d.]+)$"
+            r"_nfe(?P<nfe>\d+)_t(?P<tstart>\d+)_s(?P<steps>\d+)_cfgtar(?P<cfg_tar>[\d.]+)"
+            r"(?P<lift>_lift)?$"
         ),
     },
 }

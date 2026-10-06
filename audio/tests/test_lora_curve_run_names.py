@@ -19,6 +19,11 @@ CASES = [
      {"mode": "ddpm", "tstart": "30", "steps": "120", "cfg_tar": "3.5", "nfe": "300"}),
     ("stable_audio_nfe", "stableaudio_sdedit_nolora_hparam_nfe300_t150_s600_cfgtar3.5",
      {"mode": "sdedit", "tstart": "150", "steps": "600", "cfg_tar": "3.5", "nfe": "300"}),
+    ("stable_audio_nfe", "stableaudio_odeinv_nolora_full_nfe100_t33_s132_cfgtar3.5_lift",
+     {"mode": None, "tstart": "33", "steps": "132", "cfg_tar": "3.5", "nfe": "100",
+      "lift": "_lift"}),
+    ("stable_audio_nfe", "stableaudio_odeinv_nolora_full_nfe100_t33_s132_cfgtar3.5",
+     {"mode": None, "cfg_tar": "3.5", "lift": None}),
     ("stable_audio", "stableaudio_odeinv_nolora_hparam_cfgtar3.5_t25_s100",
      {"mode": None, "tstart": "25", "steps": "100", "cfg_tar": "3.5"}),
     ("stable_audio", "stableaudio_ddpm_hparam_cfgtar7.0_t50_s100",
@@ -40,6 +45,10 @@ def test_base_pattern_parses_sweep_names(model, name, want):
      "stableaudio_odeinvlora_saocos_r8_a4_lr5e-5_checkpoint_step_4000_hparam"
      "_nfe300_t99_s396_cfgtar3.5",
      "saocos_r8_a4_lr5e-5_checkpoint_step_4000", "396"),
+    ("stable_audio_nfe",
+     "stableaudio_odeinvlora_saocos_rollout4_r8_a4_lr5e-5_checkpoint_step_1000_full"
+     "_nfe100_t33_s44_cfgtar14.0_lift",
+     "saocos_rollout4_r8_a4_lr5e-5_checkpoint_step_1000", "44"),
     ("stable_audio",
      "stableaudio_odeinvlora_hparam_saocos_r8_a4_lr5e-5_checkpoint_step_4000_ema"
      "_cfgtar3.5_t25_s100",
