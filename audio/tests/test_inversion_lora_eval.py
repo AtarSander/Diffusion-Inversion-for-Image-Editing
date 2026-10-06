@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.inversion_lora.noise_metrics import (  # noqa: E402
     kl_div_per_dim,
+    kl_div_to_standard_normal,
     kl_div_scalar,
     top_k_corr_in_patches,
 )
@@ -103,6 +104,17 @@ def test_kl_grows_when_the_scale_is_wrong():
     reference = torch.randn(64, 4, 8, 8)
     assert kl_div_scalar(reference, 2.0 * reference) > kl_div_scalar(reference, 1.1 * reference)
     assert kl_div_per_dim(reference, 2.0 * reference) > kl_div_per_dim(reference, 1.1 * reference)
+
+
+def test_kl_to_standard_normal_sits_at_the_finite_sample_floor():
+    """A true N(0, 1) sample scores ~1/N, and copying a reference sample cannot beat that."""
+    sample = torch.randn(1024, 8, 16, 16, generator=torch.Generator().manual_seed(0))
+    floor = kl_div_to_standard_normal(sample)
+    assert floor == pytest.approx(1 / 1024, rel=0.1)
+    # The paired KL rewards the copy (exactly 0); the analytic one does not.
+    assert kl_div_per_dim(sample, sample) == pytest.approx(0.0, abs=1e-6)
+    assert kl_div_to_standard_normal(sample.clone()) == pytest.approx(floor)
+    assert kl_div_to_standard_normal(0.9 * sample) > 3 * floor
 
 
 def test_correlated_latents_score_above_iid_noise():

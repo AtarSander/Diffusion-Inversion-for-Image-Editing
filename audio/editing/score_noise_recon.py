@@ -21,7 +21,11 @@ for _path in (AUDIO_ROOT, AUDIO_ROOT / "editing/AudioEditingCode"):
         sys.path.insert(0, str(_path))
 
 from editing.eval_medley import get_lpaps  # noqa: E402
-from src.inversion_lora.noise_metrics import kl_div_per_dim, top_k_corr_in_patches  # noqa: E402
+from src.inversion_lora.noise_metrics import (  # noqa: E402
+    kl_div_per_dim,
+    kl_div_to_standard_normal,
+    top_k_corr_in_patches,
+)
 from src.metrics.alignment import mel_distances, mel_stft  # noqa: E402
 
 # Row order and labels of the paper's inversion-quality table.
@@ -80,11 +84,12 @@ def as_patch_layout(latents: torch.Tensor) -> torch.Tensor:
 
 
 def normality(reference: torch.Tensor, latents: torch.Tensor) -> dict[str, float]:
-    """KL to the generation noise and the top-k patch correlation of one arm's noise."""
+    """KL to N(0, 1) and to the generation noise, and the top-k patch correlation of one arm."""
     reference, latents = as_patch_layout(reference), as_patch_layout(latents)
     assert reference.shape == latents.shape, (reference.shape, latents.shape)
     corr = top_k_corr_in_patches(latents, patch_size=PATCH_SIZE, top_k=TOP_K)
     return {
+        "kl_std": kl_div_to_standard_normal(latents),
         "kl": kl_div_per_dim(reference, latents),
         "corr": corr["mean"],
         "corr_std": corr["std"],
@@ -142,19 +147,21 @@ def report(label: str, run_dir: Path, data: dict, table: pd.DataFrame) -> str:
         f"{cfg['seeds_per_prompt']} seeds), {cfg['num_inference_steps']} inversion and denoising "
         f"steps, CFG {cfg['guidance_scale']}, {cfg['duration_s']} s, model `{cfg['model_id']}`",
         f"- LoRA (inversion pass only): `{cfg['lora_path']}`",
-        "- Normality in latent space against the generation noise: KL = per-dimension Gaussian KL "
-        "averaged over dimensions (x100); Corr = mean top-20 |Pearson| within 8x8 latent patches "
-        "(Stable Audio: 8 frames x all channels). Gaussian Noise is a fresh draw, i.e. the null.",
+        "- Normality in latent space: KL = KL(N(0,1) || per-dimension Gaussian fit), averaged over "
+        "dimensions (x1000; floor ~1/N for a perfect Gaussian); paired KL = the same fit against the "
+        "generation noise sample (x100; floor ~2/N, and recovering that sample scores below it); "
+        "Corr = mean top-20 |Pearson| within 8x8 latent patches (Stable Audio: 8 frames x all "
+        "channels). Gaussian Noise is a fresh draw, i.e. the null.",
         "- Reconstruction on decoded audio against the generated source clip: mel MAE/PSNR/SSIM "
         "(audioldm_eval mel at 32 kHz, as in the editing benchmark) and LPAPS (CLAP, 10 s windows). "
         "Gaussian Noise reconstructs nothing: it is the unrelated-sample ceiling.",
         "",
-        "| Method | Corr ↓ | KL ×10² ↓ | MAE ↓ | LPAPS ↓ | PSNR ↑ | SSIM ↑ | noise std |",
-        "|---|---|---|---|---|---|---|---|",
+        "| Method | Corr ↓ | KL ×10³ ↓ | paired KL ×10² | MAE ↓ | LPAPS ↓ | PSNR ↑ | SSIM ↑ | noise std |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for _, row in table.iterrows():
         lines.append(
-            f"| {row['method']} | {row['corr']:.4f} | {100 * row['kl']:.4f} "
+            f"| {row['method']} | {row['corr']:.4f} | {1000 * row['kl_std']:.3f} | {100 * row['kl']:.4f} "
             f"| {row['mae']:.4f} ± {row['mae_sem']:.4f} | {row['lpaps']:.3f} ± {row['lpaps_sem']:.3f} "
             f"| {row['psnr']:.2f} ± {row['psnr_sem']:.2f} | {row['ssim']:.4f} ± {row['ssim_sem']:.4f} "
             f"| {row['noise_std']:.4f} |"
@@ -205,7 +212,8 @@ def main(run_dir: str, label: str, out_root: str = "output/noise_recon") -> None
             }
         )
         print(
-            f"{method}: corr {stats['corr']:.4f} kl {stats['kl']:.5f} mae {rows[-1]['mae']:.4f} "
+            f"{method}: corr {stats['corr']:.4f} kl_std {stats['kl_std']:.5f} kl {stats['kl']:.5f} "
+            f"mae {rows[-1]['mae']:.4f} "
             f"lpaps {rows[-1]['lpaps']:.3f} psnr {rows[-1]['psnr']:.2f} ssim {rows[-1]['ssim']:.4f}"
         )
         per_sample.append(mel.assign(arm=arm, prompt=data["prompts"]).rename_axis("index"))

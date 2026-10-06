@@ -43,6 +43,28 @@ def kl_div_per_dim(reference: torch.Tensor, latents: torch.Tensor) -> float:
     return float(divergence / np.prod(latents.shape[1:]))
 
 
+def kl_div_to_standard_normal(latents: torch.Tensor) -> float:
+    """KL from N(0, 1) to per-dimension Gaussians estimated across the batch, averaged over dims.
+
+    `kl_div_per_dim` compares against a second *sample*, so latents that copy that sample (an
+    accurate inversion of the very noise it was generated from) copy its sampling error too and
+    score below a fresh Gaussian draw, whose floor is ~2/N. Against the analytic standard normal
+    there is no such second sample: a perfect Gaussian sampler scores the finite-N floor (~1/N)
+    and nothing scores below it.
+
+    Args:
+        latents: Latents `[N, ...]` in unit-variance noise units.
+
+    Returns:
+        KL(N(0, 1) || N(mean_d, std_d)) averaged over dimensions d.
+    """
+    assert latents.shape[0] > 1, "a per-dimension fit needs at least 2 examples"
+    flat = latents.flatten(1).double()
+    fitted = dist.Normal(flat.mean(dim=0), flat.std(dim=0))
+    standard = dist.Normal(torch.zeros_like(fitted.loc), torch.ones_like(fitted.scale))
+    return float(dist.kl_divergence(standard, fitted).mean())
+
+
 def top_k_corr_in_patches(
     latents: torch.Tensor, patch_size: int = 8, top_k: int = 20
 ) -> dict[str, float]:
