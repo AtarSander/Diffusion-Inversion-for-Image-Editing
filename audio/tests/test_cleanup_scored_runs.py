@@ -35,8 +35,8 @@ def make_run(
         final.pop("MUQT")
     metrics = {"final": final, "source_distance": {"psnr": "20.0", "ssim": "0.5"}}
     (run / "metrics.json").write_text(json.dumps(metrics))
-    for csv_name in ("per_example_metrics.csv", "psnr_ssim_per_file.csv"):
-        (run / csv_name).write_text("h\n" + "x\n" * rows)
+    (run / "per_example_metrics.csv").write_text("h\n" + "x\n" * rows)
+    (run / "psnr_ssim_per_file.csv").write_text("h\n" + "x\n" * WAVS)
     return run
 
 

@@ -4,7 +4,6 @@
 import csv
 import json
 import shutil
-import tarfile
 import time
 from pathlib import Path
 
@@ -15,16 +14,15 @@ FINAL_METRICS = ("LPAPS", "CLAP", "MUQT", "CLAP_DIR", "MUQT_DIR")
 SOURCE_METRICS = ("psnr", "ssim")
 
 
-def wav_count(run: Path) -> int:
-    """Number of edited wavs a run holds, from `audios.tar` or `audios/` (which must agree)."""
-    counts = []
-    if (run / "audios.tar").is_file():
-        with tarfile.open(run / "audios.tar") as archive:
-            counts.append(sum(name.endswith(".wav") for name in archive.getnames()))
-    if (run / "audios").is_dir():
-        counts.append(sum(1 for _ in (run / "audios").glob("*.wav")))
-    assert len(set(counts)) <= 1, f"{run}: audios.tar and audios/ disagree ({counts})"
-    return counts[0] if counts else 0
+def loose_wavs(run: Path) -> int | None:
+    """Number of wavs in `audios/`, or None when the run keeps only `audios.tar`.
+
+    The archive is deliberately not opened: listing a tar's members on Lustre reads far more than
+    its headers (a dry run over the edits root pulled 400 GB before it was stopped).
+    """
+    if not (run / "audios").is_dir():
+        return None
+    return sum(1 for _ in (run / "audios").glob("*.wav"))
 
 
 def csv_rows(path: Path) -> int:
@@ -35,8 +33,14 @@ def csv_rows(path: Path) -> int:
         return sum(1 for _ in csv.reader(handle)) - 1
 
 
-def unscored_reason(run: Path, wavs: int) -> str | None:
-    """Why a run is not fully scored, or None when every metric covers every wav."""
+def unscored_reason(run: Path) -> str | None:
+    """Why a run is not fully scored, or None when every metric covers every edit.
+
+    The MedleyMD eval loads `a{idx}.wav` for every row of its split (a missing edit crashes it),
+    asserts the per-example table has one row per split row, and that psnr_ssim_per_file has one
+    row per edited wav. So a complete metrics.json plus two per-example tables of equal length
+    means every edit was scored; loose wavs, when present, must match that count too.
+    """
     metrics_path = run / "metrics.json"
     if not metrics_path.is_file():
         return "no metrics.json"
@@ -47,10 +51,12 @@ def unscored_reason(run: Path, wavs: int) -> str | None:
         return f"metrics.json lacks {missing}"
     if any(str(metrics["source_distance"][m]).startswith("-1") for m in SOURCE_METRICS):
         return "psnr/ssim hold the -1 failure sentinel"
-    for name in ("per_example_metrics.csv", "psnr_ssim_per_file.csv"):
-        rows = csv_rows(run / name)
-        if rows != wavs:
-            return f"{name} has {rows} rows for {wavs} wavs"
+    rows = csv_rows(run / "per_example_metrics.csv")
+    if rows <= 0 or csv_rows(run / "psnr_ssim_per_file.csv") != rows:
+        return "per-example tables missing or of unequal length"
+    wavs = loose_wavs(run)
+    if wavs is not None and wavs != rows:
+        return "loose wavs differ from the scored rows"
     return None
 
 
@@ -70,9 +76,8 @@ def size_of(path: Path) -> int:
 def main(root: str = "outputs/edits", apply: bool = False, keep_list: str | None = None) -> None:
     """List (or delete) the audio of every fully scored run under `root`.
 
-    A run is any directory holding `audios.tar` or `audios/`. It is deleted only when its
-    metrics.json carries every final metric and psnr/ssim, and both per-example CSVs have
-    exactly one row per wav. Metric files are never touched.
+    A run is any directory holding `audios.tar` or `audios/`. Its audio is deleted only when it
+    is fully scored (`unscored_reason`). Metric files are never touched.
 
     Args:
         root: Edits root, relative to audio/ or absolute.
@@ -90,10 +95,9 @@ def main(root: str = "outputs/edits", apply: bool = False, keep_list: str | None
         if run.name in keep:
             skipped.setdefault("in keep list", []).append(run)
             continue
-        wavs = wav_count(run)
-        reason = "no wavs" if wavs == 0 else unscored_reason(run, wavs)
+        reason = unscored_reason(run)
         if reason:
-            skipped.setdefault(reason.split(" has ")[0], []).append(run)
+            skipped.setdefault(reason.split(" lacks ")[0], []).append(run)
             continue
         paths = audio_paths(run)
         candidates.append((run, paths, sum(size_of(p) for p in paths)))
