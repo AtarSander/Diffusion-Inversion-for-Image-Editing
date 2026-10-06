@@ -85,7 +85,10 @@ def main(root: str = "outputs/edits", apply: bool = False, keep_list: str | None
         keep_list: Optional file of run names (one per line) to keep regardless.
     """
     root_path = Path(root).resolve()
-    keep = set(Path(keep_list).read_text().split()) if keep_list else set()
+    keep = set()
+    if keep_list:
+        lines = Path(keep_list).read_text().splitlines()
+        keep = {line.strip() for line in lines if line.strip() and not line.startswith("#")}
     runs = sorted(
         {p.parent for p in root_path.rglob("audios.tar")}
         | {p.parent for p in root_path.rglob("audios") if p.is_dir()}
