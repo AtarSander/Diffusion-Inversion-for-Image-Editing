@@ -1,0 +1,30 @@
+{
+  "run_dir": "/lustre/pd03/hpc-tomtrz0116-1775130553/lstanisz/code/lorainv/audio/outputs/noise_recon/audioldm2/main",
+  "generation_config": {
+    "model": "audioldm2",
+    "model_id": "cvssp/audioldm2-large",
+    "device": "cuda:0",
+    "num_inference_steps": 100,
+    "guidance_scale": 1.0,
+    "duration_s": 10.24,
+    "lora_path": "/lustre/pd03/hpc-tomtrz0116-1775130553/lstanisz/data/lorainv/checkpoints/attn_r8_a4_lr5e-5/checkpoint_step_4000.pt",
+    "prompts_csv": "editing/AudioEditingCode/MedleyMDPrompts/captions_gpt5.csv",
+    "num_prompts": 256,
+    "seeds_per_prompt": 4,
+    "prompt_seed": 0,
+    "seed_gen": 7000000,
+    "seed_gaussian": 8000000,
+    "seed_ddpm": 9000000,
+    "batch_size": 16,
+    "num_shards": 16,
+    "shard_id": 0,
+    "limit": null,
+    "run_dir": "outputs/noise_recon/audioldm2/main",
+    "overwrite": false
+  },
+  "generation_git_sha": "08b32f305ec699602de48f0f6238b97c3e284ecd",
+  "scoring_git_sha": "08b32f305ec699602de48f0f6238b97c3e284ecd",
+  "command": "/lustre/pd03/hpc-tomtrz0116-1775130553/lstanisz/code/lorainv/audio/editing/score_noise_recon.py --run_dir outputs/noise_recon/audioldm2/main --label audioldm2",
+  "scored_at": "2026-10-06T03:01:09.909303",
+  "n": 1024
+}
