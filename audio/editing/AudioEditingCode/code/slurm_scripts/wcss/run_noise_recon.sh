@@ -14,6 +14,7 @@
 #
 # Submit from audio/ with MODEL=audioldm2 or MODEL=stable_audio; the array range must match
 # num_shards in config/noise_recon_$MODEL.yaml. A finished shard is skipped on resubmission.
+# RUN_NAME (default main) picks outputs/noise_recon/$MODEL/$RUN_NAME, so a rerun keeps the old one.
 #   sbatch --account=$HPC_PWR_ACCOUNT --partition=$HPC_PWR_PARTITION --export=ALL,MODEL=audioldm2 \
 #     editing/AudioEditingCode/code/slurm_scripts/wcss/run_noise_recon.sh
 
@@ -27,9 +28,10 @@ module load Python/3.10.4-GCCcore-11.3.0
 source .venv/bin/activate
 export PYTHONPATH="$PWD:$PWD/editing/AudioEditingCode/code:${PYTHONPATH:-}"
 
-echo "node=$(hostname) model=$MODEL shard=$SLURM_ARRAY_TASK_ID git=$(git rev-parse HEAD)"
+echo "node=$(hostname) model=$MODEL run=${RUN_NAME:-main} shard=$SLURM_ARRAY_TASK_ID git=$(git rev-parse HEAD)"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 
 python src/inversion_lora/noise_recon_benchmark.py --config-name "noise_recon_$MODEL" \
-  device=cuda:0 shard_id="$SLURM_ARRAY_TASK_ID" || exit 1
+  device=cuda:0 shard_id="$SLURM_ARRAY_TASK_ID" run_dir="outputs/noise_recon/$MODEL/${RUN_NAME:-main}" \
+  || exit 1
 echo "done"

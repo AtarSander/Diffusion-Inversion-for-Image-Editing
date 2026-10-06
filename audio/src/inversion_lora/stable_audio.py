@@ -569,6 +569,24 @@ class ExactDPMSolver:
         )
         return (x_t - b * data) / a
 
+    def lift_from_zero(self, x_clean: torch.Tensor, data: torch.Tensor) -> torch.Tensor:
+        """Approximate inverse of the final step to sigma = 0, which `inverse` cannot undo.
+
+        That step returns the data prediction alone, `x_0 = D(x_s)`, so its affine inverse has
+        nothing to divide by. In noise form, `x_s = alpha_s D + sigma_s eps`, it inverts like any
+        DDIM step once eps is read at the cleaner latent, `eps ~ (x_0 - alpha_s D(x_0)) / sigma_s`,
+        with D taken at the last nonzero sigma. Exact when eps is constant over the step.
+
+        Args:
+            x_clean: The clean latent at sigma = 0.
+            data: The data prediction at `x_clean`, read at the last nonzero sigma.
+
+        Returns:
+            The latent at the last nonzero grid point, `invertible_steps`.
+        """
+        alpha_s, _ = self._alpha_sigma(self.invertible_steps)
+        return alpha_s * x_clean + (x_clean - alpha_s * data)
+
 
 def ode_invert(
     solver: ExactDPMSolver,
@@ -579,8 +597,12 @@ def ode_invert(
 ) -> torch.Tensor:
     """Invert `steps` reverse steps from the clean end, with the exact inverse update.
 
-    The clean latent is taken to sit at the last invertible grid point: the final reverse step ends
-    at sigma = 0, where it discards the sample, so it has no inverse and is skipped.
+    When the grid ends at sigma = 0, the final reverse step discards the sample and has no exact
+    inverse, so the clean latent is first lifted to the last nonzero sigma with one approximate
+    DDIM-style step (`lift_from_zero`, one extra prediction). Treating the clean latent as already
+    sitting there instead shrinks the recovered noise by ~15% on Stable Audio
+    (output/noise_recon). `steps` counts the exact steps after the lift, so the endpoint is
+    unchanged.
 
     Args:
         solver: Solver over the schedule's grid.
@@ -596,6 +618,8 @@ def ode_invert(
     start = solver.invertible_steps
     assert 0 < steps <= start, f"steps must be in (0, {start}], got {steps}"
     x = x_clean
+    if start < len(solver.timesteps):
+        x = solver.lift_from_zero(x, predict(x, start))
     for index in tqdm(
         range(start - 1, start - steps - 1, -1), desc="inverting", leave=False, disable=not progress
     ):

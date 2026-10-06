@@ -9,7 +9,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.inversion_lora.stable_audio import ExactDPMSolver  # noqa: E402
+from src.inversion_lora.stable_audio import ExactDPMSolver, ode_invert  # noqa: E402
 
 
 class FakeCosineScheduler:
@@ -119,3 +119,20 @@ def test_multi_step_round_trip_is_exact_with_consistent_predictions(solver):
         for index in reversed(indices):
             x = solver.forward(x, predictions[index], index)
         assert torch.allclose(x, x_clean, atol=1e-9), f"k={k}"
+
+
+def test_ode_invert_lifts_the_clean_latent_through_the_zero_sigma_step(solver):
+    """With a model whose noise prediction is constant, inversion from the clean latent is exact.
+
+    Such a model makes every latent x_i = x_0 + sigma_i * eps. Before the lift, the clean latent
+    was treated as the sigma_min latent, so the recovered x_T lacked sigma_min * eps.
+    """
+    generator = torch.Generator().manual_seed(0)
+    x_clean = torch.randn(2, 4, 8, generator=generator, dtype=torch.float64)
+    eps = torch.randn(2, 4, 8, generator=generator, dtype=torch.float64)
+
+    def predict(x, index):
+        return x - solver.sigmas[index] * eps
+
+    x_t = ode_invert(solver, x_clean, predict, solver.invertible_steps)
+    assert torch.allclose(x_t, x_clean + solver.sigmas[0] * eps, atol=1e-9)

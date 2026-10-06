@@ -11,7 +11,7 @@
 #SBATCH --output=outputs/logs/slurm/noise-recon-score-%j.out
 #SBATCH --error=outputs/logs/slurm/noise-recon-score-%j.err
 #
-# Submit from audio/ with the same MODEL as the benchmark array, chained on it:
+# Submit from audio/ with the same MODEL (and RUN_NAME, default main) as the benchmark array:
 #   sbatch --account=$HPC_PWR_ACCOUNT --partition=$HPC_PWR_PARTITION --dependency=afterok:$J \
 #     --export=ALL,MODEL=audioldm2 editing/AudioEditingCode/code/slurm_scripts/wcss/run_score_noise_recon.sh
 
@@ -27,7 +27,9 @@ source .venv_eval/bin/activate
 export PYTHONPATH="$PWD:$PWD/editing/AudioEditingCode:${PYTHONPATH:-}"
 export TOKENIZERS_PARALLELISM=false
 
-echo "node=$(hostname) model=$MODEL git=$(git rev-parse HEAD)"
-python -m editing.score_noise_recon --run_dir "outputs/noise_recon/$MODEL/main" --label "$MODEL" \
+RUN="${RUN_NAME:-main}"
+LABEL="$MODEL"; [ "$RUN" = main ] || LABEL="${MODEL}_$RUN"
+echo "node=$(hostname) model=$MODEL run=$RUN git=$(git rev-parse HEAD)"
+python -m editing.score_noise_recon --run_dir "outputs/noise_recon/$MODEL/$RUN" --label "$LABEL" \
   || exit 1
 echo "done"

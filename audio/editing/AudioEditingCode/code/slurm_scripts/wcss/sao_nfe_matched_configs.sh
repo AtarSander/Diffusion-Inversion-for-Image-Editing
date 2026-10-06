@@ -4,6 +4,8 @@
 # Measured denoiser calls per edit (verified by an NFE counter in StableAudWrapper.unet_forward,
 # at N=20/T=10: 32, 60, 20 respectively):
 #   odeinv  3T + 2      -- T single-branch inversion calls at cfg_src=1.0, 2(T+1) guided reverse
+#           (3T + 3 once ode_invert lifts the clean latent through the sigma = 0 step; the grids
+#           below were solved for 3T + 2, so odeinv points now run one call over budget)
 #   ddpm    2N + 2T     -- its forward process runs the whole grid regardless of tstart
 #   sdedit  2T          -- no inversion pass at all
 # Fixing the budget therefore fixes T per method, leaving N free; N sets how deep in sigma the
