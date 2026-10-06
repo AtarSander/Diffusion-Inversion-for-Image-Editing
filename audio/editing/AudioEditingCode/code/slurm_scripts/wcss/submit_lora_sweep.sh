@@ -43,17 +43,46 @@ else
   echo "grid      : ${#CONFIGS[@]} runs from ${#LORA_CHECKPOINTS[@]} checkpoint(s), depth points at a fixed NFE budget"
 fi
 
-# Check every checkpoint here, on the login node, rather than failing 48 tasks one by one.
-# Unless the submission is chained: with --dependency the upstream job is still writing the
-# checkpoints, so absence now says nothing. Warn and let the job resolve them when it runs --
-# run_lora_sweep.sh passes the path straight to the edit script, which fails loudly per task.
+# Check the submitted rows' checkpoints here, on the login node, rather than failing 48 tasks one
+# by one. Only those rows: a grid that also lists adapters still in training must not block rows
+# that do not use them. Unless the submission is chained: with --dependency the upstream job is
+# still writing the checkpoints, so absence now says nothing. Warn and let the job resolve them
+# when it runs -- run_lora_sweep.sh passes the path straight to the edit script, which fails
+# loudly per task.
 deferred=0
-for arg in "$@"; do
-  case "$arg" in --dependency=*) deferred=1 ;; esac
+array_spec=""
+args=("$@")
+for ((j = 0; j < ${#args[@]}; j++)); do
+  case "${args[$j]}" in
+    --dependency=*) deferred=1 ;;
+    --array=*) array_spec="${args[$j]#--array=}" ;;
+    --array|-a) array_spec="${args[$((j + 1))]:-}" ;;
+  esac
+done
+# sbatch's spec: comma-separated rows or lo-hi[:step] ranges, with an optional %throttle.
+rows=()
+if [ -n "$array_spec" ]; then
+  IFS=',' read -r -a items <<< "${array_spec%%\%*}"
+  for item in "${items[@]}"; do
+    range="${item%%:*}"
+    step=1
+    [ "$item" != "$range" ] && step="${item#*:}"
+    for ((r = ${range%-*}; r <= ${range#*-}; r += step)); do rows+=("$r"); done
+  done
+else
+  rows=("${!CONFIGS[@]}")
+fi
+declare -A wanted=()
+for r in "${rows[@]}"; do
+  if [ "$r" -ge "${#CONFIGS[@]}" ]; then
+    echo "ERROR: array row $r is outside the grid's ${#CONFIGS[@]} rows" >&2
+    exit 1
+  fi
+  IFS='|' read -r ckpt _ <<< "${CONFIGS[$r]}"
+  [ -n "$ckpt" ] && wanted["$ckpt"]=1   # "" is the paired no-LoRA arm
 done
 missing=0
-for ckpt in "${LORA_CHECKPOINTS[@]}"; do
-  [ -n "$ckpt" ] || continue   # the paired no-LoRA arm
+for ckpt in $([ ${#wanted[@]} -gt 0 ] && printf '%s\n' "${!wanted[@]}" | sort); do
   path="$LORAINV_CHECKPOINT_ROOT/$ckpt"
   if [ ! -f "$path" ]; then
     echo "  MISSING checkpoint: $path" >&2
