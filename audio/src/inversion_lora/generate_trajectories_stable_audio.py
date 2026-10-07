@@ -217,6 +217,13 @@ def main(cfg: DictConfig) -> None:
     # nest the coarse grid exactly -- linspace ramps share points when F = stride * (K - 1) + 1,
     # e.g. 991 fine points for a 100-point coarse grid at stride 10.
     train_stride = int(cfg.get("train_stride", 1))
+    include_final = bool(cfg.get("include_final_transition", False))
+    assert not (include_final and train_stride > 1), (
+        "include_final_transition is wired for the coarse dataset only"
+    )
+    assert not (include_final and guidance_scale != 1.0), (
+        "include_final_transition derives its target from the unguided step only"
+    )
     coarse_solver = None
     if train_stride > 1:
         assert guidance_scale == 1.0, "dense sampling is wired for the unguided objective only"
@@ -251,6 +258,7 @@ def main(cfg: DictConfig) -> None:
         "solver": "first_order_ode",
         "pairing": "matched_timestep",
         "target_space": "data_prediction",
+        "final_transition": include_final,
         # The grid the training pairs live on; for a dense dataset that is the coarse grid.
         "num_inference_steps": int(cfg.num_inference_steps)
         if coarse_solver is None
@@ -284,11 +292,20 @@ def main(cfg: DictConfig) -> None:
         # *its own* timestep and must predict the teacher's data prediction at the noisier one,
         # which is what the reverse step consumed. On an EDM grid the matched timestep beats the
         # shifted one 0.0179 to 0.0474 -- see output/sao_schedules/REPORT.md.
-        # The last transition ends at sigma = 0, where the reverse step discards the sample and has
-        # no inverse, so it is dropped: trajectory[:-1] pairs with data[:-1].
+        # The last transition ends at sigma = 0, which has no prediction to read at the cleaner
+        # latent, so by default it is dropped: trajectory[:-1] pairs with data[:-1]. With
+        # include_final_transition it is kept with the DDIM-inversion pairing instead: the student
+        # sees the clean latent x_N at the last nonzero sigma, which is where ode_invert evaluates
+        # the adapter (`lift_from_zero`: x_{N-1} ~ 2 x_N - D(x_N)). The teacher's own target
+        # D(x_{N-1}) equals x_N there and would teach x_{N-1} = x_N; the target that makes that
+        # inverse exact is 2 x_N - x_{N-1}, i.e. eps(x_{N-1}) read back through the student input.
         states = None
         sample_meta = {**meta_base, "sample_idx": sample_idx, "seed": seed}
-        if coarse_solver is None:
+        if coarse_solver is None and include_final:
+            final_target = 2 * trajectory[-1] - trajectory[-2]
+            outputs = torch.cat([data[:-1], final_target[None]])
+            timesteps = grid[1:] + grid[-1:]
+        elif coarse_solver is None:
             trajectory, outputs, timesteps = trajectory[:-1], data[:-1], grid[1:]
             uncond = uncond[:-1] if uncond is not None else None
         else:

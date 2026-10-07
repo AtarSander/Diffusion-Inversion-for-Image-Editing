@@ -1,0 +1,41 @@
+# Stable Audio Open trajectories WITH the final transition (sigma_99 -> 0) as a training pair, paired
+# DDIM-inversion style: the student sees the clean latent at the last nonzero sigma, where
+# ode_invert evaluates the adapter to invert that step. Otherwise identical to
+# generate_trajectories_stable_audio.yaml (same captions, seeds, grid), so the two datasets differ
+# only by that one pair per trajectory.
+# Run:   uv run --python .venv/bin/python src/inversion_lora/generate_trajectories_stable_audio.py --config-name generate_trajectories_stable_audio_finalpair device=cuda:0
+# Smoke: ... device=cuda:0 num_samples=2 num_inference_steps=20 output_dir=/tmp/sao_finalpair_smoke
+
+device: cpu # set to cuda:N explicitly; never auto-grab a shared GPU
+
+model_id: stabilityai/stable-audio-open-1.0
+# Stable Audio's own sigma grid. Its scheduler is an SDE, so trajectories come from the
+# first-order ODE solver rather than scheduler.step, which is deterministic and exactly invertible.
+# The `beta` grid the editing code's `ddim` mode builds is rejected: it queries the DiT ~1000x
+# outside its trained timestep range and its audio clips by 22x. See output/sao_schedules/REPORT.md.
+schedule: cosine
+num_inference_steps: 100 # matches the editing baselines (edit_stableaudio_medleydb.py)
+# Duration the timing conditioning declares; null uses the model's maximum (47.55 s), which is
+# also what the MedleyMD edits run at since every mix is longer than the window. The latent length
+# is fixed at 1024 either way, so this does not change the storage cost.
+duration_s: null
+# Sampling is unconditional-free (no CFG), self-consistent with the no-CFG distillation loss.
+
+captions_csv: editing/music_caps_dl/metadata/musiccaps-public.csv
+caption_column: caption
+
+# 1500 trajectories x 100 transitions x [64, 1024] fp32 is ~79 GB: 26.5 MB of latents plus
+# 26.2 MB of targets per trajectory. Point this at scratch/lustre, never at the repo.
+output_dir: ${oc.env:LORAINV_DATA_ROOT}/stable_audio_cosine_ode_fp32_finalpair
+include_final_transition: true
+start_index: 0
+num_samples: 1500 # null => all captions from start_index
+seed: 42
+
+store_dtype: float32
+overwrite: false
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null

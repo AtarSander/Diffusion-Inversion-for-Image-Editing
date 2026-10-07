@@ -63,7 +63,9 @@ def check_sao_step(
         scheduler_cache[key] = ExactDPMSolver(sched)
     solver = scheduler_cache[key]
 
-    grid = torch.tensor(solver.timesteps[1:], dtype=torch.float64)
+    # A dataset with the final transition pairs the clean latent with the last nonzero timestep.
+    expected = solver.timesteps[1:] + (solver.timesteps[-1:] if meta.get("final_transition") else [])
+    grid = torch.tensor(expected, dtype=torch.float64)
     cached = torch.tensor(timesteps, dtype=torch.float64)
     if cached.shape != grid.shape or not torch.allclose(cached, grid, atol=1e-5):
         return [f"{sample_dir.name}: cached timesteps do not match the solver grid"]
@@ -78,9 +80,15 @@ def check_sao_step(
     else:
         base = traj[:-1]
 
-    a, b = solver.coefficients_batch(torch.arange(eps.shape[0]))
-    got = a * base.float() + b * eps.float()
-    want = traj[1:].float()
+    # The final pair's target is not a reverse-step input: it is the data prediction that inverts
+    # the sigma -> 0 step exactly from the clean latent, 2 x_N - target == x_{N-1}.
+    steps = eps.shape[0] - 1 if meta.get("final_transition") else eps.shape[0]
+    a, b = solver.coefficients_batch(torch.arange(steps))
+    got = a * base[:steps].float() + b * eps[:steps].float()
+    want = traj[1 : steps + 1].float()
+    if meta.get("final_transition"):
+        got = torch.cat([got, (2 * traj[-1] - eps[-1]).float()[None]])
+        want = torch.cat([want, traj[-2].float()[None]])
     rel = (got - want).flatten(1).norm(dim=1) / want.flatten(1).norm(dim=1)
     if float(rel.max()) > SAO_STEP_TOLERANCE:
         return [

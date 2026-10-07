@@ -204,6 +204,12 @@ CONFIGS=(
   # per-step recompute makes k=4 ~5x that (~7 h for 4000 steps) and k=8 ~11x (~14 h).
   "attn|8|4|5e-5|aldm2roll4_r8_a4_lr5e-5|rollout.enabled=true rollout.steps=4 rollout.weight=1.0 max_train_steps=4000 save_every_steps=1000 eval_every_steps=1000"
   "attn|8|4|5e-5|aldm2roll8_r8_a4_lr5e-5|rollout.enabled=true rollout.steps=8 rollout.weight=1.0 max_train_steps=4000 save_every_steps=1000 eval_every_steps=1000"
+  # 45: Stable Audio (SCRIPT=src/inversion_lora/train_stable_audio.py, RUN_PREFIX=saocos_) with the
+  # final sigma -> 0 transition as a training pair (generate_trajectories_stable_audio_finalpair),
+  # so the adapter also learns the last inversion step, which ode_invert takes with lift_from_zero
+  # and every other run never saw. All else matches saocos_r8_a4_lr5e-5, whose step 4000 is the
+  # paper's adapter, so step 4000 here is the matched comparison. Submit by PRESET_NAME.
+  "attn|8|4|5e-5|finalpair_r8_a4_lr5e-5|data_root=\${oc.env:LORAINV_DATA_ROOT}/stable_audio_cosine_ode_fp32_finalpair max_train_steps=4000 save_every_steps=500 eval_every_steps=500"
 )
 
 # Fail before the 12 GB model load rather than after it: wandb only reports a bad credential
