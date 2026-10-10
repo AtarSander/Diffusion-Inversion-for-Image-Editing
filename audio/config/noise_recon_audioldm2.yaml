@@ -32,6 +32,9 @@ num_shards: 16
 shard_id: 0
 limit: null # first `limit` samples of the shard, for smoke runs
 
+# An earlier run of this benchmark to take generation and the adapter-free arms from (they are
+# deterministic and do not depend on the adapter), so only the adapter arm is computed.
+reuse_run_dir: null
 # Heavy outputs (wavs, latents); git-ignored. The scorer writes the report under output/.
 run_dir: outputs/noise_recon/audioldm2/main
 overwrite: false

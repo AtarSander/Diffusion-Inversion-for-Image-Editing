@@ -337,6 +337,59 @@ def batched(
     return torch.cat(out)
 
 
+def reuse_base_arms(
+    source_run: Path, shard_name: str, shard: pd.DataFrame, noise_scale: float, wav_root: Path
+) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
+    """Take generation and the adapter-free arms from an earlier run of the same benchmark.
+
+    Generation and the Gaussian, DDIM and DDPM arms do not depend on the adapter and are
+    deterministic: the final-pair run reproduced the lift run's bit for bit. So a new checkpoint
+    only needs its own arm; the rest is read back and the earlier run's wavs are linked in.
+
+    Returns:
+        The generation noise, x0, and the three adapter-free arms' noises, unnormalised.
+    """
+    reused = torch.load(
+        source_run / "latents" / shard_name, map_location="cpu", weights_only=False
+    )
+    count = len(shard)
+    assert reused["indices"][:count] == shard.index.tolist(), "earlier run covers other samples"
+    for column in ("seed_gen", "seed_gaussian", "seed_ddpm"):
+        assert reused["seeds"][column][:count] == shard[column].tolist(), column
+    assert reused["noise_scale"] == noise_scale, (reused["noise_scale"], noise_scale)
+    wav_root.mkdir(parents=True, exist_ok=True)
+    for arm in ("source", "gaussian", "ddim", "ddpm"):
+        if not (wav_root / arm).exists():
+            (wav_root / arm).symlink_to(os.path.relpath(source_run / "wavs" / arm, wav_root))
+    noises = {a: reused["noise"][a][:count] * noise_scale for a in ("gaussian", "ddim", "ddpm")}
+    return reused["reference"][:count] * noise_scale, reused["x0"][:count], noises
+
+
+def run_base_arms(backend, shard, noise, x0, prompts, batch, finish) -> None:
+    """The adapter-free arms: fresh Gaussian noise, DDIM inversion and DDPM inversion."""
+    gaussian = torch.cat([backend.noise(int(s)) for s in shard["seed_gaussian"]])
+    finish("gaussian", gaussian, batched(backend.denoise, gaussian, prompts, batch, "gaussian"))
+
+    x_t = batched(backend.invert, x0, prompts, batch, "ddim invert")
+    finish("ddim", x_t, batched(backend.denoise, x_t, prompts, batch, "ddim denoise"))
+
+    ddpm_noise, ddpm_rec = [], []
+    ddpm_start = time.time()
+    for pos, row in enumerate(shard.itertuples()):
+        x_t, rec = backend.ddpm(x0[pos : pos + 1], str(row.prompt), int(row.seed_ddpm))
+        ddpm_noise.append(x_t)
+        ddpm_rec.append(rec)
+        elapsed = time.time() - ddpm_start
+        logger.info(
+            "ddpm {}/{} ({:.0f}s, ETA {:.0f}s)",
+            pos + 1,
+            len(shard),
+            elapsed,
+            elapsed / (pos + 1) * (len(shard) - pos - 1),
+        )
+    finish("ddpm", torch.cat(ddpm_noise), torch.cat(ddpm_rec))
+
+
 def relative_error(a: torch.Tensor, b: torch.Tensor) -> float:
     """Relative L2 error of `a` against reference `b`, over the whole batch."""
     return float((a - b).norm() / b.norm())
@@ -387,12 +440,6 @@ def main(cfg: DictConfig) -> None:
     batch = int(cfg.batch_size)
     wav_root = run_dir / "wavs"
 
-    noise = torch.cat([backend.noise(int(s)) for s in shard["seed_gen"]])
-    logger.info("noise {} {} std {:.4f}", tuple(noise.shape), noise.dtype, float(noise.std()))
-    x0 = batched(backend.denoise, noise, prompts, batch, "generate")
-    logger.info("x0 {} mean {:.4f} std {:.4f}", tuple(x0.shape), float(x0.mean()), float(x0.std()))
-    save_wavs(backend, x0, indices, wav_root / "source")
-
     noises = {}
 
     def finish(arm: str, x_t: torch.Tensor, reconstruction: torch.Tensor) -> None:
@@ -407,27 +454,25 @@ def main(cfg: DictConfig) -> None:
         )
         save_wavs(backend, reconstruction, indices, wav_root / arm)
 
-    gaussian = torch.cat([backend.noise(int(s)) for s in shard["seed_gaussian"]])
-    finish("gaussian", gaussian, batched(backend.denoise, gaussian, prompts, batch, "gaussian"))
-
-    x_t = batched(backend.invert, x0, prompts, batch, "ddim invert")
-    finish("ddim", x_t, batched(backend.denoise, x_t, prompts, batch, "ddim denoise"))
-
-    ddpm_noise, ddpm_rec = [], []
-    ddpm_start = time.time()
-    for pos, row in enumerate(shard.itertuples()):
-        x_t, rec = backend.ddpm(x0[pos : pos + 1], str(row.prompt), int(row.seed_ddpm))
-        ddpm_noise.append(x_t)
-        ddpm_rec.append(rec)
-        elapsed = time.time() - ddpm_start
-        logger.info(
-            "ddpm {}/{} ({:.0f}s, ETA {:.0f}s)",
-            pos + 1,
-            len(shard),
-            elapsed,
-            elapsed / (pos + 1) * (len(shard) - pos - 1),
+    if cfg.reuse_run_dir:
+        noise, x0, reused = reuse_base_arms(
+            AUDIO_ROOT / str(cfg.reuse_run_dir),
+            shard_path.name,
+            shard,
+            backend.noise_scale,
+            wav_root,
         )
-    finish("ddpm", torch.cat(ddpm_noise), torch.cat(ddpm_rec))
+        noises.update(reused)
+        logger.info("reused generation and the adapter-free arms from {}", cfg.reuse_run_dir)
+    else:
+        noise = torch.cat([backend.noise(int(s)) for s in shard["seed_gen"]])
+        logger.info("noise {} {} std {:.4f}", tuple(noise.shape), noise.dtype, float(noise.std()))
+        x0 = batched(backend.denoise, noise, prompts, batch, "generate")
+        logger.info(
+            "x0 {} mean {:.4f} std {:.4f}", tuple(x0.shape), float(x0.mean()), float(x0.std())
+        )
+        save_wavs(backend, x0, indices, wav_root / "source")
+        run_base_arms(backend, shard, noise, x0, prompts, batch, finish)
 
     # Last, because injecting the adapter perturbs the base forward even while disabled (cuBLAS
     # rounding through the wrapped Linears), and every other arm must run the untouched model.
