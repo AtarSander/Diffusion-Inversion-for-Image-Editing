@@ -85,13 +85,19 @@ def real_pairs(
     text_audio: torch.Tensor,
     seed: int,
     batch_size: int,
+    include_final: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[float]]:
     """Forward-noise a real latent to every coarse sigma and form exact-coarse-step pairs.
 
     States are `y_k = x0 + sigma_k * eps_k` with an independent draw per level (the forward
     marginal, the distribution the teacher itself was trained on). Each training input is one
     exact coarse reverse step from `y_k`, so the pair keeps the step invariant the coarse
-    inversion relies on; the last coarse transition ends at sigma = 0 and is dropped.
+    inversion relies on. The last coarse transition ends at sigma = 0 and is dropped unless
+    `include_final`: then its input is that step's output D(y_N-1) (the clean end the inversion
+    starts from) and its target 2 D(y_N-1) - y_N-1, the data prediction for which the deployed
+    first inversion step (`lift_from_zero`, eps read at the last nonzero sigma) returns y_N-1,
+    i.e. eps(y_N-1) in epsilon units. Starting from the real x0 instead would make the target
+    a fresh noise draw that nothing in the input predicts.
 
     Args:
         teacher: The loaded teacher.
@@ -124,6 +130,12 @@ def real_pairs(
 
     a, b = solver.coefficients_batch(torch.arange(n - 1))
     inputs = a.to(x0.device) * states[:-1] + b.to(x0.device) * data[:-1]
+    if include_final:
+        assert float(solver.sigmas[-1]) == 0.0, "the final pair is for grids ending at sigma = 0"
+        final_input = data[-1]  # the sigma -> 0 step returns the data prediction alone
+        rows = torch.cat([states[:1], inputs, final_input[None]]).cpu()
+        targets = torch.cat([data[:-1], (2 * final_input - states[-1])[None]]).cpu()
+        return rows, targets, states.cpu(), list(solver.timesteps)[1:] + list(solver.timesteps)[-1:]
     rows = torch.cat([states[:1], inputs]).cpu()
     return rows, data[:-1].cpu(), states.cpu(), list(solver.timesteps)[1:]
 
@@ -175,6 +187,7 @@ def main(cfg: DictConfig) -> None:
         "num_inference_steps": int(cfg.num_inference_steps),
         "input_space": "exact_coarse_step",
         "states_source": "real_audio_forward_noise",
+        "final_transition": bool(cfg.get("include_final_transition", False)),
         "duration_s": teacher.duration_s,
         "store_dtype": str(cfg.store_dtype),
         "git_sha": git_sha(),
@@ -198,10 +211,13 @@ def main(cfg: DictConfig) -> None:
 
         seed = int(cfg.seed_base) + sample_idx
         rows, targets, states, timesteps = real_pairs(
-            teacher, solver, x0, text_audio, seed, int(cfg.forward_batch_size)
+            teacher, solver, x0, text_audio, seed, int(cfg.forward_batch_size),
+            include_final=bool(cfg.get("include_final_transition", False)),
         )
         if not first_logged:
-            gap = (rows[1:] - states[1:]).flatten(1).norm(dim=1) / \
+            # Rows 1..N-1 are the exact-step inputs next to states 1..N-1; a final pair adds a row.
+            regular = rows[1 : states.shape[0]]
+            gap = (regular - states[1:]).flatten(1).norm(dim=1) / \
                 states[1:].flatten(1).norm(dim=1)
             logger.info(
                 "First clip {!r} ({}): latent RMS {:.3g}, noisiest state RMS {:.3g}, "

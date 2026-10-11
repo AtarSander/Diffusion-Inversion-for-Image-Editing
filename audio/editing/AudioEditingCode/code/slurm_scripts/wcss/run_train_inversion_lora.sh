@@ -218,6 +218,15 @@ CONFIGS=(
   # effective 32): the kept teacher graph roughly doubles activations, and batch 32 OOMed an H100.
   "attn|8|4|5e-5|aldm2cyc_l1_r8_a4_lr5e-5|cycle.enabled=true cycle.weight=1.0 max_train_steps=4000 save_every_steps=1000 eval_every_steps=1000 batch_size=16 gradient_accumulation_steps=2"
   "attn|8|4|5e-5|aldm2cyc_l1000_r8_a4_lr5e-5|cycle.enabled=true cycle.weight=1000.0 max_train_steps=4000 save_every_steps=1000 eval_every_steps=1000 batch_size=16 gradient_accumulation_steps=2"
+  # 48-49: Stable Audio (SCRIPT=src/inversion_lora/train_stable_audio.py, RUN_PREFIX=saocos_) with the
+  # last sampling step (sigma_99 -> 0, inverted first) as a training pair. realfndurfinal matches
+  # realfndur_r8_a4_lr5e-5 (@3000 in the paper table) except its data, which adds that pair to every
+  # real-audio sample (generate_real_pairs_stable_audio_finalpair). cycfinal matches
+  # cyc_k1_g1.0_r8_a4_lr5e-5 except its data, the final-pair trajectories, where the cycle runs the
+  # deployed first inversion step and the teacher's real sigma -> 0 step (final_cycle). Submit by
+  # PRESET_NAME.
+  "attn|8|4|5e-5|realfndurfinal_r8_a4_lr5e-5|data_root=\${oc.env:LORAINV_DATA_ROOT}/stable_audio_real_pairs_fp32_finalpair max_train_steps=3000 save_every_steps=500 eval_every_steps=500"
+  "attn|8|4|5e-5|cycfinal_k1_g1.0_r8_a4_lr5e-5|data_root=\${oc.env:LORAINV_DATA_ROOT}/stable_audio_cosine_ode_fp32_finalpair cycle.enabled=true cycle.steps=1 cycle.target_ratio=1.0 max_train_steps=4000 save_every_steps=1000 eval_every_steps=1000"
 )
 
 # Fail before the 12 GB model load rather than after it: wandb only reports a bad credential

@@ -376,7 +376,56 @@ class StableAudioInversionTrainer(AudioLDM2InversionTrainer):
                         self.solver.coefficients_batch(index))
                 x = a * x + b * prediction
 
-        return ((x.float() - x_clean.float()) ** 2).flatten(1).mean(dim=1)
+        per_example = ((x.float() - x_clean.float()) ** 2).flatten(1).mean(dim=1)
+        last = len(self.solver.timesteps) - 1
+        final = [i for i, step in enumerate(batch["step_idx"]) if step == last]
+        if not final:
+            return per_example
+        return self.final_cycle(per_example, final, x_clean, student, text_audio, timing, k)
+
+    def final_cycle(
+        self,
+        per_example: torch.Tensor,
+        final: list[int],
+        x_clean: torch.Tensor,
+        student: torch.Tensor,
+        text_audio: torch.Tensor,
+        timing: torch.Tensor | None,
+        k: int,
+    ) -> torch.Tensor:
+        """Replace the final pairs' cycle error with the sigma -> 0 step's own round trip.
+
+        A final pair's stored latent is the clean end x_N, which the generic path above misreads as
+        sitting at the last nonzero sigma. Its round trip is instead the deployed first inversion
+        step with the adapter (`lift_from_zero`: x~_{N-1} = 2 x_N - D_phi(x_N)) followed by the
+        frozen teacher's real last sampling step, which returns D_theta(x~_{N-1}); the error is
+        ||D_theta(x~_{N-1}) - x_N||^2, zero exactly when x~_{N-1} = x_{N-1}.
+
+        Args:
+            per_example: Generic cycle errors `[B]`, with graph.
+            final: Batch positions of the final pairs.
+            x_clean: Stored latents `[B, C, L]`.
+            student: Adapter data predictions at `x_clean`, with graph.
+            text_audio: Conditioning `[B, S, D]`.
+            timing: Per-example timing states or None.
+            k: Cycle length; the final pair is wired for one step.
+
+        Returns:
+            `[B]` cycle errors with the final pairs' entries replaced.
+        """
+        assert k == 1, "the final pair's cycle is wired for a one-step cycle"
+        sel = torch.tensor(final, device=x_clean.device)
+        last = torch.full((len(final),), len(self.solver.timesteps) - 1)
+        lifted = self.solver.lift_from_zero(x_clean[sel], student[sel])
+        with self.lora_disabled():
+            prediction = self.data_prediction_at(
+                lifted, last, text_audio[sel], None if timing is None else timing[sel]
+            )
+        a, b = (c.to(device=lifted.device, dtype=lifted.dtype) for c in
+                self.solver.coefficients_batch(last))
+        back = a * lifted + b * prediction
+        errors = ((back.float() - x_clean[sel].float()) ** 2).flatten(1).mean(dim=1)
+        return per_example.index_put((sel,), errors)
 
     def rollout_per_example(self, batch: dict[str, Any], student: torch.Tensor) -> torch.Tensor:
         """Error of a k-step inversion from the stored latent, against the stored noisier states.

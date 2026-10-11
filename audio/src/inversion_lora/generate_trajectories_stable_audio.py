@@ -107,7 +107,9 @@ def save_sample(
     torch.save(trajectory, sample_dir / "latents/trajectory.pt")
     torch.save(outputs, sample_dir / "targets/target_eps.pt")
     if states is not None:
-        assert states.shape == trajectory.shape, (states.shape, trajectory.shape)
+        # A final pair adds an input row (the sigma -> 0 step's output) with no new state.
+        rows = trajectory.shape[0] - 1 if meta.get("final_transition") else trajectory.shape[0]
+        assert states.shape == (rows, *trajectory.shape[1:]), (states.shape, trajectory.shape)
         torch.save(states.to(store_dtype), sample_dir / "latents/states.pt")
     if uncond is not None:
         assert uncond.shape == outputs.shape, (uncond.shape, outputs.shape)

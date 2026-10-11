@@ -191,8 +191,11 @@ class AudioLDM2InversionTrainer:
                         ", activation checkpointing per step" if self.rollout_checkpoint else "")
         # The paper's one-step cycle loss (eq. loss_cycle): invert one step with the adapter, step
         # back with the frozen teacher, and match the starting latent; added with a fixed weight.
+        # Keyed on `cycle.weight`: the Stable Audio subclass runs its own adaptively weighted cycle
+        # (`cycle.target_ratio`) and must not also switch this one on.
         cycle = cfg.get("cycle", {}) or {}
-        self.cycle_weight = float(cycle.get("weight", 1.0)) if cycle.get("enabled", False) else 0.0
+        enabled = cycle.get("enabled", False) and "weight" in cycle
+        self.cycle_weight = float(cycle["weight"]) if enabled else 0.0
         if self.cycle_weight:
             assert not self.rollout_steps, "rollout and cycle are alternatives; enable one"
             assert self.guidance_scale == 1.0, "the cycle steps the unguided trajectory"

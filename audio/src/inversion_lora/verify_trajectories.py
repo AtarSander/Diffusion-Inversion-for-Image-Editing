@@ -74,7 +74,8 @@ def check_sao_step(
         states_path = sample_dir / "latents/states.pt"
         if not states_path.exists():
             return [f"{sample_dir.name}: dense sample without latents/states.pt"]
-        base = _load(states_path)[:-1]
+        # With the final pair, the last stored state y_N-1 is that pair's own reverse-step input.
+        base = _load(states_path) if meta.get("final_transition") else _load(states_path)[:-1]
         if base.shape != traj[:-1].shape:
             return [f"{sample_dir.name}: states shape {tuple(base.shape)} != trajectory"]
     else:
@@ -88,7 +89,7 @@ def check_sao_step(
     want = traj[1 : steps + 1].float()
     if meta.get("final_transition"):
         got = torch.cat([got, (2 * traj[-1] - eps[-1]).float()[None]])
-        want = torch.cat([want, traj[-2].float()[None]])
+        want = torch.cat([want, base[steps].float()[None]])
     rel = (got - want).flatten(1).norm(dim=1) / want.flatten(1).norm(dim=1)
     if float(rel.max()) > SAO_STEP_TOLERANCE:
         return [
