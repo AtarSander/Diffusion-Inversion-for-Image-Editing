@@ -42,13 +42,17 @@ esac
 if [ "$LORA_MODE" = "odeinv" ]; then
   # Rows per checkpoint = depth points x CFG_TARS (20 at BUDGET=100 with four guidances), so the
   # fixed real-audio adapter is rows 40-59 there and the rollout k=4 / k=8 adapters rows 60-79 /
-  # 80-99. Appending keeps the earlier rows' names.
+  # 80-99. The adapters also trained on the sigma -> 0 step (trajectory / real / cycle) are rows
+  # 100-119 / 120-139 / 140-159. Appending keeps the earlier rows' names.
   LORA_CHECKPOINTS=(
     ""
     "saocos_r8_a4_lr5e-5/checkpoint_step_4000.pt"
     "saocos_realfndur_r8_a4_lr5e-5/checkpoint_step_3000.pt"
     "saocos_rollout4_r8_a4_lr5e-5/checkpoint_step_1000.pt"
     "saocos_rollout8_r8_a4_lr5e-5/checkpoint_step_1000.pt"
+    "saocos_finalpair_r8_a4_lr5e-5/checkpoint_step_4000.pt"
+    "saocos_realfndurfinal_r8_a4_lr5e-5/checkpoint_step_3000.pt"
+    "saocos_cycfinal_k1_g1.0_r8_a4_lr5e-5/checkpoint_step_4000.pt"
   )
 else
   LORA_CHECKPOINTS=("")

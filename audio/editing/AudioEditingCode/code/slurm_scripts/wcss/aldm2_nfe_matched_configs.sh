@@ -56,6 +56,9 @@ if [ "$LORA_MODE" = "ddim" ]; then
     # Gen adapter's. Rows 75-99 (k=4) and 100-124 (k=8) at five depths x five guidances.
     "aldm2roll4_r8_a4_lr5e-5/checkpoint_step_4000.pt"
     "aldm2roll8_r8_a4_lr5e-5/checkpoint_step_4000.pt"
+    # One-step cycle loss at lambda = 1 and 1000: rows 125-149 and 150-174.
+    "aldm2cyc_l1_r8_a4_lr5e-5/checkpoint_step_4000.pt"
+    "aldm2cyc_l1000_r8_a4_lr5e-5/checkpoint_step_4000.pt"
   )
 else
   LORA_CHECKPOINTS=("")
