@@ -214,9 +214,10 @@ CONFIGS=(
   # (eq. loss_cycle): loss_inv + weight * loss_cycle, gradient through the frozen teacher. Same data,
   # preset, batch and lr as attn_r8_a4_lr5e-5 (the paper's AudioLDM2 adapter @4000). On this 200-step
   # grid loss_cycle is 1/1246 of loss_inv at init (images on DDIM-50: 1/210), so weight 1 is the
-  # paper's loss as written and weight 1000 puts the term near parity.
-  "attn|8|4|5e-5|aldm2cyc_l1_r8_a4_lr5e-5|cycle.enabled=true cycle.weight=1.0 max_train_steps=4000 save_every_steps=1000 eval_every_steps=1000"
-  "attn|8|4|5e-5|aldm2cyc_l1000_r8_a4_lr5e-5|cycle.enabled=true cycle.weight=1000.0 max_train_steps=4000 save_every_steps=1000 eval_every_steps=1000"
+  # paper's loss as written and weight 1000 puts the term near parity. Batch 16 x accum 2 (same
+  # effective 32): the kept teacher graph roughly doubles activations, and batch 32 OOMed an H100.
+  "attn|8|4|5e-5|aldm2cyc_l1_r8_a4_lr5e-5|cycle.enabled=true cycle.weight=1.0 max_train_steps=4000 save_every_steps=1000 eval_every_steps=1000 batch_size=16 gradient_accumulation_steps=2"
+  "attn|8|4|5e-5|aldm2cyc_l1000_r8_a4_lr5e-5|cycle.enabled=true cycle.weight=1000.0 max_train_steps=4000 save_every_steps=1000 eval_every_steps=1000 batch_size=16 gradient_accumulation_steps=2"
 )
 
 # Fail before the 12 GB model load rather than after it: wandb only reports a bad credential
