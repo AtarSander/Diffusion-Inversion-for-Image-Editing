@@ -409,8 +409,11 @@ def reuse_base_arms(
     assert reused["noise_scale"] == noise_scale, (reused["noise_scale"], noise_scale)
     wav_root.mkdir(parents=True, exist_ok=True)
     for arm in ("source", *arms):
-        if not (wav_root / arm).exists():
-            (wav_root / arm).symlink_to(os.path.relpath(source_run / "wavs" / arm, wav_root))
+        # Shards start together, so create-then-rename: the rename atomically replaces a link
+        # another shard just made, while an actual directory in the way still fails loudly.
+        staging = wav_root / f".{arm}.{os.getpid()}"
+        staging.symlink_to(os.path.relpath(source_run / "wavs" / arm, wav_root))
+        os.replace(staging, wav_root / arm)
     noises = {a: reused["noise"][a][:count] * noise_scale for a in arms}
     return reused["reference"][:count] * noise_scale, reused["x0"][:count], noises
 
