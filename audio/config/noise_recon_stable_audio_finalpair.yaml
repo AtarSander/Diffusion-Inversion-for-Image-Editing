@@ -29,6 +29,11 @@ seed_gen: 7000000
 seed_gaussian: 8000000
 seed_ddpm: 9000000
 
+# Which slope each ODE inversion step reads: current (first step at its target sigma, the
+# rest at their own), matched (own sigma everywhere, sigma = 0 on the first step) or ddim
+# (target sigma everywhere). See StableAudioBackend.invert.
+inversion_convention: current
+
 batch_size: 16 # deterministic arms; DDPM runs the editing code one clip at a time
 num_shards: 16
 shard_id: 0

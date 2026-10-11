@@ -17,6 +17,7 @@
 # RUN_NAME (default main) picks outputs/noise_recon/$MODEL/$RUN_NAME, so a rerun keeps the old one.
 # LORA_PATH overrides the config's adapter; REUSE_RUN (a run_dir) takes generation and the
 # adapter-free arms from that earlier run, so only the adapter arm is computed (~6x cheaper).
+# INVERSION (Stable Audio) picks inversion_convention: current | matched | ddim.
 #   sbatch --account=$HPC_PWR_ACCOUNT --partition=$HPC_PWR_PARTITION --export=ALL,MODEL=audioldm2 \
 #     editing/AudioEditingCode/code/slurm_scripts/wcss/run_noise_recon.sh
 
@@ -36,6 +37,7 @@ nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 OVERRIDES=()
 [ -n "${LORA_PATH:-}" ] && OVERRIDES+=("lora_path=$LORA_PATH")
 [ -n "${REUSE_RUN:-}" ] && OVERRIDES+=("reuse_run_dir=$REUSE_RUN")
+[ -n "${INVERSION:-}" ] && OVERRIDES+=("inversion_convention=$INVERSION")  # Stable Audio only
 echo "overrides: ${OVERRIDES[*]:-none}"
 python src/inversion_lora/noise_recon_benchmark.py --config-name "noise_recon_$MODEL" \
   device=cuda:0 shard_id="$SLURM_ARRAY_TASK_ID" run_dir="outputs/noise_recon/$MODEL/${RUN_NAME:-main}" \

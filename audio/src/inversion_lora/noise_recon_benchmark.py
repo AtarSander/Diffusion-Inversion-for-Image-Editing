@@ -2,6 +2,7 @@
 # ABOUTME: and reconstruct them with DDIM, DDIM+LoRA and DDPM, plus a fresh-Gaussian-noise baseline.
 
 import json
+import math
 import os
 import platform
 import sys
@@ -41,6 +42,8 @@ from src.inversion_lora.stable_audio import (  # noqa: E402
 )
 
 ARMS = ("ddim", "ddim_lora", "ddpm", "gaussian")
+# Which slope Stable Audio's ODE inversion reads per step (StableAudioBackend.invert).
+INVERSION_CONVENTIONS = ("current", "matched", "ddim")
 # The DDPM-inversion settings the editing benchmark runs with (audioldm_run / stable_audio_run).
 DDPM_ETA = 1.0
 
@@ -172,6 +175,8 @@ class StableAudioBackend:
         # noise in unit-variance units; the KL and correlation are invariant to the common scale.
         self.noise_scale = float(self.solver.sigmas[0])
         self.denoiser = self.wrapper.model.transformer
+        self.convention = str(cfg.get("inversion_convention", "current"))
+        assert self.convention in INVERSION_CONVENTIONS, self.convention
         self._check_conditioning_matches_wrapper()
 
     def _check_conditioning_matches_wrapper(self) -> None:
@@ -227,12 +232,49 @@ class StableAudioBackend:
         """Full ODE sampling from sigma_max, including the final step to sigma = 0."""
         return ode_denoise(self.solver, x_t.to(self.device), 0, self._predict(prompts)).cpu()
 
+    def _eps(self, prompts: list[str]):
+        """Batched `eps(x, sigma) -> eps-hat` at any sigma >= 0, including sigma = 0.
+
+        Closed form of (x - D(x, sigma)) / sigma under the EDM preconditioning with v-prediction,
+        `x s / (s^2 + sd^2) + sd F / sqrt(s^2 + sd^2)`, which stays finite at s = 0 (where it is the
+        raw network output at t = 0).
+        """
+        scheduler = self.wrapper.model.scheduler
+        assert self.solver.preconditioned and scheduler.config.prediction_type == "v_prediction"
+        sd = float(scheduler.config.sigma_data)
+        text_audio = torch.cat([self.teacher.encode_prompt(p) for p in prompts])
+
+        def eps(x: torch.Tensor, sigma: torch.Tensor) -> torch.Tensor:
+            s = sigma.to(device=self.device, dtype=torch.float64)
+            t = (s.atan() * 2 / math.pi).float().expand(x.shape[0])
+            raw = self.teacher.forward((x / torch.sqrt(s**2 + sd**2)).float(), t, text_audio)
+            return x.double() * s / (s**2 + sd**2) + sd * raw.double() / torch.sqrt(s**2 + sd**2)
+
+        return eps
+
     @torch.no_grad()
     def invert(self, x0: torch.Tensor, prompts: list[str]) -> torch.Tensor:
-        """Full exact-inverse ODE inversion; the final sigma = 0 step has no inverse."""
-        return ode_invert(
-            self.solver, x0.to(self.device), self._predict(prompts), self.solver.invertible_steps
-        ).cpu()
+        """Full ODE inversion of all 100 steps, x_i = x_{i+1} + (s_i - s_{i+1}) eps(x_{i+1}, read).
+
+        `current` is `ode_invert`: the first inversion step (sigma 0 -> sigma_min) reads eps at
+        s_i, every other step at s_{i+1}. `matched` reads at s_{i+1} everywhere (so the model is
+        queried at sigma = 0 on the first step); `ddim` reads at s_i everywhere.
+        """
+        if self.convention == "current":
+            return ode_invert(
+                self.solver,
+                x0.to(self.device),
+                self._predict(prompts),
+                self.solver.invertible_steps,
+            ).cpu()
+        eps = self._eps(prompts)
+        sigmas = self.solver.sigmas.to(device=self.device, dtype=torch.float64)
+        assert float(sigmas[-1]) == 0.0 and len(sigmas) == len(self.solver.timesteps) + 1
+        x = x0.to(self.device).double()
+        for i in range(len(self.solver.timesteps) - 1, -1, -1):
+            read = i + 1 if self.convention == "matched" else i
+            x = x + (sigmas[i] - sigmas[i + 1]) * eps(x, sigmas[read])
+        return x.float().cpu()
 
     def ddpm(self, x0: torch.Tensor, prompt: str, seed: int) -> tuple[torch.Tensor, torch.Tensor]:
         """Edit-friendly DDPM inversion and reconstruction of one latent, via the editing code."""
@@ -338,7 +380,12 @@ def batched(
 
 
 def reuse_base_arms(
-    source_run: Path, shard_name: str, shard: pd.DataFrame, noise_scale: float, wav_root: Path
+    source_run: Path,
+    shard_name: str,
+    shard: pd.DataFrame,
+    noise_scale: float,
+    wav_root: Path,
+    arms: tuple[str, ...] = ("gaussian", "ddim", "ddpm"),
 ) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
     """Take generation and the adapter-free arms from an earlier run of the same benchmark.
 
@@ -346,8 +393,11 @@ def reuse_base_arms(
     deterministic: the final-pair run reproduced the lift run's bit for bit. So a new checkpoint
     only needs its own arm; the rest is read back and the earlier run's wavs are linked in.
 
+    Args:
+        arms: The arms to take over; an arm whose inversion changed must be recomputed instead.
+
     Returns:
-        The generation noise, x0, and the three adapter-free arms' noises, unnormalised.
+        The generation noise, x0, and the reused arms' noises, unnormalised.
     """
     reused = torch.load(
         source_run / "latents" / shard_name, map_location="cpu", weights_only=False
@@ -358,10 +408,10 @@ def reuse_base_arms(
         assert reused["seeds"][column][:count] == shard[column].tolist(), column
     assert reused["noise_scale"] == noise_scale, (reused["noise_scale"], noise_scale)
     wav_root.mkdir(parents=True, exist_ok=True)
-    for arm in ("source", "gaussian", "ddim", "ddpm"):
+    for arm in ("source", *arms):
         if not (wav_root / arm).exists():
             (wav_root / arm).symlink_to(os.path.relpath(source_run / "wavs" / arm, wav_root))
-    noises = {a: reused["noise"][a][:count] * noise_scale for a in ("gaussian", "ddim", "ddpm")}
+    noises = {a: reused["noise"][a][:count] * noise_scale for a in arms}
     return reused["reference"][:count] * noise_scale, reused["x0"][:count], noises
 
 
@@ -455,15 +505,23 @@ def main(cfg: DictConfig) -> None:
         save_wavs(backend, reconstruction, indices, wav_root / arm)
 
     if cfg.reuse_run_dir:
+        # The DDIM arm depends on the inversion convention, so it is reused only when that is the
+        # source run's (every earlier run used `current`).
+        reuse_ddim = str(cfg.get("inversion_convention", "current")) == "current"
+        arms = ("gaussian", "ddim", "ddpm") if reuse_ddim else ("gaussian", "ddpm")
         noise, x0, reused = reuse_base_arms(
             AUDIO_ROOT / str(cfg.reuse_run_dir),
             shard_path.name,
             shard,
             backend.noise_scale,
             wav_root,
+            arms,
         )
         noises.update(reused)
-        logger.info("reused generation and the adapter-free arms from {}", cfg.reuse_run_dir)
+        logger.info("reused generation and arms {} from {}", arms, cfg.reuse_run_dir)
+        if not reuse_ddim:
+            x_t = batched(backend.invert, x0, prompts, batch, "ddim invert")
+            finish("ddim", x_t, batched(backend.denoise, x_t, prompts, batch, "ddim denoise"))
     else:
         noise = torch.cat([backend.noise(int(s)) for s in shard["seed_gen"]])
         logger.info("noise {} {} std {:.4f}", tuple(noise.shape), noise.dtype, float(noise.std()))
