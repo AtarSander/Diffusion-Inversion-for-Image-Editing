@@ -189,6 +189,14 @@ class AudioLDM2InversionTrainer:
             logger.info("rollout loss ON: {} inversion steps per example, weight {}, full "
                         "backprop{}", self.rollout_steps, self.rollout_weight,
                         ", activation checkpointing per step" if self.rollout_checkpoint else "")
+        # The paper's one-step cycle loss (eq. loss_cycle): invert one step with the adapter, step
+        # back with the frozen teacher, and match the starting latent; added with a fixed weight.
+        cycle = cfg.get("cycle", {}) or {}
+        self.cycle_weight = float(cycle.get("weight", 1.0)) if cycle.get("enabled", False) else 0.0
+        if self.cycle_weight:
+            assert not self.rollout_steps, "rollout and cycle are alternatives; enable one"
+            assert self.guidance_scale == 1.0, "the cycle steps the unguided trajectory"
+            logger.info("cycle loss ON: weight {}", self.cycle_weight)
 
         self._freeze_components()
         lora_cfg = OmegaConf.to_container(cfg.lora, resolve=True)
@@ -323,6 +331,31 @@ class AudioLDM2InversionTrainer:
         shape = (-1,) + (1,) * (ndim - 1)
         return a.reshape(shape).to(self.device), b.reshape(shape).to(self.device)
 
+    def cycle_per_example(self, batch: dict[str, Any], student: torch.Tensor) -> torch.Tensor:
+        """The paper's cycle error: one adapted inversion step, then one frozen denoising step.
+
+        From the stored cleaner latent x_{t-1}: x~_t = A x_{t-1} + B eps_phi (the deployed
+        inversion step), then x~_{t-1} = (x~_t - B eps_theta(x~_t, t)) / A, the frozen teacher's
+        DDIM step back over the same interval (its exact inverse given the same epsilon). The
+        teacher runs with the adapter off but keeps its graph, so the error reaches the adapter
+        through the teacher's input as well as through eps_phi.
+
+        Args:
+            batch: One training batch.
+            student: The adapter's epsilon at the stored latent, with graph.
+
+        Returns:
+            Per-example squared error `||x~_{t-1} - x_{t-1}||^2`, mean over elements `[B]`.
+        """
+        x_prev = batch["x_clean"].to(device=self.device, dtype=self.unet.dtype)
+        timestep = batch["timestep"].to(device=self.device)
+        a, b = (c.to(x_prev.dtype) for c in self.ddim_inversion_coefficients(timestep, x_prev.dim()))
+        x_t = a * x_prev + b * student
+        with self.lora_disabled():
+            teacher = self.conditional_eps(x_t, timestep, batch)
+        x_back = (x_t - b * teacher) / a
+        return ((x_back.float() - x_prev.float()) ** 2).flatten(1).mean(dim=1)
+
     def rollout_per_example(self, batch: dict[str, Any], student: torch.Tensor) -> torch.Tensor:
         """Error of a k-step DDIM inversion from the stored latent, against the stored states.
 
@@ -417,6 +450,18 @@ class AudioLDM2InversionTrainer:
         Returns:
             `(loss, per_example_inversion_loss, extra_scalars_to_log)`.
         """
+        if self.cycle_weight:
+            student = self.predict_noise(batch)
+            target = self.target_noise(batch)
+            assert student.shape == target.shape, (student.shape, target.shape)
+            per_example = ((student.float() - target.float()) ** 2).flatten(1).mean(dim=1)
+            inversion = per_example.mean()
+            cycle = self.cycle_per_example(batch, student).mean()
+            return (
+                inversion + self.cycle_weight * cycle,
+                per_example,
+                {"train/loss_inv": float(inversion), "train/loss_cycle": float(cycle)},
+            )
         if not self.rollout_steps:
             per_example = self.per_example_loss(batch)
             return per_example.mean(), per_example, {}
