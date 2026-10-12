@@ -54,7 +54,7 @@ FIGURES = {
             "zoom": (4.10, 4.75),
         },
         "Stable Audio Open": {
-            "csv": AUDIO_ROOT / "output/matched_nfe/20261012_103246/matched_nfe_runs_full.csv",
+            "csv": AUDIO_ROOT / "output/matched_nfe/20261012_113416/matched_nfe_runs_full.csv",
             "labels": {
                 "ODEInv (no LoRA)": "DDIM Inv.",
                 "DDPM-inv": "DDPM Inv.",
