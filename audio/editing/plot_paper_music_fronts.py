@@ -16,23 +16,51 @@ import matplotlib.pyplot as plt  # noqa: E402
 AUDIO_ROOT = Path(__file__).resolve().parents[1]
 FS = 14
 
-MODELS = {
-    "AudioLDM2": {
-        "csv": AUDIO_ROOT / "output/matched_nfe_audioldm2/20260925_213426_full_nfe400/matched_nfe_runs.csv",
-        "labels": {
-            "DDIM Inv.": "DDIM Inv.",
-            "DDIM Inv. + LoRA (Gen)": "Moonwalker $\\mathbf{(ours)}$",
-            "DDPM Inv.": "DDPM Inv.",
-            "SDEdit": "SDEdit",
+# "paper" is the published figure: AudioLDM2 at 400 NFE with guided inversion, Stable Audio
+# before the sigma = 0 lift. "lift" is AudioLDM2 at 200 NFE with unguided inversion and Stable
+# Audio with the lift, comparing the trajectory and real adapters (Stable Audio: both trained on
+# the last sampling step too).
+FIGURES = {
+    "paper": {
+        "AudioLDM2": {
+            "csv": AUDIO_ROOT / "output/matched_nfe_audioldm2/20260925_213426_full_nfe400/matched_nfe_runs.csv",
+            "labels": {
+                "DDIM Inv.": "DDIM Inv.",
+                "DDIM Inv. + LoRA (Gen)": "Moonwalker $\\mathbf{(ours)}$",
+                "DDPM Inv.": "DDPM Inv.",
+                "SDEdit": "SDEdit",
+            },
+        },
+        "Stable Audio Open": {
+            "csv": AUDIO_ROOT / "output/matched_nfe/20260926_023532/matched_nfe_runs_full.csv",
+            "labels": {
+                "ODEInv (no LoRA)": "DDIM Inv.",
+                "ODEInv w/ LoRA bw": "Moonwalker $\\mathbf{(ours)}$",
+                "DDPM-inv": "DDPM Inv.",
+                "SDEdit": "SDEdit",
+            },
         },
     },
-    "Stable Audio Open": {
-        "csv": AUDIO_ROOT / "output/matched_nfe/20260926_023532/matched_nfe_runs_full.csv",
-        "labels": {
-            "ODEInv (no LoRA)": "DDIM Inv.",
-            "ODEInv w/ LoRA bw": "Moonwalker $\\mathbf{(ours)}$",
-            "DDPM-inv": "DDPM Inv.",
-            "SDEdit": "SDEdit",
+    "lift": {
+        "AudioLDM2": {
+            "csv": AUDIO_ROOT / "output/matched_nfe_audioldm2/20261012_103214_full_nfe200/matched_nfe_runs.csv",
+            "labels": {
+                "DDIM Inv. [cfg_src 1]": "DDIM Inv.",
+                "DDPM Inv.": "DDPM Inv.",
+                "SDEdit": "SDEdit",
+                "DDIM Inv. + LoRA (Gen) [cfg_src 1]": "Moonwalker (traj.)",
+                "DDIM Inv. + LoRA (Real) [cfg_src 1]": "Moonwalker (real)",
+            },
+        },
+        "Stable Audio Open": {
+            "csv": AUDIO_ROOT / "output/matched_nfe/20261012_103246/matched_nfe_runs_full.csv",
+            "labels": {
+                "ODEInv (no LoRA)": "DDIM Inv.",
+                "DDPM-inv": "DDPM Inv.",
+                "SDEdit": "SDEdit",
+                "ODEInv w/ LoRA saocos_finalpair_r8_a4_lr5e-5": "Moonwalker (traj.)",
+                "ODEInv w/ LoRA saocos_realfndurfinal_r8_a4_lr5e-5": "Moonwalker (real)",
+            },
         },
     },
 }
@@ -40,6 +68,8 @@ MODELS = {
 STYLE = {
     "DDIM Inv.": ("#1f77b4", "o"),
     "Moonwalker $\\mathbf{(ours)}$": ("#d62728", "s"),
+    "Moonwalker (traj.)": ("#d62728", "s"),
+    "Moonwalker (real)": ("#9467bd", "D"),
     "DDPM Inv.": ("#2ca02c", "^"),
     "SDEdit": ("#ff7f0e", "v"),
 }
@@ -47,17 +77,18 @@ STYLE = {
 METRICS = {"clap": "CLAP-T", "muq": "MuQ-T"}
 
 
-def main(out_root: str = str(AUDIO_ROOT / "output/paper_figures"),
+def main(figure: str = "paper", out_root: str = str(AUDIO_ROOT / "output/paper_figures"),
          paper_figures: str = str(AUDIO_ROOT.parent / "paper_tex/figures")) -> None:
     """Plot per-arm Pareto fronts over the pooled (depth, cfg_tar) grid, with all
     operating points as faint markers behind each front.
 
     Args:
+        figure: Key of FIGURES to draw. Only "paper" is copied into the paper.
         out_root: Directory for the timestamped copy of the figure.
         paper_figures: Paper figures directory receiving the stable-named copy.
     """
     fig, axes = plt.subplots(2, 2, figsize=(11, 5.625))
-    for col, (model, spec) in enumerate(MODELS.items()):
+    for col, (model, spec) in enumerate(FIGURES[figure].items()):
         df = pd.read_csv(spec["csv"])
         for row, (metric, metric_name) in enumerate(METRICS.items()):
             ax = axes[row, col]
@@ -101,9 +132,12 @@ def main(out_root: str = str(AUDIO_ROOT / "output/paper_figures"),
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = Path(out_root) / ts
     out_dir.mkdir(parents=True, exist_ok=True)
-    stamped = out_dir / f"{ts}_music_editing_fronts.pdf"
+    stamped = out_dir / f"{ts}_music_editing_fronts_{figure}.pdf"
     fig.savefig(stamped, bbox_inches="tight")
     fig.savefig(stamped.with_suffix(".png"), dpi=200, bbox_inches="tight")
+    if figure != "paper":
+        print(f"wrote {stamped}")
+        return
 
     stable = Path(paper_figures) / "music_editing_fronts.pdf"
     stable.parent.mkdir(parents=True, exist_ok=True)
