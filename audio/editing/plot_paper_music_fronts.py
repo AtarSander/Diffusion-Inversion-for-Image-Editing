@@ -43,13 +43,16 @@ FIGURES = {
     },
     "lift": {
         "AudioLDM2": {
-            "csv": AUDIO_ROOT / "output/matched_nfe_audioldm2/20261012_103214_full_nfe200/matched_nfe_runs.csv",
+            "csv": AUDIO_ROOT / "output/matched_nfe_audioldm2/20261012_161241_full_nfe200/matched_nfe_runs.csv",
+            # The cycle arm is lambda = 1000; lambda = 1 matches the trajectory adapter to 3e-5 LPAPS
+            # at every setting, so it would only redraw that front.
             "labels": {
                 "DDIM Inv. [cfg_src 1]": "DDIM Inv.",
                 "DDPM Inv.": "DDPM Inv.",
                 "SDEdit": "SDEdit",
                 "DDIM Inv. + LoRA (Gen) [cfg_src 1]": "Moonwalker (traj.)",
                 "DDIM Inv. + LoRA (Real) [cfg_src 1]": "Moonwalker (real)",
+                "DDIM Inv. + LoRA (Cycle lambda=1000) [cfg_src 1]": "Moonwalker (cycle)",
             },
             "zoom": (4.10, 4.75),
         },
