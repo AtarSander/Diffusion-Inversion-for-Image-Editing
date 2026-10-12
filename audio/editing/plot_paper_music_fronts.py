@@ -54,13 +54,14 @@ FIGURES = {
             "zoom": (4.10, 4.75),
         },
         "Stable Audio Open": {
-            "csv": AUDIO_ROOT / "output/matched_nfe/20261012_113416/matched_nfe_runs_full.csv",
+            "csv": AUDIO_ROOT / "output/matched_nfe/20261012_154351/matched_nfe_runs_full.csv",
             "labels": {
                 "ODEInv (no LoRA)": "DDIM Inv.",
                 "DDPM-inv": "DDPM Inv.",
                 "SDEdit": "SDEdit",
                 "ODEInv w/ LoRA saocos_finalpair_r8_a4_lr5e-5": "Moonwalker (traj.)",
                 "ODEInv w/ LoRA saocos_realfndurfinal_r8_a4_lr5e-5": "Moonwalker (real)",
+                "ODEInv w/ LoRA saocos_cycfinal_k1_g1.0_r8_a4_lr5e-5": "Moonwalker (cycle)",
             },
             "zoom": (3.50, 4.15),
         },
@@ -72,13 +73,14 @@ STYLE = {
     "Moonwalker $\\mathbf{(ours)}$": ("#d62728", "s"),
     "Moonwalker (traj.)": ("#d62728", "s"),
     "Moonwalker (real)": ("#9467bd", "D"),
+    "Moonwalker (cycle)": ("#8c564b", "P"),
     "DDPM Inv.": ("#2ca02c", "^"),
     "SDEdit": ("#ff7f0e", "v"),
 }
 
 METRICS = {"clap": "CLAP-T", "muq": "MuQ-T"}
 # Arms redrawn in the zoom panels: the adapters and the inversion they modify.
-ZOOM_LABELS = ("DDIM Inv.", "Moonwalker (traj.)", "Moonwalker (real)")
+ZOOM_LABELS = ("DDIM Inv.", "Moonwalker (traj.)", "Moonwalker (real)", "Moonwalker (cycle)")
 
 
 def draw_zoom(ax: plt.Axes, axz: plt.Axes, fronts: dict, metric: str,
@@ -176,8 +178,12 @@ def main(figure: str = "paper", zoom: bool = False,
         axes[0, col * per_model].set_title(model, fontsize=FS + 2)
         if zoom:
             axes[0, col * per_model + 1].set_title(f"{model} (zoom)", fontsize=FS + 2)
-    handles, labels = axes[0, 0].get_legend_handles_labels()
-    fig.legend(handles, labels, ncol=len(labels), fontsize=FS,
+    # Union over the panels: an arm may exist for one model only.
+    legend = {}
+    for ax in axes[0]:
+        for handle, label in zip(*ax.get_legend_handles_labels()):
+            legend.setdefault(label, handle)
+    fig.legend(legend.values(), legend.keys(), ncol=len(legend), fontsize=FS,
                loc="upper center", bbox_to_anchor=(0.5, 1.0), framealpha=0.9)
     fig.tight_layout(rect=(0, 0, 1, 0.94))
 
