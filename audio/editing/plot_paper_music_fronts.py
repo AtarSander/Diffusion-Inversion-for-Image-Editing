@@ -51,6 +51,7 @@ FIGURES = {
                 "DDIM Inv. + LoRA (Gen) [cfg_src 1]": "Moonwalker (traj.)",
                 "DDIM Inv. + LoRA (Real) [cfg_src 1]": "Moonwalker (real)",
             },
+            "zoom": (4.10, 4.75),
         },
         "Stable Audio Open": {
             "csv": AUDIO_ROOT / "output/matched_nfe/20261012_103246/matched_nfe_runs_full.csv",
@@ -61,6 +62,7 @@ FIGURES = {
                 "ODEInv w/ LoRA saocos_finalpair_r8_a4_lr5e-5": "Moonwalker (traj.)",
                 "ODEInv w/ LoRA saocos_realfndurfinal_r8_a4_lr5e-5": "Moonwalker (real)",
             },
+            "zoom": (3.50, 4.15),
         },
     },
 }
@@ -75,24 +77,66 @@ STYLE = {
 }
 
 METRICS = {"clap": "CLAP-T", "muq": "MuQ-T"}
+# Arms redrawn in the zoom panels: the adapters and the inversion they modify.
+ZOOM_LABELS = ("DDIM Inv.", "Moonwalker (traj.)", "Moonwalker (real)")
 
 
-def main(figure: str = "paper", out_root: str = str(AUDIO_ROOT / "output/paper_figures"),
+def draw_zoom(ax: plt.Axes, axz: plt.Axes, fronts: dict, metric: str,
+              window: tuple[float, float]) -> None:
+    """Redraw the ZOOM_LABELS fronts of one panel inside an LPAPS window and outline it on `ax`.
+
+    Args:
+        ax: Full panel, which gets a dashed rectangle around the zoomed region.
+        axz: Zoom panel.
+        fronts: Label -> front rows (lpaps, metric and their SEMs) drawn on `ax`.
+        metric: Alignment column on the y axis.
+        window: LPAPS range shown in the zoom.
+    """
+    x0, x1 = window
+    ys = []
+    for label, front in fronts.items():
+        if label not in ZOOM_LABELS:
+            continue
+        color, marker = STYLE[label]
+        axz.errorbar(front.lpaps, front[metric], xerr=front.lpaps_sem, yerr=front[f"{metric}_sem"],
+                     color=color, marker=marker, markersize=7, markeredgecolor="black",
+                     markeredgewidth=0.8, linewidth=1.6, elinewidth=0.9, capsize=3)
+        inside = front[front.lpaps.between(x0, x1)]
+        ys += [inside[metric] - inside[f"{metric}_sem"], inside[metric] + inside[f"{metric}_sem"]]
+    y = pd.concat(ys)
+    pad = 0.05 * (y.max() - y.min())
+    y0, y1 = y.min() - pad, y.max() + pad
+    axz.set_xlim(x0, x1)
+    axz.set_ylim(y0, y1)
+    axz.grid(True, linestyle="--", alpha=0.2)
+    axz.yaxis.set_major_formatter(matplotlib.ticker.FormatStrFormatter("%.3f"))
+    axz.xaxis.set_major_formatter(matplotlib.ticker.FormatStrFormatter("%.2f"))
+    axz.tick_params(labelsize=FS - 2)
+    ax.add_patch(matplotlib.patches.Rectangle((x0, y0), x1 - x0, y1 - y0, fill=False,
+                                              edgecolor="0.3", linestyle="--", linewidth=1))
+
+
+def main(figure: str = "paper", zoom: bool = False,
+         out_root: str = str(AUDIO_ROOT / "output/paper_figures"),
          paper_figures: str = str(AUDIO_ROOT.parent / "paper_tex/figures")) -> None:
     """Plot per-arm Pareto fronts over the pooled (depth, cfg_tar) grid, with all
     operating points as faint markers behind each front.
 
     Args:
-        figure: Key of FIGURES to draw. Only "paper" is copied into the paper.
+        figure: Key of FIGURES to draw. Only "paper" without zoom is copied into the paper.
+        zoom: Add a panel right of each model's panels with the DDIM and adapter fronts inside
+            that model's "zoom" LPAPS window.
         out_root: Directory for the timestamped copy of the figure.
         paper_figures: Paper figures directory receiving the stable-named copy.
     """
-    fig, axes = plt.subplots(2, 2, figsize=(11, 5.625))
+    per_model = 2 if zoom else 1
+    fig, axes = plt.subplots(2, 2 * per_model, figsize=(5.5 * 2 * per_model, 5.625))
     for col, (model, spec) in enumerate(FIGURES[figure].items()):
         df = pd.read_csv(spec["csv"])
         for row, (metric, metric_name) in enumerate(METRICS.items()):
-            ax = axes[row, col]
+            ax = axes[row, col * per_model]
             front_x = []
+            fronts = {}
             for arm, label in spec["labels"].items():
                 color, marker = STYLE[label]
                 sub = df[df.arm == arm].sort_values("lpaps")
@@ -105,6 +149,7 @@ def main(figure: str = "paper", out_root: str = str(AUDIO_ROOT / "output/paper_f
                             markeredgecolor="black", markeredgewidth=0.8,
                             linewidth=1.6, elinewidth=0.9, capsize=2, label=label)
                 front_x += [front.lpaps - front.lpaps_sem, front.lpaps + front.lpaps_sem]
+                fronts[label] = front
             # Each panel spans its own fronts, so dominated points past the last front point of
             # any arm fall outside it.
             x_lo, x_hi = pd.concat(front_x).min(), pd.concat(front_x).max()
@@ -123,7 +168,14 @@ def main(figure: str = "paper", out_root: str = str(AUDIO_ROOT / "output/paper_f
                 ax.set_xlabel("LPAPS to source $\\downarrow$", fontsize=FS)
             else:
                 ax.tick_params(labelbottom=True)
-        axes[0, col].set_title(model, fontsize=FS + 2)
+            if zoom:
+                axz = axes[row, col * per_model + 1]
+                draw_zoom(ax, axz, fronts, metric, spec["zoom"])
+                if row == 1:
+                    axz.set_xlabel("LPAPS to source $\\downarrow$", fontsize=FS)
+        axes[0, col * per_model].set_title(model, fontsize=FS + 2)
+        if zoom:
+            axes[0, col * per_model + 1].set_title(f"{model} (zoom)", fontsize=FS + 2)
     handles, labels = axes[0, 0].get_legend_handles_labels()
     fig.legend(handles, labels, ncol=len(labels), fontsize=FS,
                loc="upper center", bbox_to_anchor=(0.5, 1.0), framealpha=0.9)
@@ -132,10 +184,10 @@ def main(figure: str = "paper", out_root: str = str(AUDIO_ROOT / "output/paper_f
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = Path(out_root) / ts
     out_dir.mkdir(parents=True, exist_ok=True)
-    stamped = out_dir / f"{ts}_music_editing_fronts_{figure}.pdf"
+    stamped = out_dir / f"{ts}_music_editing_fronts_{figure}{'_zoom' if zoom else ''}.pdf"
     fig.savefig(stamped, bbox_inches="tight")
     fig.savefig(stamped.with_suffix(".png"), dpi=200, bbox_inches="tight")
-    if figure != "paper":
+    if figure != "paper" or zoom:
         print(f"wrote {stamped}")
         return
 
