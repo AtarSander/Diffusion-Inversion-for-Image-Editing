@@ -86,6 +86,8 @@ def main(cfg: DictConfig) -> None:
         ),
         "--pix2pix_attention_loss_scale",
         str(OmegaConf.select(cfg, "pix2pix_zero.attention_loss_scale", default=1.0)),
+        "--inversion_steps",
+        str(OmegaConf.select(cfg, "inversion_steps", default=50)),
     ]
     grad_clip_norm = OmegaConf.select(cfg, "pix2pix_zero.attention_grad_clip_norm", default=None)
     if grad_clip_norm is not None:

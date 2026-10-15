@@ -1,7 +1,7 @@
 import json
 from bisect import bisect_right
 from collections.abc import Sequence
-from math import ceil
+from math import ceil, isfinite
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +22,7 @@ class LatentTrajectoryDataset(Dataset):
         require_training_cache: bool = True,
         require_target_eps: bool = True,
         sample_mode: str = "transition",
+        source_names: Sequence[str] | None = None,
     ):
         if isinstance(root_dir, (str, Path)):
             self.root_dirs = [Path(root_dir)]
@@ -29,6 +30,14 @@ class LatentTrajectoryDataset(Dataset):
             self.root_dirs = [Path(path) for path in root_dir]
         if not self.root_dirs:
             raise ValueError("LatentTrajectoryDataset requires at least one root directory.")
+        self.source_names = (
+            [str(root) for root in self.root_dirs]
+            if source_names is None else list(source_names)
+        )
+        if len(self.source_names) != len(self.root_dirs) or any(
+            not isinstance(name, str) or not name.strip() for name in self.source_names
+        ):
+            raise ValueError("source_names must contain one non-empty name per root directory.")
         self.latents_file_name = latents_file_name
         self.conditioning_file_name = conditioning_file_name
         self.targets_dir_name = targets_dir_name
@@ -45,7 +54,7 @@ class LatentTrajectoryDataset(Dataset):
         self.samples: list[dict[str, Any]] = []
         self.cumulative_lengths: list[int] = []
 
-        for root_dir in self.root_dirs:
+        for root_dir, source_name in zip(self.root_dirs, self.source_names):
             for sample_dir in sorted(root_dir.glob("sample_*")):
                 latents_dir = sample_dir / "latents"
                 timesteps_path = sample_dir / "timesteps.json"
@@ -77,6 +86,8 @@ class LatentTrajectoryDataset(Dataset):
                         {
                             "sample_dir": sample_dir,
                             "format": "stacked_pt",
+                            "source_name": source_name,
+                            "source_root": str(root_dir),
                             "trajectory_path": trajectory_path,
                             "trajectory_length": trajectory_length,
                             "timesteps_path": timesteps_path,
@@ -96,6 +107,8 @@ class LatentTrajectoryDataset(Dataset):
                         {
                             "sample_dir": sample_dir,
                             "format": "per_step_pt",
+                            "source_name": source_name,
+                            "source_root": str(root_dir),
                             "latent_paths": latent_paths,
                             "trajectory_length": len(latent_paths),
                             "timesteps_path": timesteps_path,
@@ -110,6 +123,31 @@ class LatentTrajectoryDataset(Dataset):
 
     def __len__(self) -> int:
         return self.cumulative_lengths[-1] if self.cumulative_lengths else 0
+
+    def source_mixture_sampling_weights(self, source_weights):
+        """Assign source mass independently of each source's transition count."""
+        if self.sample_mode != "transition":
+            raise ValueError("Source-mixture sampling requires transition samples.")
+        counts = {}
+        for sample in self.samples:
+            name = sample["source_name"]
+            counts[name] = counts.get(name, 0) + sample["num_transitions"]
+        if not counts or set(source_weights) != set(counts):
+            raise ValueError("source_weights must name exactly the non-empty dataset sources.")
+        masses = {name: float(value) for name, value in source_weights.items()}
+        if any(not isfinite(value) or value < 0 for value in masses.values()):
+            raise ValueError("Source weights must be finite and non-negative.")
+        total = sum(masses.values())
+        if not isfinite(total) or total <= 0:
+            raise ValueError("Source weights must have a finite positive sum.")
+        masses = {name: value / total for name, value in masses.items()}
+        weights = torch.empty(len(self), dtype=torch.double)
+        offset = 0
+        for sample in self.samples:
+            count, name = sample["num_transitions"], sample["source_name"]
+            weights[offset:offset + count] = masses[name] / counts[name]
+            offset += count
+        return weights, counts, masses
 
     def final_tail_sampling_weights(
         self,
@@ -212,6 +250,8 @@ class LatentTrajectoryDataset(Dataset):
                 "sample_idx": sample["sample_idx"],
                 "sample_dir": str(sample["sample_dir"]),
                 "sample_mode": "endpoint",
+                "source_name": sample["source_name"],
+                "source_root": sample["source_root"],
                 "num_transitions": num_transitions,
                 "input_timestep": int(timesteps[-1]),
                 "terminal_timestep": int(timesteps[0]),
@@ -221,6 +261,8 @@ class LatentTrajectoryDataset(Dataset):
             "sample_idx": sample["sample_idx"],
             "sample_dir": str(sample["sample_dir"]),
             "step_idx": int(step_idx),
+            "source_name": sample["source_name"],
+            "source_root": sample["source_root"],
             # Sampling is stored noise -> image, while inversion runs image -> noise.
             "inversion_step": num_transitions - 1 - int(step_idx),
             "num_transitions": num_transitions,

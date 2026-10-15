@@ -1500,16 +1500,52 @@ def _dataset_roots(cfg: DictConfig, plural_key: str, singular_key: str):
     return str(singular_value)
 
 
+def _dataset_source_names(cfg: DictConfig, plural_key: str) -> list[str] | None:
+    value = OmegaConf.select(cfg, f"data.{plural_key}", default=None)
+    if value is None:
+        return None
+    return [str(name) for name in value]
+
+
 def build_train_sampler(
     dataset: LatentTrajectoryDataset,
     sampling_cfg: DictConfig | None,
 ) -> WeightedRandomSampler | None:
-    """Use the existing final-tail sampler without coupling it to CFG target mode."""
+    """Build an optional deterministic transition sampler for training only."""
     mode = str(sampling_cfg.get("mode", "uniform")) if sampling_cfg is not None else "uniform"
     if mode == "uniform":
         return None
     if getattr(dataset, "sample_mode", "transition") == "endpoint":
         raise ValueError("Endpoint training supports sampling.mode=uniform only.")
+    if mode == "source_mixture":
+        source_weights = sampling_cfg.get("source_weights")
+        num_samples = sampling_cfg.get("num_samples")
+        if source_weights is None or num_samples is None:
+            raise ValueError(
+                "sampling.source_weights and sampling.num_samples are required for "
+                "sampling.mode=source_mixture."
+            )
+        replacement = bool(sampling_cfg.get("replacement", True))
+        if not replacement:
+            raise ValueError("source_mixture requires replacement=true to enforce source mass.")
+        weights, transition_counts, normalized_weights = dataset.source_mixture_sampling_weights(
+            {str(name): float(weight) for name, weight in source_weights.items()}
+        )
+        generator = torch.Generator().manual_seed(int(sampling_cfg.get("seed", 42)))
+        logger.info(
+            "Source-mixture sampling: transition_counts={} source_weights={} "
+            "num_samples={} replacement={}",
+            transition_counts,
+            normalized_weights,
+            int(num_samples),
+            replacement,
+        )
+        return WeightedRandomSampler(
+            weights,
+            num_samples=int(num_samples),
+            replacement=replacement,
+            generator=generator,
+        )
     if mode != "final_tail":
         raise ValueError(f"Unknown training sampling mode: {mode!r}.")
     final_step_fraction = sampling_cfg.get("final_step_fraction")
@@ -1531,7 +1567,13 @@ def build_train_sampler(
         final_step_fraction,
         target_draw_fraction,
     )
-    return WeightedRandomSampler(weights, num_samples=len(dataset), replacement=True)
+    generator = torch.Generator().manual_seed(int(sampling_cfg.get("seed", 42)))
+    return WeightedRandomSampler(
+        weights,
+        num_samples=len(dataset),
+        replacement=True,
+        generator=generator,
+    )
 
 
 @hydra.main(config_path="../../config", config_name="train_sd15", version_base=None)
@@ -1650,6 +1692,7 @@ def main(cfg: DictConfig) -> None:
         require_training_cache=cfg.data.require_training_cache,
         require_target_eps=training_target_mode not in ENDPOINT_LOSS_MODES,
         sample_mode=("endpoint" if training_target_mode in ENDPOINT_LOSS_MODES else "transition"),
+        source_names=_dataset_source_names(cfg, "source_names"),
     )
     val_dataset = LatentTrajectoryDataset(
         val_roots,
@@ -1662,6 +1705,7 @@ def main(cfg: DictConfig) -> None:
         require_training_cache=cfg.data.require_training_cache,
         require_target_eps=training_target_mode not in ENDPOINT_LOSS_MODES,
         sample_mode=("endpoint" if training_target_mode in ENDPOINT_LOSS_MODES else "transition"),
+        source_names=_dataset_source_names(cfg, "val_source_names"),
     )
     dataset_unit = "endpoints" if training_target_mode in ENDPOINT_LOSS_MODES else "transitions"
     logger.info("Loaded {:,} train {}", len(train_dataset), dataset_unit)

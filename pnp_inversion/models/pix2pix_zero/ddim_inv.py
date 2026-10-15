@@ -10,6 +10,7 @@ from diffusers.pipelines.stable_diffusion import StableDiffusionPipelineOutput
 sys.path.insert(0, "src/utils")
 from models.pix2pix_zero.base_pipeline import BasePipeline
 from models.pix2pix_zero.cross_attention import prep_unet
+from utils.partial_inversion import inversion_timesteps
 
 
 if torch.cuda.is_available():
@@ -48,6 +49,7 @@ class DDIMInversion(BasePipeline):
         self,
         prompt: Union[str, List[str]] = None,
         num_inversion_steps: int = 50,
+        inversion_steps: Optional[int] = None,
         guidance_scale: float = 7.5,
         negative_prompt: Optional[Union[str, List[str]]] = None,
         num_images_per_prompt: Optional[int] = 1,
@@ -79,6 +81,8 @@ class DDIMInversion(BasePipeline):
         )
         self.scheduler.set_timesteps(num_inversion_steps, device=device)
         timesteps = self.scheduler.timesteps
+        inversion_steps = inversion_steps or num_inversion_steps
+        active_timesteps = inversion_timesteps(timesteps, inversion_steps)
 
         # Encode the input image with the first stage model. The input must match
         # the loaded VAE dtype (fp16 for the SD1.5 LoRA evaluation pipeline).
@@ -102,10 +106,10 @@ class DDIMInversion(BasePipeline):
         latent_list=[latents]
 
         # Do the inversion
-        num_warmup_steps = len(timesteps) - num_inversion_steps * self.scheduler.order # should be 0?
-        with self.progress_bar(total=num_inversion_steps) as progress_bar:
+        num_warmup_steps = len(active_timesteps) - inversion_steps * self.scheduler.order
+        with self.progress_bar(total=inversion_steps) as progress_bar:
             # noted: we edit the code here to solve the problem of zero-shot can only do 48 steps of inversion
-            for i, t in enumerate(timesteps.flip(0)):
+            for i, t in enumerate(active_timesteps):
                 if lora_branch_adapter_names is not None:
                     from utils.lora_adapters import set_active_lora_adapter
 
@@ -174,7 +178,7 @@ class DDIMInversion(BasePipeline):
                 latent_list.append(latents)
 
                 # call the callback, if provided
-                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
+                if i == len(active_timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                     progress_bar.update()
         
 

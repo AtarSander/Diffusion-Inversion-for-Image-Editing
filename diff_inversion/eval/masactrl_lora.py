@@ -80,6 +80,8 @@ def main(cfg: DictConfig) -> None:
         str(OmegaConf.select(
             cfg, "masactrl.lora_inversion_prompt_mode", default="source"
         )),
+        "--inversion_steps",
+        str(OmegaConf.select(cfg, "inversion_steps", default=50)),
     ]
     if bool(cfg.rerun_exist_images):
         cmd.append("--rerun_exist_images")

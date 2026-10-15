@@ -15,10 +15,12 @@ import torchvision.transforms as T
 
 from utils.utils import txt_draw,load_512,latent2image
 from utils.one_step_endpoint import one_step_endpoint_latent
+from utils.partial_inversion import validate_lora_inversion_depth
 from diff_inversion.eval.editor_controls import (
     PNP_REFERENCE_PROMPT_MODES,
     pnp_reference_embedding_index,
 )
+from utils.partial_inversion import denoising_timesteps, inversion_timesteps, validate_inversion_steps
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device(
     'cpu')
@@ -184,10 +186,13 @@ class Preprocess(nn.Module):
     @torch.no_grad()
     def ddim_inversion(
         self, cond, latent, uncond=None, guidance_scale=1.0,
-        lora_branch_adapter_names=None, lora_adapter_scale=1.0,
+        lora_branch_adapter_names=None, lora_adapter_scale=1.0, inversion_steps=None,
     ):
         latent_list=[latent]
-        timesteps = list(reversed(self.scheduler.timesteps))
+        timesteps = inversion_timesteps(
+            self.scheduler.timesteps,
+            inversion_steps or len(self.scheduler.timesteps),
+        )
         with torch.autocast(device_type='cuda', dtype=torch.float32):
             for i, t in enumerate(timesteps):
                 cond_batch = cond.repeat(latent.shape[0], 1, 1)
@@ -235,8 +240,11 @@ class Preprocess(nn.Module):
         return latent_list
 
     @torch.no_grad()
-    def ddim_sample(self, x, cond):
-        timesteps = self.scheduler.timesteps
+    def ddim_sample(self, x, cond, inversion_steps=None):
+        timesteps = denoising_timesteps(
+            self.scheduler.timesteps,
+            inversion_steps or len(self.scheduler.timesteps),
+        )
         latent_list=[]
         with torch.autocast(device_type='cuda', dtype=torch.float32):
             for i, t in enumerate(timesteps):
@@ -262,11 +270,14 @@ class Preprocess(nn.Module):
     @torch.no_grad()
     def extract_latents(self, num_steps, data_path,
                         inversion_prompt='', use_lora_inversion=False,
-                        inversion_guidance_scale=1.0, lora_inversion_mode="iterative"):
+                        inversion_guidance_scale=1.0, lora_inversion_mode="iterative",
+                        inversion_steps=None):
         if use_lora_inversion and not self.lora_loaded:
             raise RuntimeError("LoRA inversion requested, but no LoRA checkpoint was loaded.")
 
         self.scheduler.set_timesteps(num_steps)
+        inversion_steps = inversion_steps or num_steps
+        validate_inversion_steps(inversion_steps, num_steps)
 
         uncond, cond = self.get_text_embeds(inversion_prompt, "").chunk(2)
         image = self.load_img(data_path)
@@ -274,6 +285,7 @@ class Preprocess(nn.Module):
 
         self.set_lora_enabled(use_lora_inversion)
         try:
+            validate_lora_inversion_depth(lora_inversion_mode, inversion_steps, num_steps)
             if use_lora_inversion and lora_inversion_mode == "one_step_endpoint":
                 terminal_latent = one_step_endpoint_latent(
                     self.unet, self.scheduler, latent, cond,
@@ -284,14 +296,20 @@ class Preprocess(nn.Module):
                     cond, latent, uncond=uncond, guidance_scale=inversion_guidance_scale,
                     lora_branch_adapter_names=self.lora_branch_adapter_names,
                     lora_adapter_scale=self.lora_scale,
+                    inversion_steps=inversion_steps,
                 )
             else:
                 raise ValueError(f"Unknown LoRA inversion mode: {lora_inversion_mode!r}")
         finally:
             self.set_lora_enabled(False)
 
-        latent_reconstruction = self.ddim_sample(inverted_x[-1], cond)
+        latent_reconstruction = self.ddim_sample(
+            inverted_x[-1], cond, inversion_steps=inversion_steps,
+        )
         rgb_reconstruction = self.decode_latents(latent_reconstruction[-1])
+        if inversion_steps < num_steps:
+            # PnP's reference latent must correspond to the timestep being denoised.
+            latent_reconstruction = [inverted_x[-1]] + latent_reconstruction[:-1]
         latent_reconstruction.reverse()
         return inverted_x, rgb_reconstruction, latent_reconstruction
 
@@ -511,9 +529,10 @@ class PNP(nn.Module):
         denoised_latent = self.scheduler.step(noise_pred, t, x)['prev_sample']
         return denoised_latent
 
-    def init_pnp(self, conv_injection_t, qk_injection_t):
-        self.qk_injection_timesteps = self.scheduler.timesteps[:qk_injection_t] if qk_injection_t >= 0 else []
-        self.conv_injection_timesteps = self.scheduler.timesteps[:conv_injection_t] if conv_injection_t >= 0 else []
+    def init_pnp(self, conv_injection_t, qk_injection_t, inversion_steps=NUM_DDIM_STEPS):
+        timesteps = denoising_timesteps(self.scheduler.timesteps, inversion_steps)
+        self.qk_injection_timesteps = timesteps[:qk_injection_t] if qk_injection_t >= 0 else []
+        self.conv_injection_timesteps = timesteps[:conv_injection_t] if conv_injection_t >= 0 else []
         register_attention_control_efficient(self, self.qk_injection_timesteps)
         register_conv_control_efficient(self, self.conv_injection_timesteps)
 
@@ -527,6 +546,7 @@ class PNP(nn.Module):
         pnp_attn_t=0.5,
         source_prompt="",
         reference_prompt_mode="empty",
+        inversion_steps=NUM_DDIM_STEPS,
     ):
 
         # load image
@@ -539,16 +559,21 @@ class PNP(nn.Module):
             pnp_reference_embedding_index(reference_prompt_mode)
         ]
         
-        pnp_f_t = int(self.n_timesteps * pnp_f_t)
-        pnp_attn_t = int(self.n_timesteps * pnp_attn_t)
-        self.init_pnp(conv_injection_t=pnp_f_t, qk_injection_t=pnp_attn_t)
-        edited_img = self.sample_loop(self.eps,guidance_scale,noisy_latent)
+        validate_inversion_steps(inversion_steps, self.n_timesteps)
+        pnp_f_t = int(inversion_steps * pnp_f_t)
+        pnp_attn_t = int(inversion_steps * pnp_attn_t)
+        self.init_pnp(
+            conv_injection_t=pnp_f_t, qk_injection_t=pnp_attn_t,
+            inversion_steps=inversion_steps,
+        )
+        edited_img = self.sample_loop(self.eps,guidance_scale,noisy_latent,inversion_steps)
         
         return edited_img
 
-    def sample_loop(self, x,guidance_scale,noisy_latent):
+    def sample_loop(self, x,guidance_scale,noisy_latent,inversion_steps):
         with torch.autocast(device_type='cuda', dtype=torch.float32):
-            for i, t in enumerate(tqdm(self.scheduler.timesteps, desc="Sampling")):
+            timesteps = denoising_timesteps(self.scheduler.timesteps, inversion_steps)
+            for i, t in enumerate(tqdm(timesteps, desc="Sampling")):
                 x = self.denoise_step(x, t,guidance_scale,noisy_latent[-1-i])
 
             decoded_latent = self.decode_latent(x)
@@ -638,6 +663,7 @@ def edit_image_lora_PnP(
     image_shape=[512,512],
     pnp_reference_prompt_mode="empty",
     lora_inversion_mode="iterative",
+    inversion_steps=NUM_DDIM_STEPS,
 ):
     torch.cuda.empty_cache()
     image_gt = load_512(image_path)
@@ -645,12 +671,14 @@ def edit_image_lora_PnP(
                                          num_steps=NUM_DDIM_STEPS,
                                          inversion_prompt=prompt_src,
                                          use_lora_inversion=True,
-                                         lora_inversion_mode=lora_inversion_mode)
+                                         lora_inversion_mode=lora_inversion_mode,
+                                         inversion_steps=inversion_steps)
 
     edited_image=pnp.run_pnp(
         image_path, latent_reconstruction, prompt_tar, guidance_scale,
         source_prompt=prompt_src,
         reference_prompt_mode=pnp_reference_prompt_mode,
+        inversion_steps=inversion_steps,
     )
     
     image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
@@ -670,6 +698,7 @@ def edit_image_lora_directinversion_PnP(
     inversion_guidance_scale=1.0,
     image_shape=[512,512],
     pnp_reference_prompt_mode="empty",
+    inversion_steps=NUM_DDIM_STEPS,
 ):
     torch.cuda.empty_cache()
     image_gt = load_512(image_path)
@@ -677,7 +706,8 @@ def edit_image_lora_directinversion_PnP(
                                          num_steps=NUM_DDIM_STEPS,
                                          inversion_prompt=prompt_src,
                                          use_lora_inversion=True,
-                                         inversion_guidance_scale=inversion_guidance_scale)
+                                         inversion_guidance_scale=inversion_guidance_scale,
+                                         inversion_steps=inversion_steps)
 
     # Use the LoRA-produced inversion trajectory as the per-step source
     # reference, exactly as in the standard Direct Inversion + PnP path.
@@ -685,6 +715,7 @@ def edit_image_lora_directinversion_PnP(
         image_path, inverted_x, prompt_tar, guidance_scale,
         source_prompt=prompt_src,
         reference_prompt_mode=pnp_reference_prompt_mode,
+        inversion_steps=inversion_steps,
     )
     
     image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
@@ -743,7 +774,11 @@ if __name__ == "__main__":
         default='empty',
         help='Condition the injected PnP source branch on the empty or source prompt.',
     )
+    parser.add_argument('--inversion_steps', type=int, default=NUM_DDIM_STEPS)
     args = parser.parse_args()
+    validate_lora_inversion_depth(args.lora_inversion_mode, args.inversion_steps, NUM_DDIM_STEPS)
+    if args.inversion_steps != NUM_DDIM_STEPS and any(not method.startswith("lora+") for method in args.edit_method_list):
+        parser.error("Partial inversion currently supports only LoRA edit methods")
     
     rerun_exist_images=args.rerun_exist_images
     data_path=args.data_path
@@ -820,6 +855,7 @@ if __name__ == "__main__":
                         guidance_scale=7.5,
                         pnp_reference_prompt_mode=args.pnp_reference_prompt_mode,
                         lora_inversion_mode=args.lora_inversion_mode,
+                        inversion_steps=args.inversion_steps,
                     )
                 elif edit_method=="lora+directinversion+pnp":
                     edited_image = edit_image_lora_directinversion_PnP(
@@ -829,6 +865,7 @@ if __name__ == "__main__":
                         guidance_scale=7.5,
                         inversion_guidance_scale=args.inversion_guidance_scale,
                         pnp_reference_prompt_mode=args.pnp_reference_prompt_mode,
+                        inversion_steps=args.inversion_steps,
                     )
                 else:
                     raise NotImplementedError(f"No edit method named {edit_method}")

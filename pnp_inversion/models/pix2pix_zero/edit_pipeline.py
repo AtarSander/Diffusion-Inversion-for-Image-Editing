@@ -8,6 +8,7 @@ sys.path.insert(0, "src/utils")
 from models.pix2pix_zero.base_pipeline import BasePipeline
 from models.pix2pix_zero.cross_attention import prep_unet
 from diff_inversion.eval.editor_controls import pix2pix_attention_alignment_loss
+from utils.partial_inversion import denoising_timesteps
 
 
 if torch.cuda.is_available():
@@ -22,6 +23,7 @@ class EditingPipeline(BasePipeline):
         height: Optional[int] = None,
         width: Optional[int] = None,
         num_inference_steps: int = 50,
+        denoising_steps: Optional[int] = None,
         guidance_scale: float = 7.5,
         negative_prompt: Optional[Union[str, List[str]]] = None,
         num_images_per_prompt: Optional[int] = 1,
@@ -82,7 +84,8 @@ class EditingPipeline(BasePipeline):
 
         # 4. Prepare timesteps
         self.scheduler.set_timesteps(num_inference_steps, device=device)
-        timesteps = self.scheduler.timesteps
+        denoising_steps = denoising_steps or num_inference_steps
+        timesteps = denoising_timesteps(self.scheduler.timesteps, denoising_steps)
 
         # 5. Prepare latent variables
         num_channels_latents = self.unet.in_channels
@@ -95,11 +98,11 @@ class EditingPipeline(BasePipeline):
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
 
         # 7. First Denoising loop for getting the reference cross attention maps
-        num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
+        num_warmup_steps = len(timesteps) - denoising_steps * self.scheduler.order
         
         noise_loss_list=[]
         with torch.no_grad():
-            with self.progress_bar(total=num_inference_steps) as progress_bar:
+            with self.progress_bar(total=denoising_steps) as progress_bar:
                 for i, t in enumerate(timesteps):
                     # expand the latents if we are doing classifier free guidance
                     latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
@@ -153,8 +156,8 @@ class EditingPipeline(BasePipeline):
         
         latents = latents_init
         # Second denoising loop for editing the text prompt
-        num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
-        with self.progress_bar(total=num_inference_steps) as progress_bar:
+        num_warmup_steps = len(timesteps) - denoising_steps * self.scheduler.order
+        with self.progress_bar(total=denoising_steps) as progress_bar:
             for i, t in enumerate(timesteps):
                 # expand the latents if we are doing classifier free guidance
                 latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents

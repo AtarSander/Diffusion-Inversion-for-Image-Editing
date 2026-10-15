@@ -16,6 +16,8 @@ from models.pix2pix_zero.edit_directions import construct_direction
 from models.pix2pix_zero.edit_pipeline import EditingPipeline
 from utils.utils import txt_draw
 from utils.one_step_endpoint import one_step_endpoint_latent
+from utils.partial_inversion import validate_lora_inversion_depth
+from utils.partial_inversion import validate_inversion_steps
 
 from diffusers import DDIMScheduler
 from diff_inversion.eval.editor_controls import PIX2PIX_ATTENTION_LOSS_REDUCTIONS
@@ -245,6 +247,7 @@ def edit_image_lora_pix2pix_zero(image_path,
                 guidance_scale=7.5,
                 lora_inversion_mode="iterative",
                 image_size=[512,512],
+                inversion_steps=NUM_DDIM_STEPS,
                 pix2pix_guidance_amount=XA_GUIDANCE,
                 pix2pix_attention_loss_reduction="legacy_sum",
                 pix2pix_attention_loss_scale=1.0,
@@ -256,6 +259,7 @@ def edit_image_lora_pix2pix_zero(image_path,
     # pass use the untouched SD1.5 editing pipeline.
     set_lora_enabled(True)
     try:
+        validate_lora_inversion_depth(lora_inversion_mode, inversion_steps, NUM_DDIM_STEPS)
         if lora_inversion_mode == "one_step_endpoint":
             inversion_latent = endpoint_invert_pix2pix_zero(image_gt, prompt_str).detach()
         elif lora_inversion_mode == "iterative":
@@ -263,6 +267,7 @@ def edit_image_lora_pix2pix_zero(image_path,
                 prompt_str,
                 guidance_scale=1,
                 num_inversion_steps=NUM_DDIM_STEPS,
+                inversion_steps=inversion_steps,
                 img=image_gt,
             )
             inversion_latent = latent_list[-1].detach()
@@ -276,6 +281,7 @@ def edit_image_lora_pix2pix_zero(image_path,
     rec_pil, edit_pil = edit_pipe(
         prompt_str,
         num_inference_steps=NUM_DDIM_STEPS,
+        denoising_steps=inversion_steps,
         x_in=inversion_latent,
         edit_dir=(mean_emb_tar.mean(0)-mean_emb_src.mean(0)).unsqueeze(0),
         guidance_amount=pix2pix_guidance_amount,
@@ -297,6 +303,7 @@ def edit_image_lora_directinversion_pix2pix_zero(
                 guidance_scale=7.5,
                 inversion_guidance_scale=1.0,
                 image_size=[512,512],
+                inversion_steps=NUM_DDIM_STEPS,
                 pix2pix_guidance_amount=XA_GUIDANCE,
                 pix2pix_attention_loss_reduction="legacy_sum",
                 pix2pix_attention_loss_scale=1.0,
@@ -312,6 +319,7 @@ def edit_image_lora_directinversion_pix2pix_zero(
             prompt_str,
             guidance_scale=inversion_guidance_scale,
             num_inversion_steps=NUM_DDIM_STEPS,
+            inversion_steps=inversion_steps,
             img=image_gt,
             lora_branch_adapter_names=lora_branch_adapter_names,
             lora_adapter_scale=lora_adapter_scale,
@@ -325,6 +333,7 @@ def edit_image_lora_directinversion_pix2pix_zero(
     rec_pil, edit_pil = edit_pipe(
         prompt_str,
         num_inference_steps=NUM_DDIM_STEPS,
+        denoising_steps=inversion_steps,
         x_in=inversion_latent,
         edit_dir=(mean_emb_tar.mean(0)-mean_emb_src.mean(0)).unsqueeze(0),
         guidance_amount=pix2pix_guidance_amount,
@@ -389,7 +398,11 @@ if __name__ == "__main__":
     parser.add_argument('--pix2pix_attention_loss_reduction', choices=PIX2PIX_ATTENTION_LOSS_REDUCTIONS, default='legacy_sum')
     parser.add_argument('--pix2pix_attention_loss_scale', type=float, default=1.0)
     parser.add_argument('--pix2pix_attention_grad_clip_norm', type=float, default=None)
+    parser.add_argument('--inversion_steps', type=int, default=NUM_DDIM_STEPS)
     args = parser.parse_args()
+    validate_lora_inversion_depth(args.lora_inversion_mode, args.inversion_steps, NUM_DDIM_STEPS)
+    if args.inversion_steps != NUM_DDIM_STEPS and any(not method.startswith("lora+") for method in args.edit_method_list):
+        parser.error("Partial inversion currently supports only LoRA edit methods")
     if args.pix2pix_attention_loss_scale <= 0:
         raise ValueError("--pix2pix_attention_loss_scale must be positive")
     if args.pix2pix_attention_grad_clip_norm is not None and args.pix2pix_attention_grad_clip_norm <= 0:
@@ -481,6 +494,7 @@ if __name__ == "__main__":
                         pix2pix_attention_loss_reduction=args.pix2pix_attention_loss_reduction,
                         pix2pix_attention_loss_scale=args.pix2pix_attention_loss_scale,
                         pix2pix_attention_grad_clip_norm=args.pix2pix_attention_grad_clip_norm,
+                        inversion_steps=args.inversion_steps,
                     )
                 elif edit_method=="lora+directinversion+pix2pix-zero":
                     edited_image = edit_image_lora_directinversion_pix2pix_zero(
@@ -493,6 +507,7 @@ if __name__ == "__main__":
                         pix2pix_attention_loss_reduction=args.pix2pix_attention_loss_reduction,
                         pix2pix_attention_loss_scale=args.pix2pix_attention_loss_scale,
                         pix2pix_attention_grad_clip_norm=args.pix2pix_attention_grad_clip_norm,
+                        inversion_steps=args.inversion_steps,
                     )
                 else:
                     raise NotImplementedError(f"No edit method named {edit_method}")
