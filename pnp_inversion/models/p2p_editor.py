@@ -9,6 +9,7 @@ from models.p2p.p2p_guidance_forward import p2p_guidance_forward, direct_inversi
 from models.p2p.proximal_guidance_forward import proximal_guidance_forward
 from diffusers import StableDiffusionPipeline
 from utils.utils import load_512, latent2image, txt_draw
+from utils.partial_inversion import validate_inversion_steps
 from PIL import Image
 import numpy as np
 
@@ -137,7 +138,8 @@ class P2PEditor:
                 is_replace_controller=False,
                 use_inversion_guidance=False,
                 inversion_guidance_scale=1.0,
-                dilate_mask=1,):
+                dilate_mask=1,
+                inversion_steps=None,):
         if edit_method=="ddim+p2p":
             return self.edit_image_ddim(image_path, prompt_src, prompt_tar, guidance_scale=guidance_scale, 
                                         cross_replace_steps=cross_replace_steps, self_replace_steps=self_replace_steps, 
@@ -146,7 +148,8 @@ class P2PEditor:
             return self.edit_image_lora_inversion(image_path=image_path, prompt_src=prompt_src, prompt_tar=prompt_tar,
                                         guidance_scale=guidance_scale, cross_replace_steps=cross_replace_steps,
                                         self_replace_steps=self_replace_steps, blend_word=blend_word, eq_params=eq_params,
-                                        is_replace_controller=is_replace_controller)
+                                        is_replace_controller=is_replace_controller,
+                                        inversion_steps=inversion_steps)
         elif edit_method == "lora+directinversion+p2p":
             return self.edit_image_directinversion(
                 image_path=image_path,
@@ -158,6 +161,7 @@ class P2PEditor:
                 blend_word=blend_word,
                 eq_params=eq_params,
                 is_replace_controller=is_replace_controller,
+                inversion_steps=inversion_steps,
                 use_lora_inversion=True,
                 inversion_guidance_scale=inversion_guidance_scale,
             )
@@ -250,7 +254,8 @@ class P2PEditor:
 
     def edit_image_lora_inversion(self, image_path, prompt_src, prompt_tar, guidance_scale=7.5,
                                   cross_replace_steps=0.4, self_replace_steps=0.6, blend_word=None,
-                                  eq_params=None, is_replace_controller=False):
+                                  eq_params=None, is_replace_controller=False,
+                                  inversion_steps=None):
         if not self.lora_loaded:
             raise RuntimeError("LoRA inversion requested, but no LoRA checkpoint was loaded.")
 
@@ -261,11 +266,13 @@ class P2PEditor:
         # and P2P editing deliberately run with the base SD1.5 UNet.
         register_attention_control(self.ldm_stable, None)
         inversion = NullInversion(model=self.ldm_stable, num_ddim_steps=self.num_ddim_steps)
+        inversion_steps = inversion_steps or self.num_ddim_steps
+        validate_inversion_steps(inversion_steps, self.num_ddim_steps)
         inversion.init_prompt(prompt_src)
         self.set_lora_enabled(True)
         try:
             with self.autocast():
-                _, x_stars = inversion.ddim_inversion(image_gt)
+                _, x_stars = inversion.ddim_inversion(image_gt, inversion_steps=inversion_steps)
         finally:
             self.set_lora_enabled(False)
         x_t = x_stars[-1]
@@ -274,18 +281,20 @@ class P2PEditor:
         with self.autocast():
             reconstruct_latent, _ = p2p_guidance_forward(
                 model=self.ldm_stable, prompt=[prompt_src], controller=controller, latent=x_t,
-                num_inference_steps=self.num_ddim_steps, guidance_scale=guidance_scale, generator=None)
+                num_inference_steps=self.num_ddim_steps, guidance_scale=guidance_scale,
+                generator=None, denoising_steps=inversion_steps)
         reconstruct_image = latent2image(model=self.ldm_stable.vae, latents=reconstruct_latent)[0]
 
         controller = make_controller(
             pipeline=self.ldm_stable, prompts=prompts, is_replace_controller=is_replace_controller,
             cross_replace_steps={"default_": cross_replace_steps}, self_replace_steps=self_replace_steps,
-            blend_words=blend_word, equilizer_params=eq_params, num_ddim_steps=self.num_ddim_steps,
+            blend_words=blend_word, equilizer_params=eq_params, num_ddim_steps=inversion_steps,
             device=self.device)
         with self.autocast():
             latents, _ = p2p_guidance_forward(
                 model=self.ldm_stable, prompt=prompts, controller=controller, latent=x_t,
-                num_inference_steps=self.num_ddim_steps, guidance_scale=guidance_scale, generator=None)
+                num_inference_steps=self.num_ddim_steps, guidance_scale=guidance_scale,
+                generator=None, denoising_steps=inversion_steps)
         image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
         images = latent2image(model=self.ldm_stable.vae, latents=latents)
         return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image, images[-1]), axis=1))
@@ -582,6 +591,7 @@ class P2PEditor:
         is_replace_controller=False,
         use_lora_inversion=False,
         inversion_guidance_scale=1.0,
+        inversion_steps=None,
     ):
         image_gt = load_512(image_path)
         prompts = [prompt_src, prompt_tar]
@@ -590,6 +600,8 @@ class P2PEditor:
             model=self.ldm_stable,
             num_ddim_steps=self.num_ddim_steps,
         )
+        inversion_steps = inversion_steps or self.num_ddim_steps
+        validate_inversion_steps(inversion_steps, self.num_ddim_steps)
         if use_lora_inversion:
             if not self.lora_loaded:
                 raise RuntimeError(
@@ -604,6 +616,7 @@ class P2PEditor:
                         image_gt, inversion_guidance_scale,
                         lora_branch_adapter_names=self.lora_branch_adapter_names,
                         lora_adapter_scale=self.lora_scale,
+                        inversion_steps=inversion_steps,
                     )
             finally:
                 self.set_lora_enabled(False)
@@ -614,6 +627,7 @@ class P2PEditor:
                     num_inner_steps=10,
                     epsilon=1e-5,
                     guidance_scale=guidance_scale,
+                    inversion_steps=inversion_steps,
                 )
         else:
             _, _, x_stars, noise_loss_list = direct_inversion.invert(
@@ -631,6 +645,7 @@ class P2PEditor:
                                        noise_loss_list=noise_loss_list, 
                                        latent=x_t,
                                        num_inference_steps=self.num_ddim_steps, 
+                                       denoising_steps=inversion_steps,
                                        guidance_scale=guidance_scale, 
                                        generator=None)
     
@@ -649,7 +664,7 @@ class P2PEditor:
                                     self_replace_steps=self_replace_steps,
                                     blend_words=blend_word,
                                     equilizer_params=eq_params,
-                                    num_ddim_steps=self.num_ddim_steps,
+                                    num_ddim_steps=inversion_steps,
                                     device=self.device)
         
         latents, _ = direct_inversion_p2p_guidance_forward(model=self.ldm_stable, 
@@ -658,6 +673,7 @@ class P2PEditor:
                                        noise_loss_list=noise_loss_list, 
                                        latent=x_t,
                                        num_inference_steps=self.num_ddim_steps, 
+                                       denoising_steps=inversion_steps,
                                        guidance_scale=guidance_scale, 
                                        generator=None)
 

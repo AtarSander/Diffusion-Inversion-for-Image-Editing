@@ -15,6 +15,7 @@ from models.pix2pix_zero.scheduler import DDIMInverseScheduler
 from models.pix2pix_zero.edit_directions import construct_direction
 from models.pix2pix_zero.edit_pipeline import EditingPipeline
 from utils.utils import txt_draw
+from utils.partial_inversion import validate_inversion_steps
 
 from diffusers import DDIMScheduler
 
@@ -214,7 +215,8 @@ def edit_image_lora_pix2pix_zero(image_path,
                 prompt_src,
                 prompt_tar,
                 guidance_scale=7.5,
-                image_size=[512,512]):
+                image_size=[512,512],
+                inversion_steps=NUM_DDIM_STEPS):
     image_gt = Image.open(image_path).resize(image_size, Image.Resampling.LANCZOS)
     prompt_str = generate_caption(image_gt)
 
@@ -226,6 +228,7 @@ def edit_image_lora_pix2pix_zero(image_path,
             prompt_str,
             guidance_scale=1,
             num_inversion_steps=NUM_DDIM_STEPS,
+            inversion_steps=inversion_steps,
             img=image_gt,
         )
     finally:
@@ -237,6 +240,7 @@ def edit_image_lora_pix2pix_zero(image_path,
     rec_pil, edit_pil = edit_pipe(
         prompt_str,
         num_inference_steps=NUM_DDIM_STEPS,
+        denoising_steps=inversion_steps,
         x_in=inversion_latent,
         edit_dir=(mean_emb_tar.mean(0)-mean_emb_src.mean(0)).unsqueeze(0),
         guidance_amount=XA_GUIDANCE,
@@ -254,7 +258,8 @@ def edit_image_lora_directinversion_pix2pix_zero(
                 prompt_tar,
                 guidance_scale=7.5,
                 inversion_guidance_scale=1.0,
-                image_size=[512,512]):
+                image_size=[512,512],
+                inversion_steps=NUM_DDIM_STEPS):
     image_gt = Image.open(image_path).resize(image_size, Image.Resampling.LANCZOS)
     prompt_str = generate_caption(image_gt)
 
@@ -266,6 +271,7 @@ def edit_image_lora_directinversion_pix2pix_zero(
             prompt_str,
             guidance_scale=inversion_guidance_scale,
             num_inversion_steps=NUM_DDIM_STEPS,
+            inversion_steps=inversion_steps,
             img=image_gt,
             lora_branch_adapter_names=lora_branch_adapter_names,
             lora_adapter_scale=lora_adapter_scale,
@@ -279,6 +285,7 @@ def edit_image_lora_directinversion_pix2pix_zero(
     rec_pil, edit_pil = edit_pipe(
         prompt_str,
         num_inference_steps=NUM_DDIM_STEPS,
+        denoising_steps=inversion_steps,
         x_in=inversion_latent,
         edit_dir=(mean_emb_tar.mean(0)-mean_emb_src.mean(0)).unsqueeze(0),
         guidance_amount=XA_GUIDANCE,
@@ -335,7 +342,11 @@ if __name__ == "__main__":
     parser.add_argument('--lora_scale', type=float, default=1.0)
     parser.add_argument('--lora_mode', choices=["single", "branch_pair"], default="single")
     parser.add_argument('--inversion_guidance_scale', type=float, default=1.0)
+    parser.add_argument('--inversion_steps', type=int, default=NUM_DDIM_STEPS)
     args = parser.parse_args()
+    validate_inversion_steps(args.inversion_steps, NUM_DDIM_STEPS)
+    if args.inversion_steps != NUM_DDIM_STEPS and any(not method.startswith("lora+") for method in args.edit_method_list):
+        parser.error("Partial inversion currently supports only LoRA edit methods")
     
     rerun_exist_images=args.rerun_exist_images
     data_path=args.data_path
@@ -407,6 +418,7 @@ if __name__ == "__main__":
                         prompt_src=original_prompt,
                         prompt_tar=editing_prompt,
                         guidance_scale=7.5,
+                        inversion_steps=args.inversion_steps,
                     )
                 elif edit_method=="lora+directinversion+pix2pix-zero":
                     edited_image = edit_image_lora_directinversion_pix2pix_zero(
@@ -415,6 +427,7 @@ if __name__ == "__main__":
                         prompt_tar=editing_prompt,
                         guidance_scale=7.5,
                         inversion_guidance_scale=args.inversion_guidance_scale,
+                        inversion_steps=args.inversion_steps,
                     )
                 else:
                     raise NotImplementedError(f"No edit method named {edit_method}")

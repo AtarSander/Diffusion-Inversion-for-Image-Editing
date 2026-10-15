@@ -7,6 +7,7 @@ import torch
 import random
 
 from models.p2p_editor import P2PEditor
+from utils.partial_inversion import validate_inversion_steps
 
 def mask_decode(encoded_mask,image_shape=[512,512]):
     length=image_shape[0]*image_shape[1]
@@ -96,7 +97,11 @@ if __name__ == "__main__":
     parser.add_argument('--lora_scale', type=float, default=1.0)
     parser.add_argument('--lora_mode', choices=["single", "branch_pair"], default="single")
     parser.add_argument('--inversion_guidance_scale', type=float, default=1.0)
+    parser.add_argument('--inversion_steps', type=int, default=50)
     args = parser.parse_args()
+    validate_inversion_steps(args.inversion_steps, 50)
+    if args.inversion_steps != 50 and any(not method.startswith("lora+") for method in args.edit_method_list):
+        parser.error("Partial inversion currently supports only LoRA edit methods")
     
     rerun_exist_images=args.rerun_exist_images
     data_path=args.data_path
@@ -163,6 +168,7 @@ if __name__ == "__main__":
                                         quantile=0.75,
                                         use_inversion_guidance=True,
                                         inversion_guidance_scale=args.inversion_guidance_scale,
+                                        inversion_steps=args.inversion_steps,
                                         recon_lr=1,
                                         recon_t=400,
                                         )

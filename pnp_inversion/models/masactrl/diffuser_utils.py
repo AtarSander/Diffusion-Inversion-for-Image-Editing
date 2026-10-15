@@ -10,6 +10,7 @@ from tqdm import tqdm
 from PIL import Image
 
 from diffusers import StableDiffusionPipeline
+from utils.partial_inversion import denoising_timesteps
 
 class MasaCtrlPipeline(StableDiffusionPipeline):
 
@@ -99,6 +100,7 @@ class MasaCtrlPipeline(StableDiffusionPipeline):
         height=512,
         width=512,
         num_inference_steps=50,
+        denoising_steps=None,
         guidance_scale=7.5,
         eta=0.0,
         latents=None,
@@ -160,10 +162,13 @@ class MasaCtrlPipeline(StableDiffusionPipeline):
         print("latents shape: ", latents.shape)
         # iterative sampling
         self.scheduler.set_timesteps(num_inference_steps)
+        timesteps = denoising_timesteps(
+            self.scheduler.timesteps, denoising_steps or num_inference_steps,
+        )
         # print("Valid timesteps: ", reversed(self.scheduler.timesteps))
         latents_list = [latents]
         pred_x0_list = [latents]
-        for i, t in enumerate(tqdm(self.scheduler.timesteps, desc="DDIM Sampler")):
+        for i, t in enumerate(tqdm(timesteps, desc="DDIM Sampler")):
             if ref_intermediate_latents is not None:
                 # note that the batch_size >= 2
                 latents_ref = ref_intermediate_latents[-1 - i]

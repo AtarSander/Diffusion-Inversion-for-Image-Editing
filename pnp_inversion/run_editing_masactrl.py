@@ -16,6 +16,7 @@ from models.masactrl.masactrl_utils import AttentionBase
 from models.masactrl.masactrl_utils import regiter_attention_editor_diffusers
 from models.masactrl.masactrl import MutualSelfAttentionControl
 from utils.utils import load_512,txt_draw
+from utils.partial_inversion import validate_inversion_steps
 
 from torchvision.io import read_image
 
@@ -145,13 +146,16 @@ class MasaCtrlEditor:
                 guidance_scale,
                 step=4,
                 layper=10,
-                inversion_guidance_scale=1.0):
+        inversion_guidance_scale=1.0,
+        inversion_steps=None):
         if edit_method=="ddim+masactrl":
             return self.edit_image_ddim_MasaCtrl(image_path,prompt_src,prompt_tar,guidance_scale,step=step,layper=layper)
         elif edit_method=="directinversion+masactrl":
             return self.edit_image_directinversion_MasaCtrl(image_path,prompt_src,prompt_tar,guidance_scale,step=step,layper=layper)
         elif edit_method=="lora+masactrl":
-            return self.edit_image_lora_MasaCtrl(image_path,prompt_src,prompt_tar,guidance_scale,step=step,layper=layper)
+            return self.edit_image_lora_MasaCtrl(
+                image_path,prompt_src,prompt_tar,guidance_scale,step=step,layper=layper,
+                inversion_steps=inversion_steps)
         elif edit_method=="lora+directinversion+masactrl":
             return self.edit_image_directinversion_MasaCtrl(
                 image_path,
@@ -162,6 +166,7 @@ class MasaCtrlEditor:
                 layper=layper,
                 use_lora_inversion=True,
                 inversion_guidance_scale=inversion_guidance_scale,
+                inversion_steps=inversion_steps,
             )
         else:
             raise NotImplementedError(f"No edit method named {edit_method}")
@@ -176,6 +181,7 @@ class MasaCtrlEditor:
         layper=10,
         use_lora_inversion=False,
         inversion_guidance_scale=1.0,
+        inversion_steps=None,
     ):
         source_image=load_image(image_path, self.device)
         image_gt = load_512(image_path)
@@ -186,6 +192,8 @@ class MasaCtrlEditor:
             model=self.model,
             num_ddim_steps=self.num_ddim_steps,
         )
+        inversion_steps = inversion_steps or self.num_ddim_steps
+        validate_inversion_steps(inversion_steps, self.num_ddim_steps)
         if use_lora_inversion:
             if not self.lora_loaded:
                 raise RuntimeError(
@@ -200,6 +208,7 @@ class MasaCtrlEditor:
                         image_gt, inversion_guidance_scale,
                         lora_branch_adapter_names=self.lora_branch_adapter_names,
                         lora_adapter_scale=self.lora_scale,
+                        inversion_steps=inversion_steps,
                     )
             finally:
                 self.set_lora_enabled(False)
@@ -213,6 +222,7 @@ class MasaCtrlEditor:
                     num_inner_steps=10,
                     epsilon=1e-5,
                     guidance_scale=guidance_scale,
+                    inversion_steps=inversion_steps,
                 )
         else:
             _, _, x_stars, noise_loss_list = direct_inversion.invert(
@@ -228,6 +238,7 @@ class MasaCtrlEditor:
         image_fixed = self.model([prompt_tar],
                             latents=x_t,
                             num_inference_steps=self.num_ddim_steps,
+                            denoising_steps=inversion_steps,
                             guidance_scale=guidance_scale,
                             noise_loss_list=None)
         
@@ -238,6 +249,8 @@ class MasaCtrlEditor:
         # inference the synthesized image
         image_masactrl = self.model(prompts,
                             latents= x_t.expand(len(prompts), -1, -1, -1),
+                            num_inference_steps=self.num_ddim_steps,
+                            denoising_steps=inversion_steps,
                             guidance_scale=guidance_scale,
                             noise_loss_list=noise_loss_list)
         
@@ -251,7 +264,8 @@ class MasaCtrlEditor:
         
         return Image.fromarray(out_image)
     
-    def edit_image_lora_MasaCtrl(self, image_path, prompt_src, prompt_tar, guidance_scale, step=4, layper=10):
+    def edit_image_lora_MasaCtrl(self, image_path, prompt_src, prompt_tar, guidance_scale, step=4, layper=10,
+                                inversion_steps=None):
         if not self.lora_loaded:
             raise RuntimeError("LoRA inversion requested, but no LoRA checkpoint was loaded.")
         source_image = load_image(image_path, self.device)
@@ -261,11 +275,13 @@ class MasaCtrlEditor:
         # Use the learned SD1.5 inversion only; MasaCtrl sampling remains base SD1.5.
         register_attention_control(self.model, None)
         inversion = DirectInversion(model=self.model, num_ddim_steps=self.num_ddim_steps)
+        inversion_steps = inversion_steps or self.num_ddim_steps
+        validate_inversion_steps(inversion_steps, self.num_ddim_steps)
         inversion.init_prompt([prompt_src])
         self.set_lora_enabled(True)
         try:
             with self.autocast():
-                _, x_stars = inversion.ddim_inversion(image_gt)
+                _, x_stars = inversion.ddim_inversion(image_gt, inversion_steps=inversion_steps)
         finally:
             self.set_lora_enabled(False)
         x_t = x_stars[-1]
@@ -274,12 +290,15 @@ class MasaCtrlEditor:
         regiter_attention_editor_diffusers(self.model, editor)
         with self.autocast():
             image_fixed = self.model([prompt_tar], latents=x_t, num_inference_steps=self.num_ddim_steps,
+                                     denoising_steps=inversion_steps,
                                      guidance_scale=guidance_scale, noise_loss_list=None)
 
         editor = MutualSelfAttentionControl(step, layper)
         regiter_attention_editor_diffusers(self.model, editor)
         with self.autocast():
             image_masactrl = self.model(prompts, latents=x_t.expand(len(prompts), -1, -1, -1),
+                                        num_inference_steps=self.num_ddim_steps,
+                                        denoising_steps=inversion_steps,
                                         guidance_scale=guidance_scale, noise_loss_list=None)
 
         image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
@@ -356,7 +375,11 @@ if __name__ == "__main__":
     parser.add_argument('--lora_scale', type=float, default=1.0)
     parser.add_argument('--lora_mode', choices=["single", "branch_pair"], default="single")
     parser.add_argument('--inversion_guidance_scale', type=float, default=1.0)
+    parser.add_argument('--inversion_steps', type=int, default=50)
     args = parser.parse_args()
+    validate_inversion_steps(args.inversion_steps, 50)
+    if args.inversion_steps != 50 and any(not method.startswith("lora+") for method in args.edit_method_list):
+        parser.error("Partial inversion currently supports only LoRA edit methods")
     
     rerun_exist_images=args.rerun_exist_images
     data_path=args.data_path
@@ -414,6 +437,7 @@ if __name__ == "__main__":
                                         step=4,
                                         layper=10,
                                         inversion_guidance_scale=args.inversion_guidance_scale,
+                                         inversion_steps=args.inversion_steps,
                                         )
                 if not os.path.exists(os.path.dirname(present_image_save_path)):
                     os.makedirs(os.path.dirname(present_image_save_path))

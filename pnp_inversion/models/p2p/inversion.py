@@ -6,6 +6,7 @@ from torch.optim.adam import Adam
 
 from models.p2p.attention_control import register_attention_control
 from utils.utils import slerp_tensor, image2latent, latent2image
+from utils.partial_inversion import denoising_timesteps, validate_inversion_steps
 
 class NegativePromptInversion:
     
@@ -171,11 +172,13 @@ class NullInversion:
         self.prompt = prompt
 
     @torch.no_grad()
-    def ddim_loop(self, latent):
+    def ddim_loop(self, latent, inversion_steps=None):
         uncond_embeddings, cond_embeddings = self.context.chunk(2)
         all_latent = [latent]
         latent = latent.clone().detach()
-        for i in range(self.num_ddim_steps):
+        inversion_steps = inversion_steps or self.num_ddim_steps
+        validate_inversion_steps(inversion_steps, self.num_ddim_steps)
+        for i in range(inversion_steps):
             t = self.model.scheduler.timesteps[len(self.model.scheduler.timesteps) - i - 1]
             noise_pred = self.get_noise_pred_single(latent, t, cond_embeddings)
             latent = self.next_step(noise_pred, t, latent)
@@ -187,10 +190,10 @@ class NullInversion:
         return self.model.scheduler
 
     @torch.no_grad()
-    def ddim_inversion(self, image):
+    def ddim_inversion(self, image, inversion_steps=None):
         latent = image2latent(self.model.vae, image)
         image_rec = latent2image(self.model.vae, latent)[0]
-        ddim_latents = self.ddim_loop(latent)
+        ddim_latents = self.ddim_loop(latent, inversion_steps=inversion_steps)
         return image_rec, ddim_latents
 
     def null_optimization(self, latents, num_inner_steps, epsilon, guidance_scale):
@@ -306,12 +309,14 @@ class DirectInversion:
         self.prompt = prompt
 
     @torch.no_grad()
-    def ddim_loop(self, latent):
+    def ddim_loop(self, latent, inversion_steps=None):
         uncond_embeddings, cond_embeddings = self.context.chunk(2)
         cond_embeddings=cond_embeddings[[0]]
         all_latent = [latent]
         latent = latent.clone().detach()
-        for i in range(self.num_ddim_steps):
+        inversion_steps = inversion_steps or self.num_ddim_steps
+        validate_inversion_steps(inversion_steps, self.num_ddim_steps)
+        for i in range(inversion_steps):
             t = self.model.scheduler.timesteps[len(self.model.scheduler.timesteps) - i - 1]
             noise_pred = self.get_noise_pred_single(latent, t, cond_embeddings)
             latent = self.next_step(noise_pred, t, latent)
@@ -338,13 +343,16 @@ class DirectInversion:
         guidance_scale,
         lora_branch_adapter_names=None,
         lora_adapter_scale=1.0,
+        inversion_steps=None,
     ):
         uncond_embeddings, cond_embeddings = self.context.chunk(2)
         uncond_embeddings=uncond_embeddings[[0]]
         cond_embeddings=cond_embeddings[[0]]
         all_latent = [latent]
         latent = latent.clone().detach()
-        for i in range(self.num_ddim_steps):
+        inversion_steps = inversion_steps or self.num_ddim_steps
+        validate_inversion_steps(inversion_steps, self.num_ddim_steps)
+        for i in range(inversion_steps):
             t = self.model.scheduler.timesteps[len(self.model.scheduler.timesteps) - i - 1]
             if lora_branch_adapter_names is not None:
                 from utils.lora_adapters import set_active_lora_adapter
@@ -369,10 +377,10 @@ class DirectInversion:
         return self.model.scheduler
 
     @torch.no_grad()
-    def ddim_inversion(self, image):
+    def ddim_inversion(self, image, inversion_steps=None):
         latent = image2latent(self.model.vae, image)
         image_rec = latent2image(self.model.vae, latent)[0]
-        ddim_latents = self.ddim_loop(latent)
+        ddim_latents = self.ddim_loop(latent, inversion_steps=inversion_steps)
         return image_rec, ddim_latents
     
     @torch.no_grad()
@@ -389,6 +397,7 @@ class DirectInversion:
         guidance_scale,
         lora_branch_adapter_names=None,
         lora_adapter_scale=1.0,
+        inversion_steps=None,
     ):
         latent = image2latent(self.model.vae, image)
         image_rec = latent2image(self.model.vae, latent)[0]
@@ -397,15 +406,17 @@ class DirectInversion:
             guidance_scale,
             lora_branch_adapter_names=lora_branch_adapter_names,
             lora_adapter_scale=lora_adapter_scale,
+            inversion_steps=inversion_steps,
         )
         return image_rec, ddim_latents
 
-    def offset_calculate(self, latents, num_inner_steps, epsilon, guidance_scale):
+    def offset_calculate(self, latents, num_inner_steps, epsilon, guidance_scale, inversion_steps=None):
         noise_loss_list = []
         latent_cur = torch.concat([latents[-1]]*(self.context.shape[0]//2))
-        for i in range(self.num_ddim_steps):            
+        inversion_steps = inversion_steps or self.num_ddim_steps
+        timesteps = denoising_timesteps(self.model.scheduler.timesteps, inversion_steps)
+        for i, t in enumerate(timesteps):
             latent_prev = torch.concat([latents[len(latents) - i - 2]]*latent_cur.shape[0])
-            t = self.model.scheduler.timesteps[i]
             with torch.no_grad():
                 noise_pred = self.get_noise_pred_single(torch.concat([latent_cur]*2), t, self.context)
                 noise_pred_uncond, noise_pred_cond = noise_pred.chunk(2)
@@ -564,4 +575,3 @@ class DirectInversion:
         self.context = None
         self.num_ddim_steps=num_ddim_steps
         
-       

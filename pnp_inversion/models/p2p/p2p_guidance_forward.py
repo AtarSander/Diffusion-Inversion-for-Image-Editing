@@ -2,6 +2,7 @@ import torch
 
 from models.p2p.attention_control import register_attention_control
 from utils.utils import init_latent
+from utils.partial_inversion import denoising_timesteps
 
 
 def _unet_forward(model, latents, timestep, context):
@@ -40,7 +41,8 @@ def p2p_guidance_forward(
     guidance_scale = 7.5,
     generator = None,
     latent = None,
-    uncond_embeddings=None
+    uncond_embeddings=None,
+    denoising_steps=None,
 ):
     batch_size = len(prompt)
     register_attention_control(model, controller)
@@ -65,7 +67,10 @@ def p2p_guidance_forward(
 
     latent, latents = init_latent(latent, model, height, width, generator, batch_size)
     model.scheduler.set_timesteps(num_inference_steps)
-    for i, t in enumerate(model.scheduler.timesteps):
+    timesteps = denoising_timesteps(
+        model.scheduler.timesteps, denoising_steps or num_inference_steps,
+    )
+    for i, t in enumerate(timesteps):
         if uncond_embeddings_ is None:
             context = torch.cat([uncond_embeddings[i].expand(*text_embeddings.shape), text_embeddings])
         else:
@@ -155,7 +160,8 @@ def direct_inversion_p2p_guidance_forward(
     guidance_scale = 7.5,
     generator = None,
     noise_loss_list = None,
-    add_offset=True
+    add_offset=True,
+    denoising_steps=None,
 ):
     batch_size = len(prompt)
     register_attention_control(model, controller)
@@ -178,7 +184,10 @@ def direct_inversion_p2p_guidance_forward(
 
     latent, latents = init_latent(latent, model, height, width, generator, batch_size)
     model.scheduler.set_timesteps(num_inference_steps)
-    for i, t in enumerate(model.scheduler.timesteps):
+    timesteps = denoising_timesteps(
+        model.scheduler.timesteps, denoising_steps or num_inference_steps,
+    )
+    for i, t in enumerate(timesteps):
         
         context = torch.cat([uncond_embeddings, text_embeddings])
         latents = direct_inversion_p2p_guidance_diffusion_step(model, controller, latents, context, t, guidance_scale, noise_loss_list[i],low_resource=False,add_offset=add_offset)
