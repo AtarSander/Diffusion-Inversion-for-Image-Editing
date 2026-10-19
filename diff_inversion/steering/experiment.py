@@ -8,7 +8,7 @@ from typing import cast
 import torch
 
 from .config import read_sources, write_json
-from .directions import fit_directions, scaled_offsets, select_layers
+from .directions import addition_offsets, fit_directions, select_layers
 from .hooks import REPRESENTATIONS
 from .images import conditioning, decode_image, encode_image, load_pipeline
 from .runtime import SteeringRuntime
@@ -106,6 +106,8 @@ def generate(config: Config, vector_path: str | Path, output: str | Path) -> Non
     comparisons: list[dict[str, str | int | float]] = []
     manifest = {
         "config": config,
+        "steering_operator": "casteer_addition",
+        "direction_normalization": "l2",
         "direction_config": bundle["config"],
         "feature_source": FEATURE_SOURCE,
         "direction_sources": bundle["sources"],
@@ -151,7 +153,7 @@ def generate(config: Config, vector_path: str | Path, output: str | Path) -> Non
             settings["strengths"],
         )
         for rep, method, control, strength in variants:
-            offsets = scaled_offsets(bundle, rep, method, control, layers, calls, strength)
+            offsets = addition_offsets(bundle, rep, method, control, layers, calls, strength)
             latent = runtime.generate(
                 noise,
                 cond,

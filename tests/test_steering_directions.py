@@ -6,13 +6,13 @@ import math
 import pytest
 import torch
 
-from diff_inversion.steering.directions import fit_directions, scaled_offsets, select_layers
+from diff_inversion.steering.directions import addition_offsets, fit_directions, select_layers
 from diff_inversion.steering.hooks import REPRESENTATIONS
 
 
 def records():
     result = []
-    # Distinct methods and unequal direction norms expose incorrect shared scaling.
+    # Distinct methods expose accidental mixing of source features.
     for label, value in (
         ("positive", 3.0),
         ("positive", 5.0),
@@ -26,16 +26,12 @@ def records():
                     rep: {"up_blocks.0": torch.tensor([[value * gain, 0.0], [0.0, value * gain]])}
                     for rep in REPRESENTATIONS
                 },
-                "moments": {
-                    rep: {"up_blocks.0": torch.tensor([4.0 * gain, 16.0 * gain])}
-                    for rep in REPRESENTATIONS
-                },
             }
         result.append(row)
     return result
 
 
-def test_difference_of_means_and_full_map_reference():
+def test_difference_of_means_is_stored_before_normalization():
     bundle = fit_directions(records())
     assert torch.equal(
         bundle["directions"]["SA"]["DDIM"]["up_blocks.0"]["true"],
@@ -44,9 +40,6 @@ def test_difference_of_means_and_full_map_reference():
     assert torch.equal(
         bundle["directions"]["SA"]["MW"]["up_blocks.0"]["true"],
         torch.tensor([[6.0, 0.0], [0.0, 6.0]]),
-    )
-    assert torch.allclose(
-        bundle["reference_rms"]["SA"]["up_blocks.0"], torch.tensor([6.0, 24.0]).sqrt()
     )
 
 
@@ -66,18 +59,38 @@ def test_gaussian_orientation_shared_and_sign_null_is_not_pair_permutation():
     )
 
 
-def test_common_requested_relative_dose_and_signed_strength():
+@pytest.mark.parametrize("control", ["true", "swap", "gaussian"])
+def test_casteer_addition_uses_unit_l2_per_step_and_direct_signed_strength(control):
     bundle = fit_directions(records())
-    for method in ("DDIM", "MW"):
-        deltas = scaled_offsets(bundle, "SA", method, "true", ["up_blocks.0"], [0, 1], 2.0)
-        relative_energy = sum(
-            float(value["up_blocks.0"].double().square().mean())
-            / float(bundle["reference_rms"]["SA"]["up_blocks.0"][call]) ** 2
-            for call, value in deltas.items()
+    for method, gain in (("DDIM", 1.0), ("MW", 7.0)):
+        # Norms 5 and 13 distinguish L2 from RMS, squared L2 and joint time norms.
+        bundle["directions"]["CA"][method]["up_blocks.0"][control] = gain * torch.tensor(
+            [[3.0, 4.0, 0.0], [0.0, -5.0, 12.0]]
         )
-        assert relative_energy == pytest.approx(10 * 2.0**2, rel=1e-6)
-        negative = scaled_offsets(bundle, "SA", method, "true", ["up_blocks.0"], [0, 1], -2.0)
-        assert torch.equal(negative[0]["up_blocks.0"], -deltas[0]["up_blocks.0"])
+        deltas = addition_offsets(bundle, "CA", method, control, ["up_blocks.0"], [0, 1], 2.0)
+        assert torch.allclose(deltas[0]["up_blocks.0"], torch.tensor([1.2, 1.6, 0.0]))
+        assert torch.allclose(deltas[1]["up_blocks.0"], torch.tensor([0.0, -10 / 13, 24 / 13]))
+        negative = addition_offsets(bundle, "CA", method, control, ["up_blocks.0"], [0, 1], -2.0)
+        zero = addition_offsets(bundle, "CA", method, control, ["up_blocks.0"], [0, 1], 0.0)
+        for call in (0, 1):
+            assert torch.equal(negative[call]["up_blocks.0"], -deltas[call]["up_blocks.0"])
+            assert not zero[call]["up_blocks.0"].any()
+
+
+def test_selecting_more_layers_or_calls_does_not_rescale_existing_offsets():
+    bundle = fit_directions(records())
+    layers = bundle["directions"]["SA"]["DDIM"]
+    layers["up_blocks.1"] = copy.deepcopy(layers["up_blocks.0"])
+    single = addition_offsets(bundle, "SA", "DDIM", "true", ["up_blocks.0"], [1], 2.0)
+    extended = addition_offsets(bundle, "SA", "DDIM", "true", list(layers), [0, 1], 2.0)
+    assert torch.equal(single[1]["up_blocks.0"], extended[1]["up_blocks.0"])
+
+
+def test_near_zero_direction_uses_the_official_normalization_floor():
+    bundle = fit_directions(records())
+    bundle["directions"]["CA"]["DDIM"]["up_blocks.0"]["true"][0] = torch.tensor([6e-10, 8e-10])
+    offsets = addition_offsets(bundle, "CA", "DDIM", "true", ["up_blocks.0"], [0], 1.0)
+    assert torch.allclose(offsets[0]["up_blocks.0"], torch.tensor([0.06, 0.08]))
 
 
 def test_zero_direction_is_not_replaced_by_a_unit_vector():
@@ -86,7 +99,7 @@ def test_zero_direction_is_not_replaced_by_a_unit_vector():
         for method in ("DDIM", "MW"):
             for rep in REPRESENTATIONS:
                 row[method]["features"][rep]["up_blocks.0"].zero_()
-    offsets = scaled_offsets(
+    offsets = addition_offsets(
         fit_directions(source), "CA", "DDIM", "true", ["up_blocks.0"], [0], 1.0
     )
     assert not offsets[0]["up_blocks.0"].any()

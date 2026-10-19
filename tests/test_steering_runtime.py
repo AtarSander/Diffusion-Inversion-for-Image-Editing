@@ -7,6 +7,7 @@ import torch
 from diffusers import DDIMScheduler
 from diffusers.models.attention import BasicTransformerBlock
 
+from diff_inversion.steering.directions import addition_offsets
 from diff_inversion.steering.hooks import feature_hooks
 from diff_inversion.steering.runtime import SteeringRuntime, pipeline_state
 
@@ -78,20 +79,17 @@ def test_capture_is_observer_and_block_means_whole_update(example):
     inputs, outputs = [], []
     pre = block.register_forward_pre_hook(lambda _m, args: inputs.append(args[0].detach().clone()))
     post = block.register_forward_hook(lambda _m, _args, out: outputs.append(out.detach().clone()))
-    capture, moments = {}, {}
+    capture = {}
     from diff_inversion.modeling.sdxl_sampling import predict_noise_sdxl
 
     plain = predict_noise_sdxl(pipe, latent, torch.tensor(1), cond, 1.0)
-    with feature_hooks(pipe.unet, captures=capture, moments=moments):
+    with feature_hooks(pipe.unet, captures=capture):
         observed = predict_noise_sdxl(pipe, latent, torch.tensor(1), cond, 1.0)
     pre.remove()
     post.remove()
     assert torch.equal(plain, observed)
     delta = outputs[-1].float() - inputs[-1].float()
     assert torch.equal(capture["block"]["up_blocks.0"], delta[1:].mean(1))
-    assert torch.equal(
-        moments["block"]["up_blocks.0"], delta[1:].square().mean((1, 2), dtype=torch.float64)
-    )
     assert set(capture) == {"CA", "SA", "block"}
     assert not torch.equal(capture["SA"]["up_blocks.0"], capture["block"]["up_blocks.0"])
 
@@ -113,6 +111,27 @@ def test_only_conditional_branch_changed_and_hooks_removed(example, representati
     assert not any(
         module._forward_hooks or module._forward_pre_hooks for module in pipe.unet.modules()
     )
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float16])
+def test_casteer_addition_at_ca_output_matches_equation_12(example, dtype):
+    pipe, _, _ = example
+    pipe.unet.to(dtype=dtype)
+    attention = pipe.unet.up_blocks[0].attn2
+    hidden = torch.randn(2, 3, 4, dtype=dtype)
+    context = torch.randn(2, 2, 4, dtype=dtype)
+    bundle = {
+        "directions": {"CA": {"DDIM": {"up_blocks.0": {"true": torch.tensor([[3., 4., 0., 0.]])}}}},
+        "null_seed": 123,
+    }
+    offsets = addition_offsets(bundle, "CA", "DDIM", "true", ["up_blocks.0"], [0], 2.0)
+    plain = attention(hidden, encoder_hidden_states=context)
+    with feature_hooks(pipe.unet, representation="CA", deltas=offsets[0]):
+        changed = attention(hidden, encoder_hidden_states=context)
+    assert changed.dtype == dtype
+    assert torch.equal(changed[:1], plain[:1])
+    expected = (plain[1:].float() + torch.tensor([1.2, 1.6, 0.0, 0.0])).to(dtype)
+    assert torch.equal(changed[1:], expected)
 
 
 @pytest.mark.parametrize("method", ["DDIM", "MW"])
@@ -142,7 +161,6 @@ def test_every_feature_read_uses_its_saved_inverse_state_and_timestep(
     assert all(torch.equal(state, original) for state, original in zip(states, saved))
     for representation in ("CA", "SA", "block"):
         assert features["features"][representation]["up_blocks.0"].shape == (50, 4)
-        assert features["moments"][representation]["up_blocks.0"].shape == (50,)
 
 
 def test_changing_one_inverse_state_changes_only_its_feature_row(example):

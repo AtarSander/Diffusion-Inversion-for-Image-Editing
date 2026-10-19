@@ -96,30 +96,21 @@ class SteeringRuntime:
         if len(states) != self.steps + 1:
             raise ValueError("Expected the encoded image and every inverse-step output")
         features: dict[Representation, dict[str, list[torch.Tensor]]] = {}
-        moments: dict[Representation, dict[str, list[torch.Tensor]]] = {}
         with pipeline_state(self.pipe):
             scheduler = self.scheduler()
             self.pipe.scheduler = scheduler
             for state, timestep in zip(reversed(states[1:]), scheduler.timesteps):
                 current = state.to(device=self.pipe.device, dtype=self.pipe.unet.dtype)
                 capture: FeatureMaps = {}
-                second: FeatureMaps = {}
-                with feature_hooks(self.pipe.unet, captures=capture, moments=second):
+                with feature_hooks(self.pipe.unet, captures=capture):
                     predict_noise_sdxl(self.pipe, current, timestep, conditioning, 1.0)
                 for rep in capture:
                     for name, value in capture[rep].items():
                         features.setdefault(rep, {}).setdefault(name, []).append(value[0])
-                        moments.setdefault(rep, {}).setdefault(name, []).append(
-                            second[rep][name][0]
-                        )
         return {
             "features": {
                 rep: {name: torch.stack(value) for name, value in layers.items()}
                 for rep, layers in features.items()
-            },
-            "moments": {
-                rep: {name: torch.stack(value) for name, value in layers.items()}
-                for rep, layers in moments.items()
             },
         }
 

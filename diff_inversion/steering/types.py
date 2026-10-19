@@ -25,7 +25,6 @@ class Source(TypedDict):
 
 class ActivationRead(TypedDict):
     features: FeatureMaps  # Each tensor is [step, channel].
-    moments: FeatureMaps  # Each tensor is [step], before the RMS square root.
 
 
 class SourceRecord(Source):
@@ -40,8 +39,8 @@ class FeatureBundle(TypedDict):
 
 
 class DirectionFit(TypedDict):
+    # Raw [step, channel] directions; L2 normalization happens before injection.
     directions: dict[Representation, dict[Method, dict[str, dict[Control, Tensor]]]]
-    reference_rms: FeatureMaps
     null_seed: int
 
 

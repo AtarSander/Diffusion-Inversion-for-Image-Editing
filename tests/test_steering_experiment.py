@@ -84,6 +84,8 @@ def test_end_to_end_uses_common_noise_for_every_variant_and_prompt(tmp_path, mon
     assert len(manifest["images"]) == 4 * variants_per_unit
     assert manifest["active_calls"] == [1, 2, 3]
     assert manifest["feature_source"] == "inversion_states"
+    assert manifest["steering_operator"] == "casteer_addition"
+    assert manifest["direction_normalization"] == "l2"
     for unit in range(4):
         values = inputs[unit * variants_per_unit : (unit + 1) * variants_per_unit]
         assert all(torch.equal(values[0], value) for value in values)

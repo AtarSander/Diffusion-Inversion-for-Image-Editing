@@ -45,7 +45,6 @@ def feature_hooks(
     *,
     batch_size: int = 1,
     captures: FeatureMaps | None = None,
-    moments: FeatureMaps | None = None,
     representation: Representation | None = None,
     deltas: LayerTensors | None = None,
 ) -> Iterator[None]:
@@ -53,7 +52,7 @@ def feature_hooks(
 
     CA/SA are attention outputs before the enclosing residual addition. A block
     feature is FP32(output)-FP32(input), while its offset is added at the output.
-    Captures are spatial/token means; moments are full-map second moments.
+    Captures are spatial/token means in FP32.
     """
     if representation is not None and representation not in REPRESENTATIONS:
         raise ValueError(f"Unknown representation: {representation}")
@@ -67,17 +66,12 @@ def feature_hooks(
     inputs: LayerTensors = {}
 
     def record(rep: Representation, name: str, tensor: torch.Tensor) -> None:
-        if captures is None and moments is None:
+        if captures is None:
             return
         value = conditional(tensor, batch_size).detach().float()
         if not torch.isfinite(value).all():
             raise ValueError(f"Nonfinite {rep} activations at {name}")
-        if captures is not None:
-            captures.setdefault(rep, {})[name] = value.mean(dim=1).cpu()
-        if moments is not None:
-            moments.setdefault(rep, {})[name] = (
-                value.square().mean(dim=(1, 2), dtype=torch.float64).cpu()
-            )
+        captures.setdefault(rep, {})[name] = value.mean(dim=1).cpu()
 
     def inject(rep: Representation, name: str, tensor: torch.Tensor) -> torch.Tensor:
         if representation != rep or name not in deltas:
@@ -93,7 +87,7 @@ def feature_hooks(
 
     try:
         for name, block in blocks.items():
-            if captures is None and moments is None and name not in deltas:
+            if captures is None and name not in deltas:
                 continue
 
             def before(
@@ -116,7 +110,7 @@ def feature_hooks(
                 record("block", name, output.detach().float() - inputs.pop(name).float())
                 return inject("block", name, output)
 
-            if captures is not None or moments is not None:
+            if captures is not None:
                 handles.append(block.register_forward_pre_hook(before, with_kwargs=True))
                 handles.append(block.register_forward_hook(after))
             elif representation == "block":
@@ -132,7 +126,7 @@ def feature_hooks(
 
                 handles.append(block.register_forward_hook(add_block))
             for rep, module in (("SA", block.attn1), ("CA", block.attn2)):
-                if captures is not None or moments is not None or representation == rep:
+                if captures is not None or representation == rep:
 
                     def hook(
                         _module: torch.nn.Module,
