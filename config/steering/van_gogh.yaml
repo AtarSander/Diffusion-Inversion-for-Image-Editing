@@ -1,0 +1,35 @@
+# Source list and checkpoint must be supplied locally. Paths below are relative
+# to this YAML file; image paths in the source list are relative to that list.
+source_manifest: ../../data/steering/van_gogh_sources.jsonl
+model:
+  id: stabilityai/stable-diffusion-xl-base-1.0
+  revision: 462165984030d82259a11f4367a4eed129e94a7b
+  variant: fp16
+  dtype: float16
+  device: cuda
+lora:
+  checkpoint_path: ../../checkpoints/stylebench_blip2_prompt_lora_step2500/checkpoint_step_2500.pt
+  r: 16
+  lora_alpha: 8
+  target_modules: [to_q, to_k, to_v, to_out.0]
+steps: 50
+size: 1024
+inversion_prompt: A painting
+reader_prompt: A painting
+reader: free  # free reconstruction from zT; alternative: direct inverse-state probes
+null_seed: 123  # separately named source-direction control RNG
+generation:
+  # Example settings for the cleaned interface; not a newly executed run or optimum.
+  guidance_scale: 1.0
+  layers: last36  # all, last36 or last12, in observed forward order
+  start_call: 1   # 0-based: ordinal denoising step 2
+  stop_call: 50   # exclusive: through ordinal step 50
+  representations: [CA, SA, block]
+  strengths: [1.0]
+  controls: [true, swap, gaussian]
+  seeds: [42]     # primary seed shared by ALL prompts and variants
+  prompts:
+    - A small cottage beside a country road, with trees and fields.
+    - Two pears and a ceramic jug on a wooden table.
+    - A bicycle leaning against a brick wall on a quiet street.
+    - A cat sitting on a windowsill beside a potted plant.
