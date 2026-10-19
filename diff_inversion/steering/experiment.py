@@ -3,6 +3,7 @@
 import hashlib
 import itertools
 from pathlib import Path
+from typing import cast
 
 import torch
 
@@ -11,18 +12,19 @@ from .directions import fit_directions, scaled_offsets, select_layers
 from .hooks import REPRESENTATIONS
 from .images import conditioning, decode_image, encode_image, load_pipeline
 from .runtime import SteeringRuntime
+from .types import Config, DirectionBundle, FeatureBundle, SourceRecord
 
 FEATURE_SOURCE = "inversion_states"
 
 
-def new_directory(path):
+def new_directory(path: str | Path) -> Path:
     """Use a new destination so an experiment cannot silently overwrite old outputs."""
     path = Path(path)
     path.mkdir(parents=True, exist_ok=False)
     return path
 
 
-def extract(config, output):
+def extract(config: Config, output: str | Path) -> None:
     sources = read_sources(config["source_manifest"])
     output = new_directory(output)
     write_json(output / "config.json", config)
@@ -33,10 +35,10 @@ def extract(config, output):
     reader_cond = conditioning(pipe, config["reader_prompt"], config["size"])
     inversions = output / "inversions"
     inversions.mkdir()
-    records = []
+    records: list[SourceRecord] = []
     for index, source in enumerate(sources):
         latent = encode_image(pipe, source["path"], config["size"])
-        record = dict(source)
+        record = cast(SourceRecord, dict(source))
         for method in ("DDIM", "MW"):
             states = runtime.invert(latent, inverse_cond, method)
             torch.save(
@@ -57,13 +59,15 @@ def extract(config, output):
     )
 
 
-def fit(feature_path, output):
-    features = torch.load(feature_path, map_location="cpu", weights_only=True)
+def fit(feature_path: str | Path, output: str | Path) -> None:
+    features = cast(FeatureBundle, torch.load(feature_path, map_location="cpu", weights_only=True))
     if features.get("feature_source") != FEATURE_SOURCE:
         raise ValueError("Features must come from saved inversion states; rerun extract")
     output = new_directory(output)
     config = features["config"]
-    bundle = fit_directions(features["records"], null_seed=config["null_seed"])
+    bundle = cast(
+        DirectionBundle, fit_directions(features["records"], null_seed=config["null_seed"])
+    )
     # Dict insertion order comes from observed CA execution, not named_modules().
     bundle["layer_order"] = list(features["records"][0]["DDIM"]["features"]["CA"])
     bundle["config"] = config
@@ -76,8 +80,8 @@ def fit(feature_path, output):
     write_json(output / "layers.json", bundle["layer_order"])
 
 
-def generate(config, vector_path, output):
-    bundle = torch.load(vector_path, map_location="cpu", weights_only=True)
+def generate(config: Config, vector_path: str | Path, output: str | Path) -> None:
+    bundle = cast(DirectionBundle, torch.load(vector_path, map_location="cpu", weights_only=True))
     if bundle.get("feature_source") != FEATURE_SOURCE:
         raise ValueError("Directions must come from saved inversion states; rerun extract and fit")
     # Compare readable values, without hashing code/configs or binding to an HPC installation.
@@ -99,7 +103,7 @@ def generate(config, vector_path, output):
     write_json(output / "config.json", config)
     pipe = load_pipeline(config)
     runtime = SteeringRuntime(pipe, steps=config["steps"])
-    comparisons = []
+    comparisons: list[dict[str, str | int | float]] = []
     manifest = {
         "config": config,
         "direction_config": bundle["config"],
@@ -124,7 +128,7 @@ def generate(config, vector_path, output):
         # The one hash requested for paired comparisons is the actual starting noise.
         noise_hash = hashlib.sha256(noise.contiguous().numpy().tobytes()).hexdigest()
 
-        def save(latent, filename, **variant):
+        def save(latent: torch.Tensor, filename: str, **variant: str | float) -> None:
             target = unit / filename
             decode_image(pipe, latent).save(target)
             comparisons.append(

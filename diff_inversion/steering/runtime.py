@@ -1,18 +1,20 @@
 """DDIM/MW inversion, activation reads at inverse states, and fresh-noise generation."""
 
 import copy
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 
 import torch
-from diffusers import DDIMInverseScheduler, DDIMScheduler
+from diffusers import DDIMInverseScheduler, DDIMScheduler, StableDiffusionXLPipeline
 
 from diff_inversion.modeling.sdxl_sampling import predict_noise_sdxl
 
 from .hooks import feature_hooks
+from .types import ActivationRead, Conditioning, FeatureMaps, Method, Offsets, Representation
 
 
 @contextmanager
-def pipeline_state(pipe, *, lora=False):
+def pipeline_state(pipe: StableDiffusionXLPipeline, *, lora: bool = False) -> Iterator[None]:
     """Keep adapters on only for MW inversion; restore scheduler/flags on failure."""
     scheduler = pipe.scheduler
     adapters = [
@@ -37,13 +39,13 @@ def pipeline_state(pipe, *, lora=False):
 
 
 class SteeringRuntime:
-    def __init__(self, pipe, *, steps=50):
+    def __init__(self, pipe: StableDiffusionXLPipeline, *, steps: int = 50) -> None:
         self.pipe, self.steps = pipe, steps
         self.scheduler_config = dict(pipe.scheduler.config)
         sampling = self.scheduler()
         inverse = self.scheduler(inverse=True)
         # Entry 0 is the encoded image; each later entry is an inverse-step output.
-        self.state_timesteps = [None, *inverse.timesteps.tolist()]
+        self.state_timesteps: list[int | None] = [None, *inverse.timesteps.tolist()]
         # This reader indexes inverse states N-i. It requires matching arithmetic
         # predecessors, not just similarly named scheduler timesteps.
         ratio = sampling.config.num_train_timesteps // steps
@@ -58,14 +60,16 @@ class SteeringRuntime:
                 "Use matching, uniform epsilon-prediction DDIM schedules without clipping"
             )
 
-    def scheduler(self, *, inverse=False):
+    def scheduler(self, *, inverse: bool = False) -> DDIMScheduler | DDIMInverseScheduler:
         cls = DDIMInverseScheduler if inverse else DDIMScheduler
         scheduler = cls.from_config(copy.deepcopy(self.scheduler_config))
         scheduler.set_timesteps(self.steps, device=self.pipe.device)
         return scheduler
 
     @torch.no_grad()
-    def invert(self, latent, conditioning, method):
+    def invert(
+        self, latent: torch.Tensor, conditioning: Conditioning, method: Method
+    ) -> list[torch.Tensor]:
         if method not in ("DDIM", "MW"):
             raise ValueError(f"Unknown inversion method: {method}")
         with pipeline_state(self.pipe, lora=method == "MW"):
@@ -80,7 +84,9 @@ class SteeringRuntime:
         return states
 
     @torch.no_grad()
-    def read_inversion_states(self, states, conditioning):
+    def read_inversion_states(
+        self, states: Sequence[torch.Tensor], conditioning: Conditioning
+    ) -> ActivationRead:
         """One base-UNet forward per saved inverse state, in denoising order.
 
         For N steps, call k uses states[N-k] at its matching diffusion timestep.
@@ -89,13 +95,15 @@ class SteeringRuntime:
         """
         if len(states) != self.steps + 1:
             raise ValueError("Expected the encoded image and every inverse-step output")
-        features, moments = {}, {}
+        features: dict[Representation, dict[str, list[torch.Tensor]]] = {}
+        moments: dict[Representation, dict[str, list[torch.Tensor]]] = {}
         with pipeline_state(self.pipe):
             scheduler = self.scheduler()
             self.pipe.scheduler = scheduler
             for state, timestep in zip(reversed(states[1:]), scheduler.timesteps):
                 current = state.to(device=self.pipe.device, dtype=self.pipe.unet.dtype)
-                capture, second = {}, {}
+                capture: FeatureMaps = {}
+                second: FeatureMaps = {}
                 with feature_hooks(self.pipe.unet, captures=capture, moments=second):
                     predict_noise_sdxl(self.pipe, current, timestep, conditioning, 1.0)
                 for rep in capture:
@@ -118,13 +126,13 @@ class SteeringRuntime:
     @torch.no_grad()
     def generate(
         self,
-        starting_noise,
-        conditioning,
+        starting_noise: torch.Tensor,
+        conditioning: Conditioning,
         *,
-        guidance_scale=1.0,
-        representation=None,
-        offsets=None,
-    ):
+        guidance_scale: float = 1.0,
+        representation: Representation | None = None,
+        offsets: Offsets | None = None,
+    ) -> torch.Tensor:
         with pipeline_state(self.pipe):
             scheduler = self.scheduler()
             self.pipe.scheduler = scheduler

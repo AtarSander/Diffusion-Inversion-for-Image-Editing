@@ -6,7 +6,7 @@ from .config import load_config
 from .experiment import extract, fit, generate
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="stage", required=True)
     for stage in ("extract", "fit", "generate"):

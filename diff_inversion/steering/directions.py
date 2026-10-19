@@ -1,13 +1,23 @@
 """Per-layer, per-denoising-step differences of means and common dose scaling."""
 
 import math
+from collections.abc import Sequence
 
 import torch
 
 from .hooks import REPRESENTATIONS
+from .types import (
+    Control,
+    DirectionFit,
+    LayerProfile,
+    Method,
+    Offsets,
+    Representation,
+    SourceRecord,
+)
 
 
-def fit_directions(records, *, null_seed=123):
+def fit_directions(records: Sequence[SourceRecord], *, null_seed: int = 123) -> DirectionFit:
     """Fit on construction images only. Each record holds both DDIM and MW reads.
 
     Features have shape [step, channel]; moments are measured before pooling.
@@ -24,7 +34,7 @@ def fit_directions(records, *, null_seed=123):
     rng = torch.Generator().manual_seed(null_seed)
     signs = torch.tensor([1.0] * (count // 2) + [-1.0] * (count // 2))
     signs = signs[torch.randperm(count, generator=rng)]
-    result = {"directions": {}, "reference_rms": {}, "null_seed": null_seed}
+    result: DirectionFit = {"directions": {}, "reference_rms": {}, "null_seed": null_seed}
     for rep in REPRESENTATIONS:
         result["directions"][rep] = {method: {} for method in ("DDIM", "MW")}
         result["reference_rms"][rep] = {}
@@ -59,7 +69,7 @@ def fit_directions(records, *, null_seed=123):
     return result
 
 
-def select_layers(layer_order, profile):
+def select_layers(layer_order: Sequence[str], profile: LayerProfile) -> list[str]:
     """Use observed forward order; do not confuse a representation with a layer subset."""
     if profile == "all":
         return list(layer_order)
@@ -72,12 +82,28 @@ def select_layers(layer_order, profile):
     return selected
 
 
-def scaled_offsets(bundle, representation, method, control, layers, calls, strength):
-    """lambda*sqrt(10/(L*K))*reference_RMS*d/max(RMS(d), 1e-8)."""
+def scaled_offsets(
+    bundle: DirectionFit,
+    representation: Representation,
+    method: Method,
+    control: Control,
+    layers: Sequence[str],
+    calls: Sequence[int],
+    strength: float,
+) -> Offsets:
+    """Apply lambda*sqrt(10/(L*K))*reference_RMS*d/max(RMS(d), 1e-8).
+
+    This is our dose convention, not a CASteer formula. The factor 10 preserves
+    the historical reference of one CA location over ten calls. For nonzero
+    directions above the norm floor, the requested squared relative RMS summed
+    over L layers and K calls is 10*lambda**2, before delivery rounding.
+    This does not equalize perceptual changes. See the 2026-10-13 entry in
+    docs/experiments/wikiart_style_steering_20261012.md.
+    """
     if not layers or not calls or not math.isfinite(strength):
         raise ValueError("A finite strength and nonempty layer/time selections are required")
     amplitude = strength * math.sqrt(10.0 / (len(layers) * len(calls)))
-    output = {}
+    output: Offsets = {}
     for call in calls:
         output[call] = {}
         for name in layers:

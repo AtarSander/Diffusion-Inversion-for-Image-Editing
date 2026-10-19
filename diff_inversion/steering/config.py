@@ -2,13 +2,16 @@
 
 import json
 from pathlib import Path
+from typing import cast
 
 from omegaconf import OmegaConf
 
+from .types import Config, Source
 
-def load_config(path):
+
+def load_config(path: str | Path) -> Config:
     path = Path(path).resolve()
-    config = OmegaConf.to_container(OmegaConf.load(path), resolve=True)
+    config = cast(Config, OmegaConf.to_container(OmegaConf.load(path), resolve=True))
     source = Path(config["source_manifest"])
     config["source_manifest"] = str((path.parent / source).resolve())
     model_id = config["model"]["id"]
@@ -26,10 +29,12 @@ def load_config(path):
     return config
 
 
-def read_sources(path):
+def read_sources(path: str | Path) -> list[Source]:
     """Only construction examples belong in this explicitly selected source list."""
     path = Path(path)
-    rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    rows: list[Source] = [
+        json.loads(line) for line in path.read_text().splitlines() if line.strip()
+    ]
     if len({row["id"] for row in rows}) != len(rows):
         raise ValueError("Source IDs must be unique")
     for row in rows:
@@ -46,5 +51,5 @@ def read_sources(path):
     return rows
 
 
-def write_json(path, value):
+def write_json(path: str | Path, value: object) -> None:
     Path(path).write_text(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + "\n")

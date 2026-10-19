@@ -1,14 +1,19 @@
 """Read CA/SA/block updates and add offsets to the conditional branch."""
 
+from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import Any
 
 import torch
 from diffusers.models.attention import BasicTransformerBlock
+from torch.utils.hooks import RemovableHandle
 
-REPRESENTATIONS = ("CA", "SA", "block")
+from .types import FeatureMaps, LayerTensors, Representation
+
+REPRESENTATIONS: tuple[Representation, ...] = ("CA", "SA", "block")
 
 
-def transformer_blocks(unet):
+def transformer_blocks(unet: torch.nn.Module) -> dict[str, BasicTransformerBlock]:
     """Find individual transformer blocks, rather than whole UNet up/down blocks."""
     blocks = {
         name: module
@@ -28,7 +33,7 @@ def transformer_blocks(unet):
     return blocks
 
 
-def conditional(tensor, batch_size):
+def conditional(tensor: torch.Tensor, batch_size: int) -> torch.Tensor:
     if tensor.ndim != 3 or tensor.shape[0] != 2 * batch_size:
         raise ValueError("Expected BTC activations with unconditional then conditional batches")
     return tensor[batch_size:]
@@ -36,8 +41,14 @@ def conditional(tensor, batch_size):
 
 @contextmanager
 def feature_hooks(
-    unet, *, batch_size=1, captures=None, moments=None, representation=None, deltas=None
-):
+    unet: torch.nn.Module,
+    *,
+    batch_size: int = 1,
+    captures: FeatureMaps | None = None,
+    moments: FeatureMaps | None = None,
+    representation: Representation | None = None,
+    deltas: LayerTensors | None = None,
+) -> Iterator[None]:
     """Capture all three representations on one forward; inject one representation.
 
     CA/SA are attention outputs before the enclosing residual addition. A block
@@ -52,9 +63,10 @@ def feature_hooks(
         raise ValueError("Injection requires a representation")
     if set(deltas) - set(blocks):
         raise ValueError("An injection names a missing transformer block")
-    handles, inputs = [], {}
+    handles: list[RemovableHandle] = []
+    inputs: LayerTensors = {}
 
-    def record(rep, name, tensor):
+    def record(rep: Representation, name: str, tensor: torch.Tensor) -> None:
         if captures is None and moments is None:
             return
         value = conditional(tensor, batch_size).detach().float()
@@ -67,7 +79,7 @@ def feature_hooks(
                 value.square().mean(dim=(1, 2), dtype=torch.float64).cpu()
             )
 
-    def inject(rep, name, tensor):
+    def inject(rep: Representation, name: str, tensor: torch.Tensor) -> torch.Tensor:
         if representation != rep or name not in deltas:
             return tensor
         delta = deltas[name].to(device=tensor.device, dtype=torch.float32)
@@ -84,11 +96,23 @@ def feature_hooks(
             if captures is None and moments is None and name not in deltas:
                 continue
 
-            def before(_module, args, kwargs, *, name=name):
+            def before(
+                _module: torch.nn.Module,
+                args: tuple[Any, ...],
+                kwargs: dict[str, Any],
+                *,
+                name: str = name,
+            ) -> None:
                 hidden = args[0] if args else kwargs["hidden_states"]
                 inputs[name] = hidden.detach().clone()
 
-            def after(_module, _args, output, *, name=name):
+            def after(
+                _module: torch.nn.Module,
+                _args: tuple[Any, ...],
+                output: torch.Tensor,
+                *,
+                name: str = name,
+            ) -> torch.Tensor:
                 record("block", name, output.detach().float() - inputs.pop(name).float())
                 return inject("block", name, output)
 
@@ -97,14 +121,27 @@ def feature_hooks(
                 handles.append(block.register_forward_hook(after))
             elif representation == "block":
 
-                def add_block(_module, _args, output, *, name=name):
+                def add_block(
+                    _module: torch.nn.Module,
+                    _args: tuple[Any, ...],
+                    output: torch.Tensor,
+                    *,
+                    name: str = name,
+                ) -> torch.Tensor:
                     return inject("block", name, output)
 
                 handles.append(block.register_forward_hook(add_block))
             for rep, module in (("SA", block.attn1), ("CA", block.attn2)):
                 if captures is not None or moments is not None or representation == rep:
 
-                    def hook(_module, _args, output, *, rep=rep, name=name):
+                    def hook(
+                        _module: torch.nn.Module,
+                        _args: tuple[Any, ...],
+                        output: torch.Tensor,
+                        *,
+                        rep: Representation = rep,
+                        name: str = name,
+                    ) -> torch.Tensor:
                         record(rep, name, output)
                         return inject(rep, name, output)
 

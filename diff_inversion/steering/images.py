@@ -1,5 +1,7 @@
 """SDXL loading, text conditioning and deterministic image/latent conversion."""
 
+from pathlib import Path
+
 import numpy as np
 import torch
 from diffusers import DDIMScheduler, StableDiffusionXLPipeline
@@ -8,8 +10,10 @@ from PIL import Image, ImageOps
 
 from diff_inversion.eval.lora import configure_unet_lora, set_unet_lora_enabled
 
+from .types import Conditioning, Config
 
-def load_pipeline(config):
+
+def load_pipeline(config: Config) -> StableDiffusionXLPipeline:
     model = config["model"]
     dtype = {"float16": torch.float16, "float32": torch.float32}[model["dtype"]]
     kwargs = {"torch_dtype": dtype, "use_safetensors": True}
@@ -41,7 +45,7 @@ def load_pipeline(config):
 
 
 @torch.no_grad()
-def conditioning(pipe, prompt, size):
+def conditioning(pipe: StableDiffusionXLPipeline, prompt: str, size: int) -> Conditioning:
     positive, negative, pooled, negative_pooled = pipe.encode_prompt(
         prompt=prompt,
         prompt_2=prompt,
@@ -68,7 +72,7 @@ def conditioning(pipe, prompt, size):
 
 
 @torch.no_grad()
-def encode_image(pipe, path, size):
+def encode_image(pipe: StableDiffusionXLPipeline, path: str | Path, size: int) -> torch.Tensor:
     with Image.open(path) as source:
         image = ImageOps.fit(
             ImageOps.exif_transpose(source).convert("RGB"),
@@ -83,7 +87,7 @@ def encode_image(pipe, path, size):
 
 
 @torch.no_grad()
-def decode_image(pipe, latent):
+def decode_image(pipe: StableDiffusionXLPipeline, latent: torch.Tensor) -> Image.Image:
     latent = latent.to(device=pipe.device, dtype=torch.float32)
     decoded = pipe.vae.decode(latent / pipe.vae.config.scaling_factor, return_dict=False)[0]
     return pipe.image_processor.postprocess(decoded, output_type="pil")[0]
