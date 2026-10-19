@@ -2,6 +2,7 @@
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from functools import partial
 from typing import Any
 
 import torch
@@ -33,113 +34,96 @@ def transformer_blocks(unet: torch.nn.Module) -> dict[str, BasicTransformerBlock
     return blocks
 
 
-def conditional(tensor: torch.Tensor, batch_size: int) -> torch.Tensor:
-    if tensor.ndim != 3 or tensor.shape[0] != 2 * batch_size:
-        raise ValueError("Expected BTC activations with unconditional then conditional batches")
-    return tensor[batch_size:]
+def conditional_branch(tensor: torch.Tensor) -> torch.Tensor:
+    """The runtime processes one image: batch 0 is unconditional, batch 1 conditional."""
+    if tensor.ndim != 3 or tensor.shape[0] != 2:
+        raise ValueError("Expected [2, token, channel] activations for one CFG image pair")
+    return tensor[1:]
 
 
 @contextmanager
-def feature_hooks(
-    unet: torch.nn.Module,
-    *,
-    batch_size: int = 1,
-    captures: FeatureMaps | None = None,
-    representation: Representation | None = None,
-    deltas: LayerTensors | None = None,
-) -> Iterator[None]:
-    """Capture all three representations on one forward; inject one representation.
+def capture_features(unet: torch.nn.Module) -> Iterator[FeatureMaps]:
+    """Observe CA, SA and block updates during one UNet forward.
 
     CA/SA are attention outputs before the enclosing residual addition. A block
-    feature is FP32(output)-FP32(input), while its offset is added at the output.
-    Captures are spatial/token means in FP32.
+    feature is FP32(output)-FP32(input), including SA, CA and feed-forward updates.
+    Return conditional spatial/token means in FP32, shaped [1, channel].
     """
-    if representation is not None and representation not in REPRESENTATIONS:
-        raise ValueError(f"Unknown representation: {representation}")
-    blocks = transformer_blocks(unet)
-    deltas = deltas or {}
-    if deltas and representation is None:
-        raise ValueError("Injection requires a representation")
-    if set(deltas) - set(blocks):
-        raise ValueError("An injection names a missing transformer block")
+    captures: FeatureMaps = {}
     handles: list[RemovableHandle] = []
     inputs: LayerTensors = {}
 
-    def record(rep: Representation, name: str, tensor: torch.Tensor) -> None:
-        if captures is None:
-            return
-        value = conditional(tensor, batch_size).detach().float()
-        if not torch.isfinite(value).all():
-            raise ValueError(f"Nonfinite {rep} activations at {name}")
-        captures.setdefault(rep, {})[name] = value.mean(dim=1).cpu()
+    def remember_input(
+        name: str, _module: torch.nn.Module, args: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> None:
+        hidden = args[0] if args else kwargs["hidden_states"]
+        inputs[name] = hidden.detach().clone()
 
-    def inject(rep: Representation, name: str, tensor: torch.Tensor) -> torch.Tensor:
-        if representation != rep or name not in deltas:
-            return tensor
-        delta = deltas[name].to(device=tensor.device, dtype=torch.float32)
-        if delta.shape != (tensor.shape[-1],) or not torch.isfinite(delta).all():
+    def record(
+        representation: Representation,
+        name: str,
+        _module: torch.nn.Module,
+        _args: tuple[Any, ...],
+        output: torch.Tensor,
+    ) -> None:
+        value = output.detach().float()
+        if representation == "block":
+            value = value - inputs.pop(name).float()
+        value = conditional_branch(value)
+        if not torch.isfinite(value).all():
+            raise ValueError(f"Nonfinite {representation} activations at {name}")
+        captures.setdefault(representation, {})[name] = value.mean(dim=1).cpu()
+
+    try:
+        for name, block in transformer_blocks(unet).items():
+            handles.append(
+                block.register_forward_pre_hook(partial(remember_input, name), with_kwargs=True)
+            )
+            for representation, module in (
+                ("SA", block.attn1),
+                ("CA", block.attn2),
+                ("block", block),
+            ):
+                handles.append(module.register_forward_hook(partial(record, representation, name)))
+        yield captures
+    finally:
+        for handle in handles:
+            handle.remove()
+
+
+@contextmanager
+def apply_offsets(
+    unet: torch.nn.Module, representation: Representation | None, deltas: LayerTensors
+) -> Iterator[None]:
+    """Add one channel offset to every conditional token at each selected location."""
+    if not deltas:
+        yield
+        return
+    if representation not in REPRESENTATIONS:
+        raise ValueError("Injection requires a CA, SA or block representation")
+    blocks = transformer_blocks(unet)
+    if set(deltas) - set(blocks):
+        raise ValueError("An injection names a missing transformer block")
+    handles: list[RemovableHandle] = []
+
+    def add(
+        name: str, _module: torch.nn.Module, _args: tuple[Any, ...], output: torch.Tensor
+    ) -> torch.Tensor:
+        conditional = conditional_branch(output)
+        delta = deltas[name].to(device=output.device, dtype=torch.float32)
+        if delta.shape != (output.shape[-1],) or not torch.isfinite(delta).all():
             raise ValueError(f"Invalid channel offset at {name}")
         if not torch.any(delta):
-            return tensor
-        result = tensor.clone()
-        result[batch_size:] = (conditional(tensor, batch_size).float() + delta).to(tensor.dtype)
+            return output
+        result = output.clone()
+        result[1:] = (conditional.float() + delta).to(output.dtype)
         return result
 
     try:
-        for name, block in blocks.items():
-            if captures is None and name not in deltas:
-                continue
-
-            def before(
-                _module: torch.nn.Module,
-                args: tuple[Any, ...],
-                kwargs: dict[str, Any],
-                *,
-                name: str = name,
-            ) -> None:
-                hidden = args[0] if args else kwargs["hidden_states"]
-                inputs[name] = hidden.detach().clone()
-
-            def after(
-                _module: torch.nn.Module,
-                _args: tuple[Any, ...],
-                output: torch.Tensor,
-                *,
-                name: str = name,
-            ) -> torch.Tensor:
-                record("block", name, output.detach().float() - inputs.pop(name).float())
-                return inject("block", name, output)
-
-            if captures is not None:
-                handles.append(block.register_forward_pre_hook(before, with_kwargs=True))
-                handles.append(block.register_forward_hook(after))
-            elif representation == "block":
-
-                def add_block(
-                    _module: torch.nn.Module,
-                    _args: tuple[Any, ...],
-                    output: torch.Tensor,
-                    *,
-                    name: str = name,
-                ) -> torch.Tensor:
-                    return inject("block", name, output)
-
-                handles.append(block.register_forward_hook(add_block))
-            for rep, module in (("SA", block.attn1), ("CA", block.attn2)):
-                if captures is not None or representation == rep:
-
-                    def hook(
-                        _module: torch.nn.Module,
-                        _args: tuple[Any, ...],
-                        output: torch.Tensor,
-                        *,
-                        rep: Representation = rep,
-                        name: str = name,
-                    ) -> torch.Tensor:
-                        record(rep, name, output)
-                        return inject(rep, name, output)
-
-                    handles.append(module.register_forward_hook(hook))
+        for name in deltas:
+            block = blocks[name]
+            module = {"CA": block.attn2, "SA": block.attn1, "block": block}[representation]
+            handles.append(module.register_forward_hook(partial(add, name)))
         yield
     finally:
         for handle in handles:

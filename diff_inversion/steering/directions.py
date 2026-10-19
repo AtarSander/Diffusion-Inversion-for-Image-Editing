@@ -22,8 +22,9 @@ def fit_directions(records: Sequence[SourceRecord], *, null_seed: int = 123) -> 
 
     Features have shape [step, channel]. Store raw differences; normalize each
     layer/step direction with L2 when preparing the addition offsets.
-    A balanced sign swap is a control on paired class differences. Gaussian
-    orientations are shared between methods. Neither null is a style vector.
+    The swap control negates half of the paired differences, chosen by null_seed;
+    kth positive is paired with kth negative in source-list order. Gaussian
+    directions are shared between DDIM/MW. Both controls test concept specificity.
     """
     positive = [row for row in records if row["label"] == "positive"]
     negative = [row for row in records if row["label"] == "negative"]
@@ -33,14 +34,15 @@ def fit_directions(records: Sequence[SourceRecord], *, null_seed: int = 123) -> 
         )
     count = len(positive)
     rng = torch.Generator().manual_seed(null_seed)
-    signs = torch.tensor([1.0] * (count // 2) + [-1.0] * (count // 2))
-    signs = signs[torch.randperm(count, generator=rng)]
+    pair_signs = torch.tensor([1.0] * (count // 2) + [-1.0] * (count // 2))
+    pair_signs = pair_signs[torch.randperm(count, generator=rng)]
     result: DirectionFit = {"directions": {}, "null_seed": null_seed}
     for rep in REPRESENTATIONS:
         result["directions"][rep] = {method: {} for method in ("DDIM", "MW")}
         names = records[0]["DDIM"]["features"][rep]
         for name in names:
-            random = torch.randn(records[0]["DDIM"]["features"][rep][name].shape, generator=rng)
+            feature_shape = records[0]["DDIM"]["features"][rep][name].shape
+            gaussian = torch.randn(feature_shape, generator=rng)
             for method in ("DDIM", "MW"):
                 pos = torch.stack([row[method]["features"][rep][name].float() for row in positive])
                 neg = torch.stack([row[method]["features"][rep][name].float() for row in negative])
@@ -53,8 +55,8 @@ def fit_directions(records: Sequence[SourceRecord], *, null_seed: int = 123) -> 
                     raise ValueError("Expected matched finite [image, step, channel] features")
                 result["directions"][rep][method][name] = {
                     "true": pos.mean(0) - neg.mean(0),
-                    "swap": ((pos - neg) * signs[:, None, None]).mean(0),
-                    "gaussian": random.clone(),
+                    "swap": ((pos - neg) * pair_signs[:, None, None]).mean(0),
+                    "gaussian": gaussian.clone(),
                 }
     return result
 

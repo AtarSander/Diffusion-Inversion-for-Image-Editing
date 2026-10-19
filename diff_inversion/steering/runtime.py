@@ -9,8 +9,8 @@ from diffusers import DDIMInverseScheduler, DDIMScheduler, StableDiffusionXLPipe
 
 from diff_inversion.modeling.sdxl_sampling import predict_noise_sdxl
 
-from .hooks import feature_hooks
-from .types import ActivationRead, Conditioning, FeatureMaps, Method, Offsets, Representation
+from .hooks import apply_offsets, capture_features
+from .types import ActivationRead, Conditioning, Method, Offsets, Representation
 
 
 @contextmanager
@@ -25,6 +25,7 @@ def pipeline_state(pipe: StableDiffusionXLPipeline, *, lora: bool = False) -> It
     if lora and not adapters:
         raise ValueError("MW inversion requires a loaded LoRA checkpoint")
     flags = [module.disable_adapters for module in adapters]
+    # PEFT's enable_adapters also changes requires_grad, so restore both kinds of flags.
     trainability = [(parameter, parameter.requires_grad) for parameter in pipe.unet.parameters()]
     try:
         for module in adapters:
@@ -40,7 +41,8 @@ def pipeline_state(pipe: StableDiffusionXLPipeline, *, lora: bool = False) -> It
 
 class SteeringRuntime:
     def __init__(self, pipe: StableDiffusionXLPipeline, *, steps: int = 50) -> None:
-        self.pipe, self.steps = pipe, steps
+        self.pipe = pipe
+        self.steps = steps
         self.scheduler_config = dict(pipe.scheduler.config)
         sampling = self.scheduler()
         inverse = self.scheduler(inverse=True)
@@ -101,8 +103,7 @@ class SteeringRuntime:
             self.pipe.scheduler = scheduler
             for state, timestep in zip(reversed(states[1:]), scheduler.timesteps):
                 current = state.to(device=self.pipe.device, dtype=self.pipe.unet.dtype)
-                capture: FeatureMaps = {}
-                with feature_hooks(self.pipe.unet, captures=capture):
+                with capture_features(self.pipe.unet) as capture:
                     predict_noise_sdxl(self.pipe, current, timestep, conditioning, 1.0)
                 for rep in capture:
                     for name, value in capture[rep].items():
@@ -131,9 +132,7 @@ class SteeringRuntime:
                 device=self.pipe.device, dtype=self.pipe.unet.dtype
             )
             for call, timestep in enumerate(scheduler.timesteps):
-                with feature_hooks(
-                    self.pipe.unet, representation=representation, deltas=(offsets or {}).get(call)
-                ):
+                with apply_offsets(self.pipe.unet, representation, (offsets or {}).get(call, {})):
                     noise = predict_noise_sdxl(
                         self.pipe, current, timestep, conditioning, guidance_scale
                     )

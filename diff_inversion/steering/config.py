@@ -1,6 +1,7 @@
-"""Small readable experiment configuration; paths are relative to the YAML file."""
+"""Load experiment YAML and source-image lists, resolving paths relative to each file."""
 
 import json
+import math
 from pathlib import Path
 from typing import cast
 
@@ -24,13 +25,38 @@ def load_config(path: str | Path) -> Config:
         raise ValueError("Remove 'reader': features are always read at saved inversion states")
     if config["steps"] < 2 or config["size"] < 8 or config["size"] % 8:
         raise ValueError("Use >=2 denoising steps and an image size divisible by 8")
-    if not config["generation"]["prompts"] or not config["generation"]["seeds"]:
-        raise ValueError("Freeze a nonempty common prompt set and seed list")
+    validate_generation(config)
     return config
 
 
+def validate_generation(config: Config) -> None:
+    """Reject ambiguous comparisons before loading the model or creating outputs."""
+    settings = config["generation"]
+    for key in ("prompts", "seeds", "representations", "controls", "strengths"):
+        values = settings[key]
+        if not values or len(set(values)) != len(values):
+            raise ValueError(f"generation.{key} must be nonempty and contain no duplicates")
+    if any(not isinstance(prompt, str) or not prompt.strip() for prompt in settings["prompts"]):
+        raise ValueError("Generation prompts must be nonempty strings")
+    if any(type(seed) is not int for seed in settings["seeds"]):
+        raise ValueError("Generation seeds must be integers")
+    if set(settings["representations"]) - {"CA", "SA", "block"}:
+        raise ValueError("Representations must be CA, SA or block")
+    if set(settings["controls"]) - {"true", "swap", "gaussian"}:
+        raise ValueError('Controls must be "true", "swap" or "gaussian"; quote "true" in YAML')
+    for strength in settings["strengths"]:
+        if type(strength) not in (int, float) or not math.isfinite(strength):
+            raise ValueError("Generation strengths must be finite numbers")
+    guidance = settings["guidance_scale"]
+    if type(guidance) not in (int, float) or not math.isfinite(guidance) or guidance < 0:
+        raise ValueError("guidance_scale must be a finite, nonnegative number")
+    start, stop = settings["start_call"], settings["stop_call"]
+    if type(start) is not int or type(stop) is not int or not 0 <= start < stop <= config["steps"]:
+        raise ValueError("Use 0-based denoising calls in [0, steps), with exclusive stop_call")
+
+
 def read_sources(path: str | Path) -> list[Source]:
-    """Only construction examples belong in this explicitly selected source list."""
+    """Read construction images; pair kth positive with kth negative for the sign null."""
     path = Path(path)
     rows: list[Source] = [
         json.loads(line) for line in path.read_text().splitlines() if line.strip()

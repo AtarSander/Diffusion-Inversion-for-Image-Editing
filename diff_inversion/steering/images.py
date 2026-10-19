@@ -23,25 +23,32 @@ def load_pipeline(config: Config) -> StableDiffusionXLPipeline:
     pipe = StableDiffusionXLPipeline.from_pretrained(model["id"], **kwargs)
     pipe.scheduler = DDIMScheduler.from_config(pipe.scheduler.config, timestep_spacing="leading")
     pipe.to(model["device"])
-    if config.get("lora"):
-        configure_unet_lora(
-            pipe,
-            OmegaConf.create(
-                {
-                    "enabled": True,
-                    "mode": "single",
-                    "scale": 1.0,
-                    "lora_dropout": 0.0,
-                    "bias": "none",
-                    "init_lora_weights": "gaussian",
-                    **config["lora"],
-                }
-            ),
-        )
-        set_unet_lora_enabled(pipe, False)
     pipe.unet.eval().requires_grad_(False)
     pipe.vae.to(dtype=torch.float32).eval().requires_grad_(False)
     return pipe
+
+
+def load_inversion_lora(pipe: StableDiffusionXLPipeline, lora: Config) -> None:
+    """Load the MW adapter during extraction; fresh-noise generation uses only the base model."""
+    configure_unet_lora(
+        pipe,
+        OmegaConf.create(
+            {
+                "checkpoint_path": lora["checkpoint_path"],
+                "r": lora["r"],
+                "lora_alpha": lora["lora_alpha"],
+                "target_modules": lora["target_modules"],
+                "enabled": True,
+                "mode": "single",
+                "scale": 1.0,
+                "lora_dropout": 0.0,
+                "bias": "none",
+                "init_lora_weights": "gaussian",
+            }
+        ),
+    )
+    set_unet_lora_enabled(pipe, False)
+    pipe.unet.eval().requires_grad_(False)
 
 
 @torch.no_grad()

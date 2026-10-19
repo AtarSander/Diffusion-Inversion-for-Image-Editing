@@ -26,7 +26,7 @@ generation:
   stop_call: 50   # exclusive: through ordinal step 50
   representations: [CA, SA, block]  # CASteer uses CA; SA/block are our location ablations
   strengths: [1.0]  # alpha in h_new = h + alpha * L2_normalized_direction (CASteer Eq. 12)
-  controls: [true, swap, gaussian]
+  controls: ["true", swap, gaussian]  # swap flips signs of half the paired differences
   seeds: [42]     # primary seed shared by ALL prompts and variants
   prompts:
     - A small cottage beside a country road, with trees and fields.

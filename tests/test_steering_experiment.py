@@ -23,6 +23,7 @@ def test_end_to_end_uses_common_noise_for_every_variant_and_prompt(tmp_path, mon
     config = {
         "source_manifest": str(sources),
         "model": {"id": "tiny"},
+        "lora": {"checkpoint_path": "tiny.pt"},
         "steps": 4,
         "size": 16,
         "null_seed": 123,
@@ -36,12 +37,13 @@ def test_end_to_end_uses_common_noise_for_every_variant_and_prompt(tmp_path, mon
             "stop_call": 4,
             "representations": ["SA"],
             "controls": ["true", "swap", "gaussian"],
-            "strengths": [0.0, 1.0],
+            "strengths": [0.0, 1.0, 1.0000001],
             "guidance_scale": 1.0,
         },
     }
     inputs = []
     feature_inputs = []
+    lora_loads = []
 
     class RecordingRuntime(SteeringRuntime):
         def read_inversion_states(self, states, *args, **kwargs):
@@ -54,6 +56,7 @@ def test_end_to_end_uses_common_noise_for_every_variant_and_prompt(tmp_path, mon
 
     monkeypatch.setattr(experiment, "SteeringRuntime", RecordingRuntime)
     monkeypatch.setattr(experiment, "load_pipeline", lambda _config: pipe)
+    monkeypatch.setattr(experiment, "load_inversion_lora", lambda *_args: lora_loads.append(True))
     monkeypatch.setattr(experiment, "conditioning", lambda *_args: cond)
     monkeypatch.setattr(
         experiment, "encode_image", lambda _pipe, path, _size: latent + int(path[-5]) * 0.03
@@ -80,12 +83,14 @@ def test_end_to_end_uses_common_noise_for_every_variant_and_prompt(tmp_path, mon
     experiment.fit(tmp_path / "features/features.pt", tmp_path / "vectors")
     experiment.generate(config, tmp_path / "vectors/directions.pt", tmp_path / "generations")
     manifest = json.loads((tmp_path / "generations/manifest.json").read_text())
-    variants_per_unit = 1 + 2 * 3 * 2
+    variants_per_unit = 1 + 2 * 3 * 3
     assert len(manifest["images"]) == 4 * variants_per_unit
     assert manifest["active_calls"] == [1, 2, 3]
     assert manifest["feature_source"] == "inversion_states"
     assert manifest["steering_operator"] == "casteer_addition"
     assert manifest["direction_normalization"] == "l2"
+    assert len(lora_loads) == 1  # Extraction loads the adapter; generation does not.
+    assert len({row["path"] for row in manifest["images"]}) == len(manifest["images"])
     for unit in range(4):
         values = inputs[unit * variants_per_unit : (unit + 1) * variants_per_unit]
         assert all(torch.equal(values[0], value) for value in values)
@@ -114,6 +119,43 @@ def test_example_config_resolves_checkpoint_and_shared_seed():
     assert config["source_manifest"].endswith("/data/steering/van_gogh_sources.jsonl")
     assert config["lora"]["r"] == 16
     assert config["lora"]["checkpoint_path"].startswith("/")
+    assert config["generation"]["controls"] == ["true", "swap", "gaussian"]
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("controls", [True, "swap"]),
+        ("controls", []),
+        ("representations", ["CA", "CA"]),
+        ("strengths", [1.0, 1.0]),
+        ("strengths", [float("nan")]),
+        ("strengths", [float("inf")]),
+        ("seeds", [42, 42]),
+        ("start_call", -1),
+        ("stop_call", 51),
+        ("guidance_scale", float("nan")),
+    ],
+)
+def test_invalid_generation_settings_fail_before_model_loading(tmp_path, monkeypatch, key, value):
+    config = load_config("config/steering/van_gogh.yaml")
+    config["generation"][key] = value
+
+    def reject_loading(_config):
+        pytest.fail("Invalid comparisons must fail before loading the model")
+
+    monkeypatch.setattr(experiment, "load_pipeline", reject_loading)
+    vectors = tmp_path / "vectors.pt"
+    torch.save({"config": config, "feature_source": "inversion_states"}, vectors)
+    with pytest.raises(ValueError):
+        experiment.generate(config, vectors, tmp_path / "generations")
+    assert not (tmp_path / "generations").exists()
+
+
+def test_extraction_requires_mw_checkpoint_before_creating_outputs(tmp_path):
+    with pytest.raises(ValueError, match="checkpoint_path"):
+        experiment.extract({"lora": None}, tmp_path / "features")
+    assert not (tmp_path / "features").exists()
 
 
 def test_old_feature_and_direction_files_require_new_extraction(tmp_path):

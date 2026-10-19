@@ -8,7 +8,7 @@ from diffusers import DDIMScheduler
 from diffusers.models.attention import BasicTransformerBlock
 
 from diff_inversion.steering.directions import addition_offsets
-from diff_inversion.steering.hooks import feature_hooks
+from diff_inversion.steering.hooks import apply_offsets, capture_features
 from diff_inversion.steering.runtime import SteeringRuntime, pipeline_state
 
 
@@ -79,11 +79,10 @@ def test_capture_is_observer_and_block_means_whole_update(example):
     inputs, outputs = [], []
     pre = block.register_forward_pre_hook(lambda _m, args: inputs.append(args[0].detach().clone()))
     post = block.register_forward_hook(lambda _m, _args, out: outputs.append(out.detach().clone()))
-    capture = {}
     from diff_inversion.modeling.sdxl_sampling import predict_noise_sdxl
 
     plain = predict_noise_sdxl(pipe, latent, torch.tensor(1), cond, 1.0)
-    with feature_hooks(pipe.unet, captures=capture):
+    with capture_features(pipe.unet) as capture:
         observed = predict_noise_sdxl(pipe, latent, torch.tensor(1), cond, 1.0)
     pre.remove()
     post.remove()
@@ -100,7 +99,7 @@ def test_only_conditional_branch_changed_and_hooks_removed(example, representati
     from diff_inversion.modeling.sdxl_sampling import predict_noise_sdxl_branches
 
     plain = predict_noise_sdxl_branches(pipe, latent, torch.tensor(1), cond, 1.0)
-    with feature_hooks(
+    with apply_offsets(
         pipe.unet,
         representation=representation,
         deltas={"up_blocks.0": torch.tensor([1.0, -2.0, 3.0, 0.5])},
@@ -121,12 +120,14 @@ def test_casteer_addition_at_ca_output_matches_equation_12(example, dtype):
     hidden = torch.randn(2, 3, 4, dtype=dtype)
     context = torch.randn(2, 2, 4, dtype=dtype)
     bundle = {
-        "directions": {"CA": {"DDIM": {"up_blocks.0": {"true": torch.tensor([[3., 4., 0., 0.]])}}}},
+        "directions": {
+            "CA": {"DDIM": {"up_blocks.0": {"true": torch.tensor([[3.0, 4.0, 0.0, 0.0]])}}}
+        },
         "null_seed": 123,
     }
     offsets = addition_offsets(bundle, "CA", "DDIM", "true", ["up_blocks.0"], [0], 2.0)
     plain = attention(hidden, encoder_hidden_states=context)
-    with feature_hooks(pipe.unet, representation="CA", deltas=offsets[0]):
+    with apply_offsets(pipe.unet, representation="CA", deltas=offsets[0]):
         changed = attention(hidden, encoder_hidden_states=context)
     assert changed.dtype == dtype
     assert torch.equal(changed[:1], plain[:1])
@@ -204,7 +205,7 @@ def test_hooks_and_pipeline_state_restored_on_error(example):
     pipe, _, _ = example
     original = pipe.scheduler
     with pytest.raises(RuntimeError, match="forced"):
-        with pipeline_state(pipe, lora=True), feature_hooks(pipe.unet, captures={}):
+        with pipeline_state(pipe, lora=True), capture_features(pipe.unet):
             pipe.scheduler = None
             raise RuntimeError("forced")
     assert pipe.scheduler is original
@@ -217,7 +218,8 @@ def test_hooks_and_pipeline_state_restored_on_error(example):
 def test_real_peft_adapter_flags_and_trainability_restored(example):
     from peft import LoraConfig, inject_adapter_in_model
 
-    pipe, _, _ = example
+    pipe, cond, latent = example
+    before_adapter = SteeringRuntime(pipe, steps=4).generate(latent, cond)
     inject_adapter_in_model(LoraConfig(r=2, lora_alpha=1, target_modules=["to_q"]), pipe.unet)
     layers = [module for module in pipe.unet.modules() if hasattr(module, "enable_adapters")]
     for layer in layers:
@@ -227,3 +229,17 @@ def test_real_peft_adapter_flags_and_trainability_restored(example):
         assert all(not layer.disable_adapters for layer in layers)
     assert all(layer.disable_adapters for layer in layers)
     assert all(not parameter.requires_grad for parameter in pipe.unet.parameters())
+    after_adapter = SteeringRuntime(pipe, steps=4).generate(latent, cond)
+    assert torch.equal(before_adapter, after_adapter)
+
+
+def test_injection_hooks_removed_after_forward_failure(example):
+    pipe, cond, latent = example
+    from diff_inversion.modeling.sdxl_sampling import predict_noise_sdxl
+
+    with pytest.raises(ValueError, match="Invalid channel offset"):
+        with apply_offsets(pipe.unet, "CA", {"up_blocks.0": torch.zeros(3)}):
+            predict_noise_sdxl(pipe, latent, torch.tensor(1), cond, 1.0)
+    assert not any(
+        module._forward_hooks or module._forward_pre_hooks for module in pipe.unet.modules()
+    )
