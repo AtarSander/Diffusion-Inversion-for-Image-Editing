@@ -12,6 +12,8 @@ from .hooks import REPRESENTATIONS
 from .images import conditioning, decode_image, encode_image, load_pipeline
 from .runtime import SteeringRuntime
 
+FEATURE_SOURCE = "inversion_states"
+
 
 def new_directory(path):
     """Use a new destination so an experiment cannot silently overwrite old outputs."""
@@ -29,31 +31,43 @@ def extract(config, output):
     runtime = SteeringRuntime(pipe, steps=config["steps"])
     inverse_cond = conditioning(pipe, config["inversion_prompt"], config["size"])
     reader_cond = conditioning(pipe, config["reader_prompt"], config["size"])
+    inversions = output / "inversions"
+    inversions.mkdir()
     records = []
     for index, source in enumerate(sources):
         latent = encode_image(pipe, source["path"], config["size"])
         record = dict(source)
         for method in ("DDIM", "MW"):
             states = runtime.invert(latent, inverse_cond, method)
-            record[method] = runtime.read(states, reader_cond, reader=config["reader"])
-            reconstruction = record[method].pop("reconstruction")
-            if reconstruction is not None:
-                decode_image(pipe, reconstruction).save(
-                    output / f"source_{index:03d}_{method}.png"
-                )
+            torch.save(
+                {
+                    "source_id": source["id"],
+                    "method": method,
+                    "state_timesteps": runtime.state_timesteps,
+                    "states": states,
+                },
+                inversions / f"source_{index:03d}_{method}.pt",
+            )
+            record[method] = runtime.read_inversion_states(states, reader_cond)
         records.append(record)
         print(f"Read {index + 1}/{len(sources)}: {source['id']}", flush=True)
-    torch.save({"config": config, "records": records}, output / "features.pt")
+    torch.save(
+        {"config": config, "feature_source": FEATURE_SOURCE, "records": records},
+        output / "features.pt",
+    )
 
 
 def fit(feature_path, output):
     features = torch.load(feature_path, map_location="cpu", weights_only=True)
+    if features.get("feature_source") != FEATURE_SOURCE:
+        raise ValueError("Features must come from saved inversion states; rerun extract")
     output = new_directory(output)
     config = features["config"]
     bundle = fit_directions(features["records"], null_seed=config["null_seed"])
     # Dict insertion order comes from observed CA execution, not named_modules().
     bundle["layer_order"] = list(features["records"][0]["DDIM"]["features"]["CA"])
     bundle["config"] = config
+    bundle["feature_source"] = FEATURE_SOURCE
     bundle["sources"] = [
         {key: row[key] for key in ("id", "path", "label")} for row in features["records"]
     ]
@@ -64,8 +78,10 @@ def fit(feature_path, output):
 
 def generate(config, vector_path, output):
     bundle = torch.load(vector_path, map_location="cpu", weights_only=True)
+    if bundle.get("feature_source") != FEATURE_SOURCE:
+        raise ValueError("Directions must come from saved inversion states; rerun extract and fit")
     # Compare readable values, without hashing code/configs or binding to an HPC installation.
-    for key in ("model", "lora", "steps", "size", "reader", "inversion_prompt", "reader_prompt"):
+    for key in ("model", "lora", "steps", "size", "inversion_prompt", "reader_prompt"):
         if bundle["config"].get(key) != config.get(key):
             raise ValueError(f"Direction source and generation disagree at config.{key}")
     settings = config["generation"]
@@ -87,6 +103,7 @@ def generate(config, vector_path, output):
     manifest = {
         "config": config,
         "direction_config": bundle["config"],
+        "feature_source": FEATURE_SOURCE,
         "direction_sources": bundle["sources"],
         "selected_layers": layers,
         "active_calls": calls,

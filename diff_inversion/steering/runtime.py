@@ -1,4 +1,4 @@
-"""DDIM/MW inversion, base-model activation reads, and fresh-noise generation."""
+"""DDIM/MW inversion, activation reads at inverse states, and fresh-noise generation."""
 
 import copy
 from contextlib import contextmanager
@@ -42,6 +42,8 @@ class SteeringRuntime:
         self.scheduler_config = dict(pipe.scheduler.config)
         sampling = self.scheduler()
         inverse = self.scheduler(inverse=True)
+        # Entry 0 is the encoded image; each later entry is an inverse-step output.
+        self.state_timesteps = [None, *inverse.timesteps.tolist()]
         # This reader indexes inverse states N-i. It requires matching arithmetic
         # predecessors, not just similarly named scheduler timesteps.
         ratio = sampling.config.num_train_timesteps // steps
@@ -78,31 +80,30 @@ class SteeringRuntime:
         return states
 
     @torch.no_grad()
-    def read(self, states, conditioning, *, reader="free"):
-        """Free base rollout from recovered zT, or independent saved-state probes."""
-        if reader not in ("free", "direct") or len(states) != self.steps + 1:
-            raise ValueError("Expected all inverse states and reader=free/direct")
+    def read_inversion_states(self, states, conditioning):
+        """One base-UNet forward per saved inverse state, in denoising order.
+
+        For N steps, call k uses states[N-k] at its matching diffusion timestep.
+        No predicted state is propagated to another read; states[0] is the clean
+        endpoint and is not a denoising input. LoRA is off for every feature read.
+        """
+        if len(states) != self.steps + 1:
+            raise ValueError("Expected the encoded image and every inverse-step output")
         features, moments = {}, {}
         with pipeline_state(self.pipe):
             scheduler = self.scheduler()
             self.pipe.scheduler = scheduler
-            current = states[-1].to(device=self.pipe.device, dtype=self.pipe.unet.dtype)
-            for call, timestep in enumerate(scheduler.timesteps):
-                if reader == "direct":
-                    current = states[self.steps - call].to(
-                        device=self.pipe.device, dtype=self.pipe.unet.dtype
-                    )
+            for state, timestep in zip(reversed(states[1:]), scheduler.timesteps):
+                current = state.to(device=self.pipe.device, dtype=self.pipe.unet.dtype)
                 capture, second = {}, {}
                 with feature_hooks(self.pipe.unet, captures=capture, moments=second):
-                    noise = predict_noise_sdxl(self.pipe, current, timestep, conditioning, 1.0)
+                    predict_noise_sdxl(self.pipe, current, timestep, conditioning, 1.0)
                 for rep in capture:
                     for name, value in capture[rep].items():
                         features.setdefault(rep, {}).setdefault(name, []).append(value[0])
                         moments.setdefault(rep, {}).setdefault(name, []).append(
                             second[rep][name][0]
                         )
-                if reader == "free":
-                    current = scheduler.step(noise, timestep, current, eta=0).prev_sample
         return {
             "features": {
                 rep: {name: torch.stack(value) for name, value in layers.items()}
@@ -112,7 +113,6 @@ class SteeringRuntime:
                 rep: {name: torch.stack(value) for name, value in layers.items()}
                 for rep, layers in moments.items()
             },
-            "reconstruction": current.detach().cpu() if reader == "free" else None,
         }
 
     @torch.no_grad()

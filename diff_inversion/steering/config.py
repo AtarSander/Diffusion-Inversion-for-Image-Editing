@@ -17,8 +17,8 @@ def load_config(path):
     if config.get("lora"):
         checkpoint = Path(config["lora"]["checkpoint_path"])
         config["lora"]["checkpoint_path"] = str((path.parent / checkpoint).resolve())
-    if config["reader"] not in ("free", "direct"):
-        raise ValueError("reader must be free or direct")
+    if "reader" in config:
+        raise ValueError("Remove 'reader': features are always read at saved inversion states")
     if config["steps"] < 2 or config["size"] < 8 or config["size"] % 8:
         raise ValueError("Use >=2 denoising steps and an image size divisible by 8")
     if not config["generation"]["prompts"] or not config["generation"]["seeds"]:

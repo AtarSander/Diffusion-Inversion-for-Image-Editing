@@ -16,7 +16,7 @@ steps: 50
 size: 1024
 inversion_prompt: A painting
 reader_prompt: A painting
-reader: free  # free reconstruction from zT; alternative: direct inverse-state probes
+# Activations are always read by the base UNet at each saved inversion state.
 null_seed: 123  # separately named source-direction control RNG
 generation:
   # Example settings for the cleaned interface; not a newly executed run or optimum.

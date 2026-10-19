@@ -27,9 +27,19 @@ z preferencją wspólnego startu wszystkich wariantów.
 Stare `diff_inversion/eval/wikiart_steering.py`, runnery i zamrożone pakiety
 pozostają lokalnie poza nowym commitem. Nie zmieniono ich obliczeń ani plików
 użytych przez ukończone/zakolejkowane zadania. Nowy format `features.pt` oraz
-`directions.pt` jest prostszy; stare paczki wymagają jawnego przekształcenia.
+`directions.pt` jest prostszy; paczki z odczytem swobodnej rekonstrukcji wymagają
+ponownej ekstrakcji aktywacji i wyznaczenia wektorów.
 
 ## Co reprezentuje metoda
+
+**Zmiana zbierania aktywacji, 19.10.2026:** jedyna ścieżka odczytu startuje
+z kolejnych zapisanych stanów inwersji. Dla N kroków zapisujemy N+1 latentów,
+a odczyt k podaje bazowemu UNetowi `states[N-k]` z właściwym timestepem.
+Nie propagujemy wyniku poprzedniego odczytu do następnego. Usunięto opcję
+`reader` i wariant swobodnej rekonstrukcji z nowego kodu. To zmiana sposobu
+pozyskiwania aktywacji względem pierwszej konfiguracji nowego interfejsu;
+wektory z tamtej ścieżki wymagają ponownej ekstrakcji i wyznaczenia.
+Historyczne wyniki opisane poniżej zachowują swój rzeczywisty protokół.
 
 Najważniejszą różnicą względem promptowego CASteer jest pochodzenie aktywacji:
 u nas pochodzą z realnych obrazów odwracanych DDIM lub MW, następnie czytanych
@@ -72,7 +82,14 @@ zamrożonego wektora w innych krokach.
 
 ## Sprawdzenie reorganizacji
 
-Wszystkie **17 testów CPU przeszło**, również w izolowanej kopii zawierającej
+Po zmianie na odczyt wyłącznie ze stanów inwersji przechodzi **20 testów CPU**.
+Sprawdzają m.in. dokładne przypisanie wszystkich 50 odczytów do stanów i timestepów
+DDIM/MW, wyłączenie LoRA podczas odczytu oraz brak kroku schedulera w tej fazie.
+Zmiana jednego zapisanego stanu wpływa wyłącznie na odpowiadający mu odczyt.
+Test integracyjny sprawdza zapis trajektorii, a osobny test odrzucanie paczek
+aktywacji i kierunków sprzed tej zmiany. Ruff również przechodzi.
+
+Pierwsza wersja interfejsu przeszła **17 testów CPU**, również w izolowanej kopii zawierającej
 wyłącznie pliki bazowego commita i wybrany zakres steeringu, bez lokalnego
 archiwum. Obejmują rzeczywiste małe `BasicTransformerBlock` i schedulery
 Diffusers: granice hooków, FP32 różnicę output–input, momenty przed poolingiem,
@@ -81,7 +98,7 @@ DDIM/MW i przywracanie LoRA, wspólny RMS, kontrole oraz pełny przepływ trzech
 etapów. Osobny test sprawdza flagi rzeczywistych warstw PEFT. W teście integracji
 każdy seed powtarza całą macierz promptów i wariantów na wspólnym szumie.
 
-Lokalne porównanie ze starymi prymitywami dało **196 zgodnych porównań,
+Przy pierwszej reorganizacji lokalne porównanie ze starymi prymitywami dało **196 zgodnych porównań,
 maksymalny błąd 0**: odczyty CA/SA/block, ich drugie momenty i wynik epsilon
 na małym transformerze oraz skalowanie dawek na syntetycznych kierunkach.
 To ograniczone sprawdzenie arytmetyki; nie jest pełną zgodnością obrazów SDXL.

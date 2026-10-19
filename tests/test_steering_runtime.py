@@ -115,25 +115,53 @@ def test_only_conditional_branch_changed_and_hooks_removed(example, representati
     )
 
 
-def test_direct_reader_uses_matching_inverse_states_and_free_reader_rolls_out(example):
+@pytest.mark.parametrize("method", ["DDIM", "MW"])
+def test_every_feature_read_uses_its_saved_inverse_state_and_timestep(
+    example, monkeypatch, method
+):
+    pipe, cond, latent = example
+    runtime = SteeringRuntime(pipe, steps=50)
+    states = runtime.invert(latent, cond, method)
+    saved = [state.clone() for state in states]
+    assert len(states) == 51
+    assert runtime.state_timesteps == [None, *range(1, 1000, 20)]
+    assert all(enabled == (method == "MW") for _, enabled, _ in pipe.unet.calls)
+
+    def reject_rollout(*_args, **_kwargs):
+        pytest.fail("Feature collection must not propagate denoising outputs")
+
+    monkeypatch.setattr(DDIMScheduler, "step", reject_rollout)
+    pipe.unet.calls.clear()
+    features = runtime.read_inversion_states(states, cond)
+    assert len(pipe.unet.calls) == 50
+    for call, (timestep, enabled, value) in enumerate(pipe.unet.calls):
+        assert timestep == 981 - 20 * call
+        assert timestep == runtime.state_timesteps[50 - call]
+        assert not enabled
+        assert torch.equal(value[:1], saved[50 - call])
+    assert all(torch.equal(state, original) for state, original in zip(states, saved))
+    for representation in ("CA", "SA", "block"):
+        assert features["features"][representation]["up_blocks.0"].shape == (50, 4)
+        assert features["moments"][representation]["up_blocks.0"].shape == (50,)
+
+
+def test_changing_one_inverse_state_changes_only_its_feature_row(example):
     pipe, cond, latent = example
     runtime = SteeringRuntime(pipe, steps=4)
-    states = runtime.invert(latent, cond, "MW")
-    assert len(states) == 5
-    assert all(enabled for _, enabled, _ in pipe.unet.calls)
-    pipe.unet.calls.clear()
-    direct = runtime.read(states, cond, reader="direct")
-    for call, (_, enabled, value) in enumerate(pipe.unet.calls):
-        assert not enabled
-        assert torch.equal(value[:1], states[4 - call])
-    assert direct["reconstruction"] is None
-    pipe.unet.calls.clear()
-    free = runtime.read(states, cond, reader="free")
-    assert torch.equal(pipe.unet.calls[0][2][:1], states[-1])
-    assert not torch.equal(pipe.unet.calls[1][2][:1], states[-2])
-    assert free["features"]["SA"]["up_blocks.0"].shape == (4, 4)
-    assert free["moments"]["SA"]["up_blocks.0"].shape == (4,)
-    assert all(not enabled for _, enabled, _ in pipe.unet.calls)
+    states = runtime.invert(latent, cond, "DDIM")
+    reference = runtime.read_inversion_states(states, cond)
+    changed = [state.clone() for state in states]
+    changed[2][:, 0] += 1.0
+    observed = runtime.read_inversion_states(changed, cond)
+    for representation, layers in reference["features"].items():
+        for name, values in layers.items():
+            # Inverse state 2 supplies denoising call 4-2=2. No drift to later rows.
+            assert torch.equal(
+                values[[0, 1, 3]], observed["features"][representation][name][[0, 1, 3]]
+            )
+    assert not torch.equal(
+        reference["features"]["SA"]["up_blocks.0"][2], observed["features"]["SA"]["up_blocks.0"][2]
+    )
 
 
 def test_ddim_inverse_and_targets_have_lora_off_and_zero_strength_is_exact(example):
