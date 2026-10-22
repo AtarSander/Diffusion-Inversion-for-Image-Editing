@@ -1,5 +1,18 @@
 # Experiment log (most recent first)
 
+## 2026-10-22 — Pass 2: controls confirm concept-specific steering; MW > DDIM
+
+- Hypothesis: pass-1 Fauvism effect is concept-specific (not perturbation) and
+  the MW-over-DDIM gap survives seeds + controls.
+- Method: SA-only, alpha {2,4}, controls {true, swap, gaussian}, 4 seeds x 4
+  prompts, pass-1 directions reused.
+- Result: controls dead flat (dP -0.001..0.000); true directions steer
+  (MW +0.180±0.031 vs DDIM +0.091±0.016 at a=4); paired MW-DDIM +0.090±0.024,
+  t=3.68, 14/16 wins. Ukiyo-e stays weak (+0.011 max, CLIP-T cost).
+  Details: `output/steering/PASS2_RESULTS.md`.
+- Next: ukiyo-e operating point; DINOv2/CSD metrics; E0 activation fidelity;
+  prompt-based CASteer reference arm.
+
 ## 2026-10-22 — Image-derived steering pass 1 (WikiArt Ukiyo-e, Fauvism)
 
 - Hypothesis: steering vectors can be fit from real images alone (inverted
