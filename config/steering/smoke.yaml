@@ -1,0 +1,30 @@
+# Wiring smoke test: 2+2 Ukiyo-e images, 4 steps, one prompt, one strength.
+# Verifies extract -> fit -> generate end to end in minutes; not a result.
+source_manifest: ../../data/steering/smoke/sources.jsonl
+model:
+  id: stabilityai/stable-diffusion-xl-base-1.0
+  revision: 462165984030d82259a11f4367a4eed129e94a7b
+  variant: fp16
+  dtype: float16
+  device: cuda
+lora:
+  checkpoint_path: ../../diff_inversion/steering/loras/checkpoint_r16.pt
+  r: 16
+  lora_alpha: 8
+  target_modules: [to_q, to_k, to_v, to_out.0]
+steps: 4
+size: 1024
+inversion_prompt: ""
+reader_prompt: ""
+null_seed: 123
+generation:
+  guidance_scale: 5.0
+  layers: last36
+  start_call: 1
+  stop_call: 4
+  representations: [CA, SA, block]
+  strengths: [2.0]
+  controls: ["true"]
+  seeds: [42]
+  prompts:
+    - A small cottage beside a country road, with trees and fields.
