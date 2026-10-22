@@ -1,0 +1,35 @@
+{
+    "extraPaths": [
+      "audio",
+      "audio/src",
+      "audio/editing/AudioEditingCode/code"
+    ],
+    "exclude": [
+      "**/__pycache__",
+      "**/.git",
+      "pwr-mount",
+      "athena-mount",
+      ".venv",
+      ".pytest_cache",
+      "venv311",
+      "fad_venv",
+      "cpu_venv",
+      "logs",
+      "steering/outputs",
+      "steering_vectors",
+      "res",
+      "pwr-mount",
+      "*-mount",
+      "external",
+      "checkpoints",
+      "datasets",
+      "experiments",
+      "wandb",
+      "runs",
+      "multirun",
+      "outputs",
+      "output",
+      "results",
+      "static"
+    ]
+  }

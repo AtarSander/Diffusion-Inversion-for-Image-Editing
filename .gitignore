@@ -205,3 +205,6 @@ audio_medleydb
 
 # sshfs mounts of cluster clones (read-only inspection, never commit)
 *-mount/
+
+output/
+notebooks/recon_listen/
