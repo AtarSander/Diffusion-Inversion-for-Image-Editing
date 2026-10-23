@@ -92,51 +92,47 @@ def aggregate(rows: list[dict]) -> list[dict]:
     groups: dict[str, list[dict]] = {}
     for row in rows:
         groups.setdefault(variant_key(row), []).append(row)
+    metrics = [key for key in ("p_target", "clip_t", "p_probe") if key in rows[0]]
     summaries = []
     for key, members in groups.items():
-        p_target = [row["p_target"] for row in members]
-        clip_t = [row["clip_t"] for row in members]
-        delta_p = [
-            row["p_target"] - base[(row["prompt"], row["seed"])]["p_target"]
-            for row in members
-        ]
-        delta_t = [
-            row["clip_t"] - base[(row["prompt"], row["seed"])]["clip_t"]
-            for row in members
-        ]
-        summaries.append(
-            {
-                "variant": key,
-                "n": len(members),
-                "p_target_mean": statistics.mean(p_target),
-                "p_target_sem": sem(p_target),
-                "clip_t_mean": statistics.mean(clip_t),
-                "clip_t_sem": sem(clip_t),
-                "delta_p_target_mean": statistics.mean(delta_p),
-                "delta_p_target_sem": sem(delta_p),
-                "delta_clip_t_mean": statistics.mean(delta_t),
-                "delta_clip_t_sem": sem(delta_t),
-            }
-        )
+        summary: dict = {"variant": key, "n": len(members)}
+        for metric in metrics:
+            values = [row[metric] for row in members]
+            deltas = [
+                row[metric] - base[(row["prompt"], row["seed"])][metric]
+                for row in members
+            ]
+            summary[f"{metric}_mean"] = statistics.mean(values)
+            summary[f"{metric}_sem"] = sem(values)
+            summary[f"delta_{metric}_mean"] = statistics.mean(deltas)
+            summary[f"delta_{metric}_sem"] = sem(deltas)
+        summaries.append(summary)
     summaries.sort(key=lambda row: -row["delta_p_target_mean"])
     return summaries
 
 
 def to_markdown(summaries: list[dict], target_style: str) -> str:
-    lines = [
-        f"# CLIP zero-shot steering scores (target: {target_style})",
-        "",
-        "| variant | n | P(target) | dP vs base | CLIP-T | dCLIP-T |",
-        "|---|---|---|---|---|---|",
-    ]
+    probe = "p_probe_mean" in summaries[0]
+    header = "| variant | n | P(target) | dP vs base | CLIP-T | dCLIP-T |"
+    rule = "|---|---|---|---|---|---|"
+    if probe:
+        header += " P_probe | dP_probe |"
+        rule += "---|---|"
+    lines = [f"# CLIP zero-shot steering scores (target: {target_style})", "", header, rule]
     for row in summaries:
-        lines.append(
+        line = (
             f"| {row['variant']} | {row['n']}"
             f" | {row['p_target_mean']:.3f}±{row['p_target_sem']:.3f}"
             f" | {row['delta_p_target_mean']:+.3f}±{row['delta_p_target_sem']:.3f}"
             f" | {row['clip_t_mean']:.3f}±{row['clip_t_sem']:.3f}"
             f" | {row['delta_clip_t_mean']:+.3f}±{row['delta_clip_t_sem']:.3f} |"
         )
+        if probe:
+            line += (
+                f" {row['p_probe_mean']:.3f}±{row['p_probe_sem']:.3f}"
+                f" | {row['delta_p_probe_mean']:+.3f}±{row['delta_p_probe_sem']:.3f} |"
+            )
+        lines.append(line)
     return "\n".join(lines) + "\n"
 
 
@@ -147,6 +143,7 @@ def main(
     clip_model: str = "openai/clip-vit-large-patch14",
     device: str = "cuda",
     batch_size: int = 16,
+    probe_path: str | None = None,
 ) -> None:
     """Score every image in a generate manifest and write JSON + markdown tables.
 
@@ -156,6 +153,8 @@ def main(
         clip_model: HF id of the CLIP checkpoint used for both metrics.
         device: Torch device for CLIP.
         batch_size: Images per CLIP forward.
+        probe_path: Optional trained WikiArt style probe (.pt); adds text-free
+            P_probe columns from DINOv2 features.
     """
     load_dotenv()
     if target_style not in STYLES:
@@ -186,6 +185,22 @@ def main(
     for row, probs, feature in zip(rows, style_probs, image_features):
         row["p_target"] = probs[target_index].item()
         row["clip_t"] = (feature @ prompt_features[row["prompt"]]).item()
+    probe_meta = None
+    if probe_path:
+        from .probe import load_probe, probe_probs
+
+        bundle, probe_processor, probe_model = load_probe(probe_path, device)
+        probe_target = bundle["labels"].index(target_style)
+        probs = probe_probs(
+            images, bundle, probe_processor, probe_model, batch_size, device
+        )
+        for row, image_probs in zip(rows, probs):
+            row["p_probe"] = image_probs[probe_target].item()
+        probe_meta = {
+            "probe_path": str(probe_path),
+            "backbone": bundle["backbone"],
+            "val_accuracy": bundle["val_accuracy"],
+        }
     summaries = aggregate(rows)
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     out = run.parent / f"scores_{timestamp}"
@@ -197,6 +212,7 @@ def main(
         "run_dir": str(run),
         "target_style": target_style,
         "clip_model": clip_model,
+        "probe": probe_meta,
         "git_sha": commit,
         "timestamp": timestamp,
         "summaries": summaries,

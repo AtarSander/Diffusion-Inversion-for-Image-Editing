@@ -58,6 +58,16 @@ def test_sorted_by_delta_descending():
     assert deltas == sorted(deltas, reverse=True)
 
 
+def test_probe_metric_aggregates_when_present():
+    rows = [
+        {**row("base", p_target=0.2), "p_probe": 0.1},
+        {**variant(p_target=0.5), "p_probe": 0.7},
+    ]
+    summary = {s["variant"]: s for s in aggregate(rows)}["SA/DDIM/true/a=2.0"]
+    assert summary["p_probe_mean"] == pytest.approx(0.7)
+    assert summary["delta_p_probe_mean"] == pytest.approx(0.6)
+
+
 def test_variant_key_and_prompt_names():
     assert variant_key(row("base")) == "base"
     assert variant_key(variant(strength=8.0)) == "SA/DDIM/true/a=8.0"
