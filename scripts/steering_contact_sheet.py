@@ -18,7 +18,7 @@ import fire
 from PIL import Image
 
 
-def thumbnail(path: Path, width: int = 320) -> str:
+def thumbnail(path: Path, width: int = 240) -> str:
     with Image.open(path) as image:
         image = image.convert("RGB")
         height = round(image.height * width / image.width)
@@ -102,7 +102,7 @@ body {{ font-family: system-ui, sans-serif; background: #111; color: #eee; margi
 table {{ border-collapse: collapse; margin-bottom: 32px; }}
 td, th {{ border: 1px solid #333; padding: 4px; text-align: center; vertical-align: top; }}
 td.prompt {{ max-width: 130px; font-size: 12px; text-align: left; }}
-img {{ width: 320px; display: block; }}
+img {{ width: 240px; display: block; }}
 .cap {{ font-size: 11px; color: #9cf; padding-top: 2px; }}
 h2 small {{ color: #888; font-size: 60%; }}
 </style></head><body>
