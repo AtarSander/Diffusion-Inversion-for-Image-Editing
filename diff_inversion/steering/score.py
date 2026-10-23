@@ -43,7 +43,7 @@ STYLES = [
     "Fauvism",
     "High_Renaissance",
     "Impressionism",
-    "Mannerism",
+    "Mannerism_Late_Renaissance",
     "Minimalism",
     "Naive_Art_Primitivism",
     "New_Realism",
@@ -58,7 +58,7 @@ STYLES = [
     "Synthetic_Cubism",
     "Ukiyo_e",
 ]
-PROMPT_NAMES = {"Ukiyo_e": "ukiyo-e"}
+PROMPT_NAMES = {"Ukiyo_e": "ukiyo-e", "Mannerism_Late_Renaissance": "mannerism"}
 
 
 def style_prompt(style: str) -> str:
