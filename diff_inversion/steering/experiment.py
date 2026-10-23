@@ -95,6 +95,7 @@ def generate(config: Config, vector_path: str | Path, output: str | Path) -> Non
             raise ValueError(f"Direction source and generation disagree at config.{key}")
     settings = config["generation"]
     validate_generation(config)
+    renorm = settings.get("renorm", False)
     layers = select_layers(bundle["layer_order"], settings["layers"])
     calls = list(range(settings["start_call"], settings["stop_call"]))
     output = new_directory(output)
@@ -106,6 +107,7 @@ def generate(config: Config, vector_path: str | Path, output: str | Path) -> Non
         "config": config,
         "steering_operator": "casteer_addition",
         "direction_normalization": "l2",
+        "activation_renorm": renorm,
         "direction_config": bundle["config"],
         "feature_source": FEATURE_SOURCE,
         "direction_sources": bundle["sources"],
@@ -158,6 +160,7 @@ def generate(config: Config, vector_path: str | Path, output: str | Path) -> Non
                 guidance_scale=settings["guidance_scale"],
                 representation=rep,
                 offsets=offsets,
+                renorm=renorm,
             )
             save(
                 latent,

@@ -124,6 +124,7 @@ class SteeringRuntime:
         guidance_scale: float = 1.0,
         representation: Representation | None = None,
         offsets: Offsets | None = None,
+        renorm: bool = False,
     ) -> torch.Tensor:
         with pipeline_state(self.pipe):
             scheduler = self.scheduler()
@@ -132,7 +133,12 @@ class SteeringRuntime:
                 device=self.pipe.device, dtype=self.pipe.unet.dtype
             )
             for call, timestep in enumerate(scheduler.timesteps):
-                with apply_offsets(self.pipe.unet, representation, (offsets or {}).get(call, {})):
+                with apply_offsets(
+                    self.pipe.unet,
+                    representation,
+                    (offsets or {}).get(call, {}),
+                    renorm=renorm,
+                ):
                     noise = predict_noise_sdxl(
                         self.pipe, current, timestep, conditioning, guidance_scale
                     )

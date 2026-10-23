@@ -47,6 +47,8 @@ def validate_generation(config: Config) -> None:
     for strength in settings["strengths"]:
         if type(strength) not in (int, float) or not math.isfinite(strength):
             raise ValueError("Generation strengths must be finite numbers")
+    if type(settings.get("renorm", False)) is not bool:
+        raise ValueError("generation.renorm must be a boolean when present")
     guidance = settings["guidance_scale"]
     if type(guidance) not in (int, float) or not math.isfinite(guidance) or guidance < 0:
         raise ValueError("guidance_scale must be a finite, nonnegative number")

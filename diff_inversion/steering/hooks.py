@@ -91,9 +91,26 @@ def capture_features(unet: torch.nn.Module) -> Iterator[FeatureMaps]:
             handle.remove()
 
 
+def steered_tokens(conditional: torch.Tensor, delta: torch.Tensor, renorm: bool) -> torch.Tensor:
+    """Add the channel offset to every token, optionally restoring per-token L2 norms.
+
+    With renorm, each token keeps its pre-addition norm over the channel dim, so
+    steering changes orientation only and injects no extra energy.
+    """
+    steered = conditional.float() + delta
+    if renorm:
+        original = conditional.float().norm(dim=-1, keepdim=True)
+        steered = steered / steered.norm(dim=-1, keepdim=True).clamp(min=1e-8) * original
+    return steered
+
+
 @contextmanager
 def apply_offsets(
-    unet: torch.nn.Module, representation: Representation | None, deltas: LayerTensors
+    unet: torch.nn.Module,
+    representation: Representation | None,
+    deltas: LayerTensors,
+    *,
+    renorm: bool = False,
 ) -> Iterator[None]:
     """Add one channel offset to every conditional token at each selected location."""
     if not deltas:
@@ -116,7 +133,7 @@ def apply_offsets(
         if not torch.any(delta):
             return output
         result = output.clone()
-        result[1:] = (conditional.float() + delta).to(output.dtype)
+        result[1:] = steered_tokens(conditional, delta, renorm).to(output.dtype)
         return result
 
     try:
