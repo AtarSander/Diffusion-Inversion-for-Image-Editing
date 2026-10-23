@@ -1,5 +1,21 @@
 # Experiment log (most recent first)
 
+## 2026-10-23 — WikiArt style probe; text-free metric rehabilitates ukiyo-e
+
+- Hypothesis: CLIP zero-shot undersells ukiyo-e steering due to prompt priors;
+  a text-free classifier gives a fairer verdict. No usable pretrained WikiArt
+  style classifier exists on HF (artist/genre heads or 9 styles only).
+- Method: `diff_inversion/steering/probe.py` — streamed WikiArt sample (cap
+  200/style), frozen dinov2-base CLS features, sklearn logistic regression;
+  27-way val acc 0.508 (Ukiyo_e 0.90, Fauvism 0.55). `score.py --probe_path`
+  adds P_probe columns. Probe at `output/steering/probe/wikiart_dinov2_probe.pt`.
+- Result (fine grids, renorm, n=5): ukiyo-e dP_probe +0.097 (MW a=2) / +0.092
+  (DDIM a=2) — ~4x the CLIP signal; fauvism peaks MW a=2.5 dP_probe +0.234 vs
+  DDIM +0.192, MW > DDIM at every matched alpha 1.5-2.5. Also fixed the
+  Mannerism_Late_Renaissance label in the CLIP prompt list.
+- Next: controls under the probe metric; step-window/layer ablations;
+  forward-diffusion baseline arm; E0 activation fidelity.
+
 ## 2026-10-22 — Pass 2: controls confirm concept-specific steering; MW > DDIM
 
 - Hypothesis: pass-1 Fauvism effect is concept-specific (not perturbation) and
