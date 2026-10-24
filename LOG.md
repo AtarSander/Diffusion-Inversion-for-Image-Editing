@@ -1,5 +1,23 @@
 # Experiment log (most recent first)
 
+## 2026-10-24 — 8-style sweep: boundary is local-vs-global; MW ≈ DDIM at n=32
+
+- Hypothesis: statistical styles (palette/texture) steer, structural styles
+  (line/composition) fail; MW>DDIM holds across styles.
+- Method: 8 styles × (32 pos + 32 mixed-neg fresh WikiArt images), DDIM+MW
+  directions, 20 prompts × α 0.5–3.0, SA + renorm, probe + CLIP scoring
+  (`scripts/steering_sweep_aggregate.py`, runs `output/steering/sweep_*/`).
+- Result: works (dP_probe +0.12..+0.15): fauvism, pointillism, impressionism,
+  cubism, pop_art; fails/weak: color_field (+0.015), early_renaissance
+  (+0.034), ukiyo_e (+0.048). Grouping falsified — operative axis is local
+  appearance statistics vs global composition/content change. MW≈DDIM at 32
+  sources (only pointillism α=3 t=2.16; impressionism trends DDIM); contrasts
+  with MW>DDIM t=3.68 at 16 sources. Details:
+  `output/steering/SWEEP_RESULTS.md`.
+- Next: source-count ablation n∈{4,8,16,32} (is MW's edge sample-efficiency?);
+  controls for the 4 new working styles; spatial/attention-map injection for
+  structural styles.
+
 ## 2026-10-23 — WikiArt style probe; text-free metric rehabilitates ukiyo-e
 
 - Hypothesis: CLIP zero-shot undersells ukiyo-e steering due to prompt priors;
