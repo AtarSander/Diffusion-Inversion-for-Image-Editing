@@ -1,0 +1,50 @@
+# 8-style boundary sweep: Color_Field_Painting vs mixed other styles, 32+32 real images,
+# fully promptless extraction; 20 prompts x alpha {0.5..3}, SA true, renorm on.
+source_manifest: ../../data/steering/wikiart32_color_field_painting/sources.jsonl
+model:
+  id: stabilityai/stable-diffusion-xl-base-1.0
+  revision: 462165984030d82259a11f4367a4eed129e94a7b
+  variant: fp16
+  dtype: float16
+  device: cuda
+lora:
+  checkpoint_path: ../../diff_inversion/steering/loras/checkpoint_r16.pt
+  r: 16
+  lora_alpha: 8
+  target_modules: [to_q, to_k, to_v, to_out.0]
+steps: 50
+size: 1024
+inversion_prompt: ""
+reader_prompt: ""
+null_seed: 123
+generation:
+  guidance_scale: 5.0
+  layers: last36
+  start_call: 1
+  stop_call: 50
+  representations: [SA]
+  strengths: [0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
+  controls: ["true"]
+  renorm: true
+  seeds: [42]
+  prompts:
+    - a house
+    - a dog
+    - a cat
+    - a tree
+    - a boat on a lake
+    - a mountain landscape
+    - a city street
+    - a bowl of fruit
+    - a portrait of a woman
+    - a portrait of a man
+    - a bird
+    - a horse
+    - a vase of flowers
+    - a bridge over a river
+    - a lighthouse
+    - a cup of coffee
+    - a bicycle
+    - a church
+    - a sailing ship
+    - a garden
