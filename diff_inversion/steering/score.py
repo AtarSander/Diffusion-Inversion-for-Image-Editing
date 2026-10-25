@@ -69,9 +69,7 @@ def style_prompt(style: str) -> str:
 def variant_key(row: dict) -> str:
     if row["method"] == "base":
         return "base"
-    return (
-        f"{row['representation']}/{row['method']}/{row['control']}/a={row['strength']}"
-    )
+    return f"{row['representation']}/{row['method']}/{row['control']}/a={row['strength']}"
 
 
 def sem(values: list[float]) -> float:
@@ -84,24 +82,19 @@ def aggregate(rows: list[dict]) -> list[dict]:
     Returns one summary per variant key with mean/sem of the target-style
     probability and CLIP-T, and the paired deltas against the base image.
     """
-    base = {
-        (row["prompt"], row["seed"]): row for row in rows if row["method"] == "base"
-    }
+    base = {(row["prompt"], row["seed"]): row for row in rows if row["method"] == "base"}
     if len(base) != sum(row["method"] == "base" for row in rows):
         raise ValueError("Expected exactly one base image per (prompt, seed)")
     groups: dict[str, list[dict]] = {}
     for row in rows:
         groups.setdefault(variant_key(row), []).append(row)
-    metrics = [key for key in ("p_target", "clip_t", "p_probe") if key in rows[0]]
+    metrics = [key for key in ("p_target", "clip_t", "p_probe", "csd") if key in rows[0]]
     summaries = []
     for key, members in groups.items():
         summary: dict = {"variant": key, "n": len(members)}
         for metric in metrics:
             values = [row[metric] for row in members]
-            deltas = [
-                row[metric] - base[(row["prompt"], row["seed"])][metric]
-                for row in members
-            ]
+            deltas = [row[metric] - base[(row["prompt"], row["seed"])][metric] for row in members]
             summary[f"{metric}_mean"] = statistics.mean(values)
             summary[f"{metric}_sem"] = sem(values)
             summary[f"delta_{metric}_mean"] = statistics.mean(deltas)
@@ -112,11 +105,15 @@ def aggregate(rows: list[dict]) -> list[dict]:
 
 
 def to_markdown(summaries: list[dict], target_style: str) -> str:
-    probe = "p_probe_mean" in summaries[0]
+    extras = [
+        (metric, label)
+        for metric, label in (("p_probe", "P_probe"), ("csd", "CSD"))
+        if f"{metric}_mean" in summaries[0]
+    ]
     header = "| variant | n | P(target) | dP vs base | CLIP-T | dCLIP-T |"
     rule = "|---|---|---|---|---|---|"
-    if probe:
-        header += " P_probe | dP_probe |"
+    for _, label in extras:
+        header += f" {label} | d{label} |"
         rule += "---|---|"
     lines = [f"# CLIP zero-shot steering scores (target: {target_style})", "", header, rule]
     for row in summaries:
@@ -127,10 +124,10 @@ def to_markdown(summaries: list[dict], target_style: str) -> str:
             f" | {row['clip_t_mean']:.3f}±{row['clip_t_sem']:.3f}"
             f" | {row['delta_clip_t_mean']:+.3f}±{row['delta_clip_t_sem']:.3f} |"
         )
-        if probe:
+        for metric, _ in extras:
             line += (
-                f" {row['p_probe_mean']:.3f}±{row['p_probe_sem']:.3f}"
-                f" | {row['delta_p_probe_mean']:+.3f}±{row['delta_p_probe_sem']:.3f} |"
+                f" {row[f'{metric}_mean']:.3f}±{row[f'{metric}_sem']:.3f}"
+                f" | {row[f'delta_{metric}_mean']:+.3f}±{row[f'delta_{metric}_sem']:.3f} |"
             )
         lines.append(line)
     return "\n".join(lines) + "\n"
@@ -144,6 +141,7 @@ def main(
     device: str = "cuda",
     batch_size: int = 16,
     probe_path: str | None = None,
+    csd_refs: str | None = None,
 ) -> None:
     """Score every image in a generate manifest and write JSON + markdown tables.
 
@@ -155,6 +153,8 @@ def main(
         batch_size: Images per CLIP forward.
         probe_path: Optional trained WikiArt style probe (.pt); adds text-free
             P_probe columns from DINOv2 features.
+        csd_refs: Optional sources.jsonl; adds a CSD column = mean style
+            similarity to its positive-labeled reference images.
     """
     load_dotenv()
     if target_style not in STYLES:
@@ -174,9 +174,7 @@ def main(
     style_features = text_features([style_prompt(style) for style in STYLES])
     target_index = STYLES.index(target_style)
     prompts = sorted({row["prompt"] for row in rows})
-    prompt_features = {
-        prompt: feature for prompt, feature in zip(prompts, text_features(prompts))
-    }
+    prompt_features = {prompt: feature for prompt, feature in zip(prompts, text_features(prompts))}
     images = [Image.open(run / row["path"]).convert("RGB") for row in rows]
     image_features = get_clip_features(images, processor, model, batch_size, device)
     image_features = torch.nn.functional.normalize(image_features.float(), dim=-1)
@@ -191,9 +189,7 @@ def main(
 
         bundle, probe_processor, probe_model = load_probe(probe_path, device)
         probe_target = bundle["labels"].index(target_style)
-        probs = probe_probs(
-            images, bundle, probe_processor, probe_model, batch_size, device
-        )
+        probs = probe_probs(images, bundle, probe_processor, probe_model, batch_size, device)
         for row, image_probs in zip(rows, probs):
             row["p_probe"] = image_probs[probe_target].item()
         probe_meta = {
@@ -201,6 +197,34 @@ def main(
             "backbone": bundle["backbone"],
             "val_accuracy": bundle["val_accuracy"],
         }
+    csd_meta = None
+    if csd_refs:
+        from .config import read_sources
+        from .csd import csd_style_features, load_csd, mean_ref_similarity
+
+        sources = read_sources(csd_refs)
+        ref_paths = [s["path"] for s in sources if s["label"] == "positive"]
+        neg_paths = [s["path"] for s in sources if s["label"] == "negative"]
+        csd_processor, csd_model = load_csd(device)
+        ref_images = [Image.open(p).convert("RGB") for p in ref_paths]
+        neg_images = [Image.open(p).convert("RGB") for p in neg_paths]
+        ref_feats = csd_style_features(ref_images, csd_processor, csd_model, batch_size, device)
+        neg_feats = csd_style_features(neg_images, csd_processor, csd_model, batch_size, device)
+        feats = csd_style_features(images, csd_processor, csd_model, batch_size, device)
+        for row, value in zip(rows, mean_ref_similarity(feats, ref_feats)):
+            row["csd"] = value.item()
+        pairwise = ref_feats @ ref_feats.T
+        off_diag = pairwise[~torch.eye(len(ref_feats), dtype=torch.bool)]
+        csd_meta = {
+            "csd_refs": str(csd_refs),
+            "n_refs": len(ref_feats),
+            "ref_self_sim": off_diag.mean().item(),
+            "neg_ref_sim": mean_ref_similarity(neg_feats, ref_feats).mean().item(),
+        }
+        print(
+            f"CSD ceiling (ref-ref) {csd_meta['ref_self_sim']:.3f}, "
+            f"floor (neg-ref) {csd_meta['neg_ref_sim']:.3f}"
+        )
     summaries = aggregate(rows)
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     out = run.parent / f"scores_{timestamp}"
@@ -213,14 +237,13 @@ def main(
         "target_style": target_style,
         "clip_model": clip_model,
         "probe": probe_meta,
+        "csd": csd_meta,
         "git_sha": commit,
         "timestamp": timestamp,
         "summaries": summaries,
         "images": rows,
     }
-    (out / f"{timestamp}_clip_scores.json").write_text(
-        json.dumps(payload, indent=2) + "\n"
-    )
+    (out / f"{timestamp}_clip_scores.json").write_text(json.dumps(payload, indent=2) + "\n")
     markdown = to_markdown(summaries, target_style)
     (out / f"{timestamp}_clip_scores.md").write_text(markdown)
     print(markdown)

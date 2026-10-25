@@ -73,3 +73,24 @@ def test_variant_key_and_prompt_names():
     assert variant_key(variant(strength=8.0)) == "SA/DDIM/true/a=8.0"
     assert style_prompt("Ukiyo_e") == "a painting in the style of ukiyo-e"
     assert style_prompt("Pop_Art") == "a painting in the style of pop art"
+
+
+def test_csd_metric_aggregates_when_present():
+    rows = [
+        {**row("base", p_target=0.2), "csd": 0.10},
+        {**variant(p_target=0.5), "csd": 0.35},
+    ]
+    summary = {s["variant"]: s for s in aggregate(rows)}["SA/DDIM/true/a=2.0"]
+    assert summary["csd_mean"] == pytest.approx(0.35)
+    assert summary["delta_csd_mean"] == pytest.approx(0.25)
+
+
+def test_mean_ref_similarity_known_vectors():
+    import torch
+
+    from diff_inversion.steering.csd import mean_ref_similarity
+
+    refs = torch.eye(3)
+    feats = torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+    sims = mean_ref_similarity(feats, refs)
+    assert torch.allclose(sims, torch.full((2,), 1.0 / 3.0))
