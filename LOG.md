@@ -1,5 +1,21 @@
 # Experiment log (most recent first)
 
+## 2026-10-25 — CSD rescoring: all 8 styles move; MW wins on hard styles
+
+- Hypothesis: paper's CSD style-similarity metric (to the 32 actual reference
+  paintings) is fairer than CLIP/probe for image-derived steering.
+- Method: ported official CSD ViT-L (tomg-group-umd/CSD-ViT-L) onto HF
+  CLIPVisionModel (`diff_inversion/steering/csd.py`, strict load, smoke
+  pos-pos 0.33 vs pos-neg 0.13); `score.py --csd_refs` + aggregate rerun.
+- Result: every style gains dCSD +0.13..+0.45 (36–98% of ref-ref ceiling
+  headroom) — probe "failures" (color_field, early_ren, ukiyo_e) move in style
+  but not class membership → boundary restated: appearance transfers, class
+  membership needs global change. Paired MW−DDIM dCSD: ukiyo_e +0.015 t=3.69
+  (17/20), color_field t=2.01, cubism t=1.90; easy styles slightly favor DDIM.
+  MW edge concentrates where inversion is hard. `SWEEP_RESULTS.md` updated.
+- Next: n∈{4,8,16,32} source ablation; DDIM recon error vs MW−DDIM dCSD
+  correlate; controls under CSD; spatial injection for class gap.
+
 ## 2026-10-24 — 8-style sweep: boundary is local-vs-global; MW ≈ DDIM at n=32
 
 - Hypothesis: statistical styles (palette/texture) steer, structural styles

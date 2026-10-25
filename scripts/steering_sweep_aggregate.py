@@ -21,7 +21,10 @@ STYLE_GROUPS = {
     "structural": ["ukiyo_e", "cubism", "early_renaissance", "pop_art"],
 }
 ALPHAS = ["0.5", "1.0", "1.5", "2.0", "2.5", "3.0"]
-METRICS = ("p_probe", "p_target", "clip_t")
+METRICS = ("csd", "p_probe", "p_target", "clip_t")
+# First metric present in the scores, in METRICS order, picks best alphas and
+# the headline paired MW-DDIM comparison.
+PAIRED_METRICS = ("csd", "p_probe")
 
 
 def sem(values: list[float]) -> float:
@@ -52,6 +55,8 @@ def style_summary(scores: dict) -> dict:
     images = scores["images"]
     base = {row["prompt"]: row for row in images if row["method"] == "base"}
     index = paired_rows(images)
+    metrics = [m for m in METRICS if m in images[0]]
+    primary = metrics[0]
     curves: dict[str, dict[str, dict]] = {m: {} for m in ("DDIM", "MW")}
     paired: dict[str, dict] = {}
     for alpha in ALPHAS:
@@ -59,27 +64,27 @@ def style_summary(scores: dict) -> dict:
             rows = index[alpha][method]
             assert set(rows) == set(base), (alpha, method)
             entry = {"n": len(rows)}
-            for metric in METRICS:
+            for metric in metrics:
                 deltas = [rows[p][metric] - base[p][metric] for p in base]
                 entry[f"d_{metric}_mean"] = statistics.mean(deltas)
                 entry[f"d_{metric}_sem"] = sem(deltas)
             curves[method][alpha] = entry
-        diffs = [
-            index[alpha]["MW"][p]["p_probe"] - index[alpha]["DDIM"][p]["p_probe"] for p in base
-        ]
-        mean, err = statistics.mean(diffs), sem(diffs)
-        paired[alpha] = {
-            "mw_minus_ddim_p_probe_mean": mean,
-            "mw_minus_ddim_p_probe_sem": err,
-            "t": mean / err if err > 0 else 0.0,
-            "wins": sum(d > 0 for d in diffs),
-            "n": len(diffs),
-        }
+        paired[alpha] = {}
+        for metric in [m for m in PAIRED_METRICS if m in metrics]:
+            diffs = [index[alpha]["MW"][p][metric] - index[alpha]["DDIM"][p][metric] for p in base]
+            mean, err = statistics.mean(diffs), sem(diffs)
+            paired[alpha][metric] = {
+                "mw_minus_ddim_mean": mean,
+                "mw_minus_ddim_sem": err,
+                "t": mean / err if err > 0 else 0.0,
+                "wins": sum(d > 0 for d in diffs),
+                "n": len(diffs),
+            }
     best = {
-        method: max(ALPHAS, key=lambda a: curves[method][a]["d_p_probe_mean"])
+        method: max(ALPHAS, key=lambda a: curves[method][a][f"d_{primary}_mean"])
         for method in ("DDIM", "MW")
     }
-    return {"curves": curves, "paired": paired, "best_alpha": best}
+    return {"curves": curves, "paired": paired, "best_alpha": best, "primary": primary}
 
 
 def fmt(mean: float, err: float) -> str:
@@ -87,46 +92,63 @@ def fmt(mean: float, err: float) -> str:
 
 
 def to_markdown(summary: dict, meta: dict) -> str:
+    primary = next(iter(summary.values()))["primary"]
+    label = {"csd": "dCSD", "p_probe": "dP_probe"}[primary]
     lines = [
         "# 8-style sweep: DDIM vs MW steering (20 prompts, alpha 0.5-3.0)",
         "",
-        f"Scored {meta['timestamp']} at commit `{meta['git_sha'][:8]}`. "
-        "Metric: dP_probe = paired change in text-free DINOv2-probe probability of "
-        "the target style vs the unsteered base image (n=20 prompts, seed 42). "
-        "dCLIP-T = change in prompt adherence.",
+        f"Scored {meta['timestamp']} at commit `{meta['git_sha'][:8]}`. Primary "
+        f"metric: {label} = paired change vs the unsteered base image (n=20 "
+        "prompts, seed 42). CSD = mean style similarity to the 32 positive "
+        "reference paintings; ceiling = mean ref-ref similarity, floor = mean "
+        "negative-ref similarity. dCLIP-T = change in prompt adherence.",
         "",
-        "## Per-style best operating points (by dP_probe)",
+        f"## Per-style best operating points (by {label})",
         "",
-        "| group | style | probe val acc | best α DDIM | dP_probe DDIM | best α MW | dP_probe MW | MW−DDIM @ best MW α | t | wins |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        f"| group | style | CSD floor/ceiling | base CSD | best α DDIM | {label} DDIM"
+        f" | best α MW | {label} MW | MW−DDIM @ best MW α | t | wins |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for group, styles in STYLE_GROUPS.items():
         for style in styles:
             s = summary[style]
             bd, bm = s["best_alpha"]["DDIM"], s["best_alpha"]["MW"]
             cd, cm = s["curves"]["DDIM"][bd], s["curves"]["MW"][bm]
-            p = s["paired"][bm]
+            p = s["paired"][bm][primary]
+            bounds = (
+                f"{s['csd_floor']:.2f}/{s['csd_ceiling']:.2f}"
+                if s.get("csd_ceiling") is not None
+                else "-"
+            )
+            base_csd = f"{s['base_csd']:.3f}" if s.get("base_csd") is not None else "-"
             lines.append(
-                f"| {group} | {style} | {s['probe_class_acc']:.2f}"
-                f" | {bd} | {fmt(cd['d_p_probe_mean'], cd['d_p_probe_sem'])}"
-                f" | {bm} | {fmt(cm['d_p_probe_mean'], cm['d_p_probe_sem'])}"
-                f" | {fmt(p['mw_minus_ddim_p_probe_mean'], p['mw_minus_ddim_p_probe_sem'])}"
+                f"| {group} | {style} | {bounds} | {base_csd}"
+                f" | {bd} | {fmt(cd[f'd_{primary}_mean'], cd[f'd_{primary}_sem'])}"
+                f" | {bm} | {fmt(cm[f'd_{primary}_mean'], cm[f'd_{primary}_sem'])}"
+                f" | {fmt(p['mw_minus_ddim_mean'], p['mw_minus_ddim_sem'])}"
                 f" | {p['t']:.2f} | {p['wins']}/{p['n']} |"
             )
-    lines += ["", "## Paired MW−DDIM dP_probe per alpha", ""]
     header = "| style | " + " | ".join(f"α={a}" for a in ALPHAS) + " |"
-    lines += [header, "|---|" + "---|" * len(ALPHAS)]
-    for group, styles in STYLE_GROUPS.items():
-        for style in styles:
-            cells = []
-            for alpha in ALPHAS:
-                p = summary[style]["paired"][alpha]
-                cells.append(fmt(p["mw_minus_ddim_p_probe_mean"], p["mw_minus_ddim_p_probe_sem"]))
-            lines.append(f"| {style} | " + " | ".join(cells) + " |")
-    for metric, label in (("p_probe", "dP_probe"), ("clip_t", "dCLIP-T")):
+    for metric in next(iter(summary.values()))["paired"][ALPHAS[0]]:
+        metric_label = {"csd": "dCSD", "p_probe": "dP_probe"}[metric]
+        lines += ["", f"## Paired MW−DDIM {metric_label} per alpha", ""]
+        lines += [header, "|---|" + "---|" * len(ALPHAS)]
+        for group, styles in STYLE_GROUPS.items():
+            for style in styles:
+                cells = []
+                for alpha in ALPHAS:
+                    p = summary[style]["paired"][alpha][metric]
+                    cells.append(fmt(p["mw_minus_ddim_mean"], p["mw_minus_ddim_sem"]))
+                lines.append(f"| {style} | " + " | ".join(cells) + " |")
+    present = [
+        (m, lbl)
+        for m, lbl in (("csd", "dCSD"), ("p_probe", "dP_probe"), ("clip_t", "dCLIP-T"))
+        if f"d_{m}_mean" in next(iter(summary.values()))["curves"]["DDIM"][ALPHAS[0]]
+    ]
+    for metric, metric_label in present:
         lines += [
             "",
-            f"## {label} per alpha (DDIM / MW)",
+            f"## {metric_label} per alpha (DDIM / MW)",
             "",
             header,
             "|---|" + "---|" * len(ALPHAS),
@@ -161,6 +183,13 @@ def main(
             s["run_dir"] = scores["run_dir"]
             s["scores_timestamp"] = scores["timestamp"]
             s["probe_class_acc"] = per_class[scores["target_style"]]
+            csd_meta = scores.get("csd")
+            s["csd_ceiling"] = csd_meta["ref_self_sim"] if csd_meta else None
+            s["csd_floor"] = csd_meta["neg_ref_sim"] if csd_meta else None
+            base_rows = [r for r in scores["images"] if r["method"] == "base"]
+            s["base_csd"] = (
+                statistics.mean(r["csd"] for r in base_rows) if "csd" in base_rows[0] else None
+            )
             summary[style] = s
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     commit = subprocess.run(

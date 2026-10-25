@@ -1,73 +1,78 @@
-# 8-style sweep: image-derived steering boundary + DDIM vs MW (2026-10-24)
+# 8-style sweep: image-derived steering boundary + DDIM vs MW (2026-10-24/25)
 
-Runs `output/steering/sweep_<style>/20261024_*` at commit `130d35a`; scores in
-each run's `scores_20261024_16*/`; aggregate tables in
-`output/steering/sweep_summary/20261024_165226_sweep_summary.{md,json}`.
+Runs `output/steering/sweep_<style>/20261024_*` at commit `130d35a`; CSD+probe+CLIP
+scores (2026-10-25, commit `9e3aaa4`) in each run's `scores_20261025_*/`; aggregate
+tables in `output/steering/sweep_summary/20261025_135431_sweep_summary.{md,json}`.
 
 Setup per style: directions fit from 32 real WikiArt images vs 32 mixed
 negatives (fresh download, seeds 101–108, min side 768), DDIM + MW inversion at
 50 steps, empty prompts everywhere, uncond reads, SA injection into last 36
 blocks with per-token renorm. Generation: 20 prompts × α ∈
 {0.5,1,1.5,2,2.5,3} × {DDIM, MW directions} + base, seed 42, CFG 5 (260
-images/style, 2080 total). Metrics: text-free DINOv2 probe P(style) (primary)
-and CLIP zero-shot P(style) + CLIP-T, all paired vs the same-prompt base.
+images/style, 2080 total). Metrics, all paired vs the same-prompt base:
+**CSD** (Somepalli et al. 2024, official ViT-L via `steering/csd.py`) = mean
+style similarity to the 32 reference paintings — primary; DINOv2 probe
+P(style) = 27-way class membership; CLIP zero-shot P(style); CLIP-T.
 
-## Verdict per style (probe metric, best α)
+## Verdict per style (best α by dCSD)
 
-| style | planned group | best dP_probe | α | P_probe base→best | CLIP P(target) best | works? |
-|---|---|---|---|---|---|---|
-| Fauvism | statistical | +0.151±0.023 | 2.5 (DDIM) | 0.028→0.178 | 0.41 | yes |
-| Pointillism | statistical | +0.139±0.026 | 3.0 (MW) | 0.027→0.166 | 0.78 | yes |
-| Impressionism | statistical | +0.127±0.021 | 2.5 (DDIM) | 0.072→0.199 | 0.42 | yes |
-| Pop_Art | structural | +0.134±0.025 | 3.0 (DDIM) | 0.081→0.214 | 0.07 | yes |
-| Cubism | structural | +0.118±0.014 | 2.5 (both) | 0.029→0.147 | 0.10 | yes |
-| Ukiyo_e | structural | +0.048±0.017 | 1.5 (MW) | 0.026→0.075 | 0.04 | weak |
-| Early_Renaissance | structural | +0.034±0.016 | 3.0 (MW) | 0.018→0.053 | 0.07 | weak |
-| Color_Field_Painting | statistical | +0.015±0.006 | 2.5 (MW) | 0.023→0.039 | 0.20 | no |
+| style | planned group | base→best CSD (ceiling) | dCSD | dP_probe @ its best α | verdict |
+|---|---|---|---|---|---|
+| Pointillism | statistical | 0.00→0.45 (0.46) | +0.446 | +0.139 | works |
+| Impressionism | statistical | 0.10→0.31 (0.33) | +0.210 | +0.127 | works |
+| Fauvism | statistical | 0.01→0.16 (0.35) | +0.154 | +0.151 | works |
+| Pop_Art | structural | 0.03→0.18 (0.26) | +0.149 | +0.134 | works |
+| Cubism | structural | 0.05→0.18 (0.32) | +0.126 | +0.118 | works |
+| Ukiyo_e | structural | 0.06→0.22 (0.44) | +0.161 | +0.048 | style-only |
+| Early_Renaissance | structural | 0.09→0.23 (0.48) | +0.142 | +0.034 | style-only |
+| Color_Field_Painting | statistical | 0.02→0.17 (0.37) | +0.154 | +0.015 | style-only |
 
-CLIP-T cost ≤0.012 everywhere except cubism (−0.027 at α=2.5); prompt content
-survives at every working operating point.
+Ceiling = mean ref-ref CSD similarity; floors (neg-ref) are 0.11–0.19.
+CLIP-T cost ≤0.012 everywhere except cubism (−0.027); content survives at
+every operating point. Pointillism nearly saturates its ceiling (98% of
+base→ceiling headroom); impressionism 89%; the rest land at 36–65%.
 
-## Finding 1: the boundary is local-vs-global, not statistical-vs-structural
+## Finding 1 (revised by CSD): steering always moves style; class membership is the bottleneck
 
-The planned statistical/structural split is falsified by its own test set:
-Cubism and Pop Art ("structural" picks) steer as strongly as Fauvism, while
-Color Field Painting (the easiest "statistical" pick on paper) fails. What the
-winners share is identity carried by **local appearance statistics** —
-brushwork, palette, stippling, faceted shading, flat saturated fills — which
-channel-mean SA directions can encode. What the losers share is identity that
-requires a **global change of composition or content**: full abstraction
-(color field), period iconography (early renaissance), flat line-art
-construction (ukiyo-e). Steering adds the look locally but cannot delete the
-prompted object or re-stage the scene, and the probe correctly refuses to call
-"a dog with big flat color patches" a color field painting.
+Under the probe alone, 3 styles looked like failures. CSD shows **all 8 styles
+move substantially toward the reference style manifold** (dCSD +0.13..+0.45,
+i.e. 36–98% of the available headroom) — including Color Field,
+Early Renaissance and Ukiyo-e. The correct statement of the boundary: SA
+channel-mean steering reliably transfers reference **appearance statistics**
+(CSD), but for styles whose class identity requires global composition or
+content change (full abstraction, period iconography, line-art construction)
+that is not sufficient for **class membership** (probe stays low) — a steered
+"a dog" gains color-field-like fields yet is still a dog. Statistical styles
+pass both tests; "structural" styles pass CSD only.
 
-Metric blind spots, both directions: CLIP overrates color field (0.20 vs probe
-0.039 — it matches "color field" words, not the genre) and underrates pop art
-(0.07 vs probe 0.21) and cubism (0.10 vs 0.15). Probe (per-class val acc
-0.50–0.90 on these 8) is the metric of record.
+Metric blind spots mapped: CLIP zero-shot overrates color field (word match)
+and underrates pop art/cubism ~2–3×; the probe penalizes styles whose class
+boundary is content-defined. CSD-to-references is the fairest primary metric
+and matches the paper's style-transfer protocol.
 
-## Finding 2: with 32 source images, MW ≈ DDIM
+## Finding 2 (revised by CSD): MW beats DDIM exactly on the hard styles
 
-Paired MW−DDIM dP_probe at matched α, 20 prompts: only pointillism α=3 reaches
-nominal significance (+0.021±0.010, t=2.16, 12/20); impressionism trends
-DDIM-better (−0.016±0.004 at α=2, t=−1.83 at 2.5); the other six styles are
-null (|t|<1.4). Earlier result at **16** source images (fauvism): MW beat DDIM
-with paired t=3.68 (pass 2) and dP_probe +0.234 vs +0.192 (fine grid).
+Paired MW−DDIM dCSD at matched α: **Ukiyo-e +0.015±0.004 (t=3.69, 17/20) at
+α=2**, Color Field +0.006±0.003 (t=2.01, 15/20), Cubism +0.007±0.004 (t=1.90,
+16/20; +0.012 at α=1.5) — the three styles farthest from SDXL's prompted
+prior. On the easy statistical styles the sign flips slightly (fauvism
+−0.007, t=−2.82; impressionism −0.011..−0.014 at α≥2.5). Effects are small
+(|Δ|≤0.015) next to the steering effect itself (+0.13..+0.45).
 
-Interpretation (untested): averaging activations over 2×32 trajectories washes
-out per-trajectory inversion-error differences, so inversion quality stops
-mattering for the direction estimate; MW's advantage would then live in the
-low-data regime. Confounds vs the earlier result: different source sets
-(16-image seed-42/43 download vs 32-image seeds-101–108), 5 vs 20 prompts.
+Revised interpretation: with 32 source images, inversion quality no longer
+matters for styles SDXL renders easily, but **MW still extracts better
+directions where inversion is hard** (flat line-art, abstraction — regimes
+where DDIM inversion drifts). This refines, rather than contradicts, the
+16-image result (MW t=3.68 on fauvism): more sources wash out the MW edge on
+easy styles; the edge persists on hard ones. The probe agrees directionally on
+ukiyo-e (MW best everywhere it works).
 
 ## Suggested next steps
 
-1. Source-count ablation: refit fauvism/pointillism directions from n ∈ {4, 8,
-   16, 32} subsets of the same sweep data, regenerate at the best α — directly
-   tests whether MW>DDIM is a sample-efficiency effect.
-2. Controls (swap/gaussian) for the 4 newly-working styles under the probe
-   metric (cheap: reuse fits, 2 extra variants).
-3. The local-vs-global boundary predicts structure-level steering needs a
-   different injection site: attention maps / spatial patterns instead of
-   channel means.
+1. Source-count ablation n ∈ {4,8,16,32} on fauvism + ukiyo_e (same sweep
+   data): tests the sample-efficiency account of the MW edge.
+2. Inversion-difficulty correlate: per-style DDIM reconstruction error vs
+   MW−DDIM dCSD across the 8 styles (data already on disk from extract).
+3. Controls (swap/gaussian) under CSD for 2–3 styles.
+4. Structure-level injection (attention maps / spatial patterns) for the
+   class-membership gap on style-only styles.
