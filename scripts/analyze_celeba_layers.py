@@ -1,4 +1,4 @@
-# ABOUTME: Aggregates the CelebA layer-ablation sweep (3 attributes x 9 layer setups):
+# ABOUTME: Aggregates the CelebA layer-ablation sweep (3 attributes x 10 layer setups):
 # ABOUTME: paired dP_probe / id_sim / found-rate vs alpha per setup, plus MW-vs-DDIM split.
 import glob
 import json
@@ -14,10 +14,14 @@ import matplotlib.pyplot as plt
 
 ROOT = Path(".")
 ATTRS = {"smiling": "Smiling", "eyeglasses": "Eyeglasses", "young": "Young"}
-SETUPS = ["mid", "up0", "up1", "up0a0", "up0a1", "up0a2", "up1a0", "up1a1", "up1a2"]
+SETUPS = [
+    "mid", "up0", "up1", "up0a0", "up0a1", "up0a01", "up0a2",
+    "up1a0", "up1a1", "up1a2",
+]
 COLORS = {
     "last36": "#6E6C65", "mid": "#191918",
-    "up0": "#2F5E78", "up0a0": "#557E98", "up0a1": "#7FA3B8", "up0a2": "#A8C4D4",
+    "up0": "#2F5E78", "up0a0": "#557E98", "up0a1": "#7FA3B8", "up0a01": "#3E7FA6",
+    "up0a2": "#A8C4D4",
     "up1": "#94503A", "up1a0": "#B8664E", "up1a1": "#CC8A74", "up1a2": "#E0B0A0",
 }
 OUT = ROOT / "output/steering/celeba_summary"

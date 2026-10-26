@@ -1,5 +1,33 @@
 # Experiment log (most recent first)
 
+## 2026-10-26 — up0a01 arm: attn.0+1 jointly ≈ up0; best Young setup; only subset with any eyeglasses-add. Triangle-size dataset extracted+fit
+
+- Hypothesis: steering up_blocks.0.attentions.{0,1} jointly recovers up0's
+  effect (a2 contributes nothing) and may be superadditive where single
+  attentions fail.
+- Method: 10th layer setup `up0a01` (`--layers up_blocks.0.attentions.0,
+  up_blocks.0.attentions.1`), same grid/vectors as the ablation (3 jobs,
+  GPUs 4–6). Aggregation rerun → `output/steering/celeba_summary/
+  20261026_193451_celeba_layers_summary.md` (+ per-attr PNGs).
+- Result: (1) Smiling: +0.43 at α=+3 — 80% of up0 (+0.54), above up0a0
+  (+0.37), id_sim same as up0 (0.16); joint ≈ sum of parts, no identity gain.
+  (2) Young: best setup overall — +0.29 at +3 (up0 +0.18, last36 +0.08)
+  with BETTER identity than up0 (0.25 vs 0.19); aging at −1 ties up0 (−0.37).
+  (3) Eyeglasses: the only subset with a positive add signal (+0.13 at +3;
+  a0 alone −0.03, a1 alone −0.01 → superadditive), though still well below
+  last36 (+0.31); removal −0.18 ≈ up0. (4) MW vs DDIM: within-noise again.
+- Interpretation: attn.0+attn.1 of up_blocks.0 is the working pair — a2 is
+  dead weight whose steering only costs identity. For Young it strictly
+  dominates everything; for object insertion it helps but coarse blocks are
+  still required.
+- Also: triangle-size synthetic dataset (64+64 matched pairs, only size
+  differs) extracted+fit on GPU 7 → `output/steering/triangles_size/
+  20261026_172253/{extract/features.pt (12 GB, per-example pos/neg
+  activations per SA layer × 50 steps, both methods), fit/directions.pt
+  (287 MB)}`. Ready for direction analysis / generation.
+- Next: use triangle per-example activations (user-directed); up0a01 ×
+  start_call>1 as the identity-preserving recipe candidate.
+
 ## 2026-10-26 — CelebA layer ablation: up_blocks.0 is the attribute locus; eyeglasses-add is the exception
 
 - Hypothesis: attribute directions live in a subset of the 36 steered blocks;
