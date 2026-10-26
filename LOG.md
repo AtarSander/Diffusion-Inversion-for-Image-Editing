@@ -1,5 +1,23 @@
 # Experiment log (most recent first)
 
+## 2026-10-26 — All-layers ablation: steering down/mid blocks buys nothing
+
+- Hypothesis: the ukiyo_e/color_field class-membership gap (style moves, probe
+  doesn't) comes from only steering up blocks (last36); adding down/mid (all 70
+  SA blocks) should move global composition.
+- Method: `generate --config config/steering/all_layers_{ukiyo_e,fauvism}.yaml`
+  reusing the fitted sweep directions, same 20 prompts × α grid; scored with
+  CSD + probe. Comparison: `output/steering/sweep_summary/20261026_014853_all_vs_last36.md`.
+- Result: falsified. dCSD unchanged (ukiyo_e) or slightly worse (fauvism at
+  α≥1.5); ukiyo_e dP_probe *drops* (MW α=1.5 +0.048→+0.022); ukiyo_e CLIP-T
+  degrades 2× faster at α=3 (−0.034). Fauvism gains some probe/CLIP-T at α=3
+  but loses CSD. Side plots: DDIM-vs-MW SV cosine ≈0.93–0.99 across all 70
+  blocks (cross-style ≈0), so down/mid directions are well-defined — they just
+  don't help. last36 stays the default.
+- Next: class-membership gap likely needs spatial/attention-map injection, not
+  more layers. CelebA face-attribute steering planned (smile/age/glasses,
+  symmetric α for erasure, DINOv2 attribute probe + ArcFace identity).
+
 ## 2026-10-25 — CSD rescoring: all 8 styles move; MW wins on hard styles
 
 - Hypothesis: paper's CSD style-similarity metric (to the 32 actual reference
