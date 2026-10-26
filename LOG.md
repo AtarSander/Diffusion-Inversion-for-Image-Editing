@@ -1,5 +1,30 @@
 # Experiment log (most recent first)
 
+## 2026-10-26 — CelebA layer ablation: up_blocks.0 is the attribute locus; eyeglasses-add is the exception
+
+- Hypothesis: attribute directions live in a subset of the 36 steered blocks;
+  steering fewer blocks preserves identity better.
+- Method: 9 layer setups (mid, up0, up1, up0a{0,1,2}, up1a{0,1,2}) × 3
+  attributes × same α grid, reusing the fitted 20261026_024550 directions via
+  `generate --layers` (27 jobs, GPUs 0–7). Aggregation
+  `scripts/analyze_celeba_layers.py` → `output/steering/celeba_summary/
+  20261026_152927_celeba_layers_summary.md` (+ per-attr PNGs).
+- Result: (1) Smiling: up0 beats last36 (dP_probe +0.54 vs +0.31 at α=+3);
+  effect concentrates in up0a0 (+0.37 at 2× the id_sim, 0.26 vs 0.14); decays
+  a0→a1→a2; mid/up1 inert. (2) Young: same locus — up0 beats last36 both ways
+  (aging α=−3 −0.57 vs −0.29; rejuvenation +0.18 vs +0.08 at +3), up0a0/up0a1
+  carry it; up1 is wrong-sign (ages at +α, −0.25). (3) Eyeglasses breaks the
+  pattern: NO subset adds glasses (all ≈0 at +3 vs last36 +0.31 — needs
+  up0+up1 jointly); removal (α=−1 −0.20) is reproduced by up0 alone. (4)
+  Identity: every subset preserves id_sim better than last36; mid barely alters
+  the image. (5) MW vs DDIM within setups: mixed, no consistent edge (Young up0
+  +3: MW +0.25 vs DDIM +0.10; Smiling up0: DDIM +0.60 vs MW +0.49).
+- Interpretation: localized semantic attributes (expression, age) are encoded
+  early in up_blocks.0 and over-steering extra blocks only destroys identity;
+  adding an object (glasses) recruits coarse+fine blocks jointly.
+- Next: identity-preserving recipe = up0a0 (+ start_call>1); conditioned /
+  orthogonalized directions vs CelebA confounds; Linear-AcT arm.
+
 ## 2026-10-26 — CelebA face attributes: direction found, identity not preserved
 
 - Hypothesis: InterfaceGAN-style attribute directions (Smiling/Eyeglasses/Young)
