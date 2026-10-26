@@ -1,5 +1,33 @@
 # Experiment log (most recent first)
 
+## 2026-10-26 — CelebA face attributes: direction found, identity not preserved
+
+- Hypothesis: InterfaceGAN-style attribute directions (Smiling/Eyeglasses/Young)
+  fit from 32+32 covariate-matched CelebA-HQ faces via inversion steer SDXL
+  generations; MW > DDIM where inversion is hard.
+- Method: full pipeline per attribute (extract→fit→generate→score_faces) on
+  GPUs 4/5/6, 20 neutral portrait prompts × seed 42 × α∈[−3,+3]. Metrics:
+  DINOv2 40-attr probe on MTCNN crops (primary), CLIP zero-shot P(attr),
+  FaceNet id_sim to base, CLIP-T. Runs `output/steering/celeba_<attr>/20261026_024550`,
+  summary `output/steering/celeba_summary/20261026_055909_celeba_summary.md`.
+- Result: (1) Addition works where base rate leaves headroom: Smiling dP_probe
+  +0.31/+0.32 (DDIM/MW) and dP_clip +0.26/+0.31 at α=+3, monotone; Eyeglasses
+  only kicks in at α=+3 (+0.37/+0.26); Young+ is weak/non-monotone (base 0.56).
+  Erasure mirrors headroom: aging (Young α=−1) dP_probe −0.27/−0.38, Eyeglasses
+  α=−1 −0.23/−0.18; Smiling− floor-limited (base 0.12). (2) Identity is NOT
+  preserved: id_sim 0.1–0.45 at every α (same-person ≈0.7) — steering from
+  call 1 at 36 blocks re-lays-out the scene; this is distribution-level
+  steering, not editing. (3) Face-miss asymmetry: negative α degrades images
+  into haze (found 5–50% vs 60–90% at positive α); base itself 65% (wide-scene
+  prompts hide faces). (4) Off-target drift at α=+2 = CelebA entanglement:
+  Smiling+ → less Male (−0.14)/less Young (−0.13); Young+ → less Male (−0.23),
+  fewer Eyeglasses (−0.18). (5) MW vs DDIM mixed: equal on Smiling, paired MW−DDIM
+  p_probe +0.082±0.022 (n=29) on Young+ (hardest/global attribute — echoes the
+  hard-style CSD edge), −0.027±0.044 ns on Eyeglasses.
+- Next: identity-preserving variant (start_call>1, fewer blocks, or lower α on
+  later steps); portrait-only prompts to kill base misses; per-α matched-pair
+  controls (swap/gaussian) before claiming attribute specificity.
+
 ## 2026-10-26 — All-layers ablation: steering down/mid blocks buys nothing
 
 - Hypothesis: the ukiyo_e/color_field class-membership gap (style moves, probe
