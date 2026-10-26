@@ -18,13 +18,17 @@ def main() -> None:
             command.add_argument("--features", required=True)
         if stage == "generate":
             command.add_argument("--vectors", required=True)
+            command.add_argument(
+                "--layers",
+                help="Override generation.layers (profile or comma-separated module prefixes)",
+            )
     args = parser.parse_args()
     if args.stage == "fit":
         fit(args.features, args.output)
     elif args.stage == "extract":
         extract(load_config(args.config), args.output)
     else:
-        generate(load_config(args.config), args.vectors, args.output)
+        generate(load_config(args.config), args.vectors, args.output, args.layers)
 
 
 if __name__ == "__main__":

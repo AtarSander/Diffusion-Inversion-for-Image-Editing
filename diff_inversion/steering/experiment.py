@@ -84,8 +84,16 @@ def fit(feature_path: str | Path, output: str | Path) -> None:
     write_json(output / "layers.json", bundle["layer_order"])
 
 
-def generate(config: Config, vector_path: str | Path, output: str | Path) -> None:
-    """Compare vectors from DDIM/MW inversions using the same base model and target noise."""
+def generate(
+    config: Config, vector_path: str | Path, output: str | Path, layers_override: str | None = None
+) -> None:
+    """Compare vectors from DDIM/MW inversions using the same base model and target noise.
+
+    `layers_override` optionally replaces generation.layers (profile name or
+    comma-separated module prefixes); the saved config.json records the effective value.
+    """
+    if layers_override is not None:
+        config["generation"]["layers"] = layers_override
     bundle = cast(DirectionBundle, torch.load(vector_path, map_location="cpu", weights_only=True))
     if bundle.get("feature_source") != FEATURE_SOURCE:
         raise ValueError("Directions must come from saved inversion states; rerun extract and fit")

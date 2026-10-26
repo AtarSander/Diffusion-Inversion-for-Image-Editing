@@ -123,3 +123,21 @@ def test_layer_profiles_follow_observed_order_and_preserve_up_range():
     assert select_layers(layers, "all") == layers
     with pytest.raises(ValueError, match="up blocks"):
         select_layers(list(reversed(layers)), "last36")
+
+
+def test_layer_prefixes_match_dotted_boundaries_in_forward_order():
+    layers = [
+        "mid_block.attentions.0.transformer_blocks.0",
+        "up_blocks.0.attentions.0.transformer_blocks.0",
+        "up_blocks.0.attentions.1.transformer_blocks.0",
+        "up_blocks.1.attentions.0.transformer_blocks.0",
+    ]
+    assert select_layers(layers, "mid_block") == layers[:1]
+    assert select_layers(layers, "up_blocks.0.attentions.1") == layers[2:3]
+    # Order follows the forward pass, duplicates collapse, "up_blocks.1" != "up_blocks.10".
+    assert select_layers(layers, "up_blocks.1, mid_block, mid_block") == [
+        layers[0],
+        layers[3],
+    ]
+    with pytest.raises(ValueError, match="matches no captured block"):
+        select_layers(layers, "up_blocks.2")

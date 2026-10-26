@@ -61,12 +61,25 @@ def fit_directions(records: Sequence[SourceRecord], *, null_seed: int = 123) -> 
     return result
 
 
-def select_layers(layer_order: Sequence[str], profile: LayerProfile) -> list[str]:
-    """Use observed forward order; do not confuse a representation with a layer subset."""
+def select_layers(layer_order: Sequence[str], profile: LayerProfile | str) -> list[str]:
+    """Use observed forward order; do not confuse a representation with a layer subset.
+
+    Besides the named profiles (all/last36/last12), accepts comma-separated module
+    prefixes such as "mid_block" or "up_blocks.0.attentions.1"; each prefix must
+    match at least one block at a dotted boundary.
+    """
     if profile == "all":
         return list(layer_order)
     count = {"last36": 36, "last12": 12}.get(profile)
-    if count is None or len(layer_order) < count:
+    if count is None:
+        selected = []
+        for prefix in (part.strip() for part in profile.split(",")):
+            matches = [n for n in layer_order if n == prefix or n.startswith(prefix + ".")]
+            if not matches:
+                raise ValueError(f"Layer prefix {prefix!r} matches no captured block")
+            selected += [n for n in matches if n not in selected]
+        return sorted(selected, key=list(layer_order).index)
+    if len(layer_order) < count:
         raise ValueError(f"Invalid layer profile {profile!r} for {len(layer_order)} blocks")
     selected = list(layer_order)[-count:]
     if any(not name.startswith("up_blocks.") for name in selected):
