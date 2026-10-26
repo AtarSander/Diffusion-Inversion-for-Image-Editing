@@ -1,0 +1,50 @@
+# CelebA-HQ face-attribute steering: Smiling, 32+32 covariate-matched faces,
+# promptless extraction; 20 neutral portrait prompts, symmetric alpha (erasure).
+source_manifest: ../../data/steering/celebahq32_smiling/sources.jsonl
+model:
+  id: stabilityai/stable-diffusion-xl-base-1.0
+  revision: 462165984030d82259a11f4367a4eed129e94a7b
+  variant: fp16
+  dtype: float16
+  device: cuda
+lora:
+  checkpoint_path: ../../diff_inversion/steering/loras/checkpoint_r16.pt
+  r: 16
+  lora_alpha: 8
+  target_modules: [to_q, to_k, to_v, to_out.0]
+steps: 50
+size: 1024
+inversion_prompt: ""
+reader_prompt: ""
+null_seed: 123
+generation:
+  guidance_scale: 5.0
+  layers: last36
+  start_call: 1
+  stop_call: 50
+  representations: [SA]
+  strengths: [-3.0, -2.5, -2.0, -1.5, -1.0, -0.5, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
+  controls: ["true"]
+  renorm: true
+  seeds: [42]
+  prompts:
+    - a portrait photo of a person
+    - a photo of a person in a cafe
+    - a photo of a person in an office
+    - a photo of a person on a city street
+    - a photo of a person in a park
+    - a studio portrait of a person, neutral background
+    - a photo of a person at the beach
+    - a photo of a person in a library
+    - a close-up photo of a person
+    - a photo of a person at a dinner table
+    - a photo of a person next to a window
+    - a photo of a person in a garden
+    - a photo of a person wearing a coat outdoors in winter
+    - a photo of a person holding a coffee cup
+    - a photo of a person on a train
+    - a photo of a person in a kitchen
+    - a photo of a person with a bookshelf behind
+    - a photo of a person under warm evening light
+    - a photo of a person in the rain with an umbrella
+    - a photo of a person leaning against a brick wall
