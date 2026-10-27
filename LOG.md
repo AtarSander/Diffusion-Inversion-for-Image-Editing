@@ -1,5 +1,29 @@
 # Experiment log (most recent first)
 
+## 2026-10-27 — Triangle-size SV on circle photos: a saturation axis, not a size axis
+
+- Hypothesis: the big−small triangle direction, applied to inverted photos of
+  held-out circles (new `edit` stage: invert → resample with α·s at guidance 1),
+  changes the circle's size.
+- Method: 8 mid-size circles (`data/steering/circles8_eval`), triangle vectors
+  20261026_172253; probes (renorm on/off, α to ±16, up0 vs last36) then full
+  grid α∈{±3,±8,±16} renorm off; plus the never-run free-noise generation
+  (5 shape prompts, guidance 5). Scorer `scripts/score_shape_size.py`
+  (colored-area equivalent radius). Report
+  `output/steering/circles_size_edit/20261027_025729/20261027_report.md`.
+- Result: reconstruction is pixel-faithful; size NEVER changes (ratio 1.000 at
+  |α|≤8; the 0.68 at −16 is the shape fading below threshold). The direction is
+  a clean monotone saturation/ink-mass axis: −α fades to white, +α oversaturates
+  (hue drift at +16). Same axis in free generation (+α crisp/saturated/3D, −α
+  washed out). DDIM ≈ MW end-to-end (direction cos 0.9996+): flat-color images
+  are trivial to invert.
+- Interpretation: pooled [step, channel] features of big vs small shapes mainly
+  encode colored-content mass, and a spatially-uniform channel offset cannot
+  move geometry — especially against a guidance-1 inversion anchor.
+- Next: token-resolved (spatial) steering for geometry; per-pair activation
+  analysis in `extract/features.pt`; ink-mass-controlled dataset (outline
+  shapes) to decorrelate size from colored-pixel count.
+
 ## 2026-10-26 — up0a01 arm: attn.0+1 jointly ≈ up0; best Young setup; only subset with any eyeglasses-add. Triangle-size dataset extracted+fit
 
 - Hypothesis: steering up_blocks.0.attentions.{0,1} jointly recovers up0's
