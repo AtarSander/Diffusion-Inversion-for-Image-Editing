@@ -22,6 +22,7 @@ edit:
   start_call: 1
   stop_call: 50
   representations: [SA]
-  strengths: [-3.0, -2.0, -1.0, 1.0, 2.0, 3.0]
+  # Probe runs showed no visible effect below |alpha|=8 on inverted trajectories.
+  strengths: [-16.0, -8.0, -3.0, 3.0, 8.0, 16.0]
   controls: ["true"]
-  renorm: true
+  renorm: false
