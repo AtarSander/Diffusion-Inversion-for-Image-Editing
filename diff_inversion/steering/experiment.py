@@ -1,4 +1,4 @@
-"""Three explicit stages: collect source features, fit directions, compare generations."""
+"""Four explicit stages: collect source features, fit directions, compare generations, edit."""
 
 import hashlib
 import itertools
@@ -7,7 +7,7 @@ from typing import cast
 
 import torch
 
-from .config import read_sources, validate_generation, write_json
+from .config import read_edit_sources, read_sources, validate_edit, validate_generation, write_json
 from .directions import addition_offsets, fit_directions, select_layers
 from .images import conditioning, decode_image, encode_image, load_inversion_lora, load_pipeline
 from .runtime import SteeringRuntime
@@ -179,3 +179,93 @@ def generate(
                 strength=strength,
             )
         print(f"Generated prompt {prompt_index}, seed {seed}", flush=True)
+
+
+def edit(
+    config: Config, vector_path: str | Path, output: str | Path, layers_override: str | None = None
+) -> None:
+    """Invert each source image with both methods and resample with steering offsets.
+
+    Each method is applied end-to-end: the image is inverted with DDIM (base UNet)
+    or MW (inversion LoRA), then resampled from its own inverted noise with that
+    method's directions. Resampling reuses the inversion conditioning at guidance 1,
+    so the offset-free resample is the reconstruction baseline.
+    """
+    if layers_override is not None:
+        config["edit"]["layers"] = layers_override
+    validate_edit(config)
+    bundle = cast(DirectionBundle, torch.load(vector_path, map_location="cpu", weights_only=True))
+    if bundle.get("feature_source") != FEATURE_SOURCE:
+        raise ValueError("Directions must come from saved inversion states; rerun extract and fit")
+    # The vectors must describe the same model and inversion settings.
+    for key in ("model", "lora", "steps", "size", "inversion_prompt"):
+        if bundle["config"].get(key) != config.get(key):
+            raise ValueError(f"Direction source and edit disagree at config.{key}")
+    settings = config["edit"]
+    renorm = settings.get("renorm", False)
+    layers = select_layers(bundle["layer_order"], settings["layers"])
+    calls = list(range(settings["start_call"], settings["stop_call"]))
+    sources = read_edit_sources(config["source_manifest"])
+    output = new_directory(output)
+    write_json(output / "config.json", config)
+    pipe = load_pipeline(config)
+    load_inversion_lora(pipe, config["lora"])
+    runtime = SteeringRuntime(pipe, steps=config["steps"])
+    cond = conditioning(pipe, config["inversion_prompt"], config["size"])
+    edits: list[dict[str, str | int | float]] = []
+    manifest = {
+        "config": config,
+        "steering_operator": "casteer_addition",
+        "direction_normalization": "l2",
+        "activation_renorm": renorm,
+        "direction_config": bundle["config"],
+        "feature_source": FEATURE_SOURCE,
+        "direction_sources": bundle["sources"],
+        "selected_layers": layers,
+        "active_calls": calls,
+        "images": edits,
+    }
+    for index, source in enumerate(sources):
+        unit = output / source["id"]
+        unit.mkdir(parents=True)
+        latent = encode_image(pipe, source["path"], config["size"])
+
+        def save(result: torch.Tensor, filename: str, **variant: str | float) -> None:
+            target = unit / filename
+            decode_image(pipe, result).save(target)
+            edits.append(
+                {
+                    "source_id": source["id"],
+                    "source_path": source["path"],
+                    "path": str(target.relative_to(output)),
+                    **variant,
+                }
+            )
+            write_json(output / "manifest.json", manifest)
+
+        for method in ("DDIM", "MW"):
+            noise = runtime.invert(latent, cond, method)[-1]
+            recon = runtime.generate(noise, cond, guidance_scale=1.0)
+            save(recon, f"{method}_recon.png", method=method, strength=0.0)
+            variants = itertools.product(
+                settings["representations"], settings["controls"], settings["strengths"]
+            )
+            for rep, control, strength in variants:
+                offsets = addition_offsets(bundle, rep, method, control, layers, calls, strength)
+                result = runtime.generate(
+                    noise,
+                    cond,
+                    guidance_scale=1.0,
+                    representation=rep,
+                    offsets=offsets,
+                    renorm=renorm,
+                )
+                save(
+                    result,
+                    f"{rep}_{method}_{control}_{strength}.png",
+                    representation=rep,
+                    method=method,
+                    control=control,
+                    strength=strength,
+                )
+        print(f"Edited {index + 1}/{len(sources)}: {source['id']}", flush=True)

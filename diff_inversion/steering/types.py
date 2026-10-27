@@ -23,6 +23,11 @@ class Source(TypedDict):
     split: NotRequired[str]
 
 
+class EditSource(TypedDict):
+    id: str
+    path: str
+
+
 class ActivationRead(TypedDict):
     features: FeatureMaps  # Each tensor is [step, channel].
 
