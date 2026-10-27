@@ -8,7 +8,8 @@
         --probe_path output/steering/probe/celebahq_dinov2_probe.pt
 
 Per image: p_target (CLIP zero-shot attribute probability), clip_t (prompt
-fidelity), p_probe (DINOv2 attribute probe on the face crop), id_sim (FaceNet
+fidelity), clip_t_attr (CLIP similarity to the positive attribute prompt),
+p_probe (DINOv2 attribute probe on the face crop), id_sim (FaceNet
 cosine to the base image of the same prompt/seed; 1.0 on base rows). Images
 where no face is detected keep NaN for crop metrics and are dropped pairwise
 in the aggregation; the miss rate is printed and stored.
@@ -46,7 +47,7 @@ ATTRIBUTE_PROMPTS = {
     "Young": ("a photo of a young person", "a photo of an old person"),
 }
 CROP_MARGIN = 0.35
-METRICS = ("p_target", "clip_t", "p_probe", "id_sim")
+METRICS = ("p_target", "clip_t", "clip_t_attr", "p_probe", "id_sim")
 
 
 def face_box(detector: MTCNN, image: Image.Image) -> list[float] | None:
@@ -106,13 +107,13 @@ def aggregate_faces(rows: list[dict]) -> list[dict]:
 def to_markdown(summaries: list[dict], target_attribute: str, miss_rate: float) -> str:
     header = (
         "| variant | n | P_probe | dP_probe | P_clip | dP_clip | id_sim | d_id_sim "
-        "| CLIP-T | dCLIP-T |"
+        "| CLIP-T | dCLIP-T | CLIP-T_attr | dCLIP-T_attr |"
     )
     lines = [
         f"# Face steering scores (target: {target_attribute}; face miss rate {miss_rate:.1%})",
         "",
         header,
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for row in summaries:
         lines.append(
@@ -124,7 +125,9 @@ def to_markdown(summaries: list[dict], target_attribute: str, miss_rate: float) 
             f" | {row['id_sim_mean']:.3f}±{row['id_sim_sem']:.3f}"
             f" | {row['delta_id_sim_mean']:+.3f}±{row['delta_id_sim_sem']:.3f}"
             f" | {row['clip_t_mean']:.3f}±{row['clip_t_sem']:.3f}"
-            f" | {row['delta_clip_t_mean']:+.3f}±{row['delta_clip_t_sem']:.3f} |"
+            f" | {row['delta_clip_t_mean']:+.3f}±{row['delta_clip_t_sem']:.3f}"
+            f" | {row['clip_t_attr_mean']:.3f}±{row['clip_t_attr_sem']:.3f}"
+            f" | {row['delta_clip_t_attr_mean']:+.3f}±{row['delta_clip_t_attr_sem']:.3f} |"
         )
     return "\n".join(lines) + "\n"
 
@@ -174,6 +177,7 @@ def main(
     for row, probs, feature in zip(rows, attribute_probs, image_features):
         row["p_target"] = probs[0].item()
         row["clip_t"] = (feature @ prompt_features[row["prompt"]]).item()
+        row["clip_t_attr"] = (feature @ attribute_features[0]).item()
 
     detector = MTCNN(device=device)
     identity_model = InceptionResnetV1(pretrained="vggface2").to(device).eval()
