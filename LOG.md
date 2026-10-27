@@ -1,5 +1,23 @@
 # Experiment log (most recent first)
 
+## 2026-10-27 — DDIM vs MW activation similarity across layers (3 steps)
+
+- Question: how similar are the activations read from DDIM- vs MW-inverted
+  trajectories, per layer, at steps near noise / middle / near image?
+- Method: `scripts/plot_act_cossim_layers.py` (d2495fc) — paired per-example
+  cos over channels from extract `features.pt` (base-UNet reads for both, so
+  differences come only from the inverted states); steps 0/25/49 of 50.
+- Result (triangles64, 128 ex): everything ≥0.998 — trivial inversions, the
+  two trajectories are effectively identical; largest dip mid-trajectory
+  (t=481) in up.0. (sweep_ukiyo_e, 64 ex): near image (t=1) cos ≈ 1.000
+  everywhere; near noise and middle drop to 0.93–0.99 with the lowest
+  values in down.1 (near-noise, SA 0.936) and late up.0/up.1 (middle, SA
+  0.91); SA diverges more than CA. So MW bends the trajectory on real
+  paintings mostly at early/mid denoising timesteps, and agreement is
+  restored next to the image endpoint.
+- Plots+JSON: `output/steering/plots/20261027_141029_act_cossim_layers.png`
+  (triangles), `output/steering/plots/20261027_141151_act_cossim_layers_sweep_ukiyo_e.png`.
+
 ## 2026-10-27 — Triangle-size SV on circle photos: a saturation axis, not a size axis
 
 - Hypothesis: the big−small triangle direction, applied to inverted photos of
