@@ -1,5 +1,31 @@
 # Experiment log (most recent first)
 
+## 2026-10-29 — x_T noise statistics: both DDIM and MW encode the image in the "Gaussian" endpoint; MW only marginally cleaner
+
+- Question: do DDIM-inverted x_T latents encode structure that MW's do not?
+- Method: `scripts/noise_stats_xt.py` — reuses saved trajectories
+  (`extract/inversions/*.pt`, states[-1]=x_T, states[0]=x_0); moments, lag-1
+  spatial autocorr, channel-centered Pearson corr(x_T, x_0), radial power
+  spectrum; seeded-randn baseline. Datasets: sweep_ukiyo_e (64 paintings),
+  triangles_size (128 shapes).
+- Result (ukiyo-e): both methods are far from Gaussian in the same way —
+  corr(x_T, x_0) = 0.740±0.07 (DDIM) vs 0.701±0.07 (MW); std 0.917 vs 0.957
+  (Gaussian 1.0); low-frequency power excess ~2.3× both; lag1 0.036 vs 0.040
+  (MW slightly WORSE). The leak is high-frequency (highpass corr 0.82,
+  lowpass 0.62, interior-only 0.72 — not a border artifact), so x_T looks
+  like noise but is ~50% image-determined variance (corr² ≈ 0.5). MW shaves
+  ~5–15% off the deviations, no qualitative Gaussianization.
+- Result (triangles): inversion collapses entirely for flat synthetic
+  images — x_T std 0.20 (!), kurtosis +33, lag1 0.37, and the channel-mean
+  of x_T visibly contains the triangle. DDIM ≈ MW to three decimals.
+  Retro-explains the cos 0.9996 DDIM/MW agreement on shape SVs.
+- Interpretation: supports "case lost" — MW does not remove the structure
+  DDIM bakes into x_T; both carry the image, so there was never a
+  Gaussianization edge for steering to exploit. Consistent with the earlier
+  inversion-LoRA null (adapter optimizes its objective, not noise stats).
+- Files: `output/steering/plots/20261029_110743_xt_noise_stats.{md,json}`,
+  `20261029_110743_xt_spectrum.png`, `20261029_110743_xt_examples.png`.
+
 ## 2026-10-28 — Outline-triangles control: ink removed → size axis still absent; residual is a sharpness/detail-scale axis
 
 - Hypothesis (from 10-27): the big−small triangle SV is an ink-mass/saturation
