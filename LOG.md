@@ -1,5 +1,43 @@
 # Experiment log (most recent first)
 
+## 2026-10-28 — Outline-triangles control: ink removed → size axis still absent; residual is a sharpness/detail-scale axis
+
+- Hypothesis (from 10-27): the big−small triangle SV is an ink-mass/saturation
+  axis, not geometry. Discriminating test: refit on outline triangles (rings)
+  with EQUAL colored area (~10k px²; measured big 10,907 vs small 10,227 px,
+  6.4%) at circumradius 300 vs 100, same seed → identical colors/positions.
+  Ink-axis prediction: outline SV weak/low-cos to filled, no circle effect.
+  Geometry prediction: high cos to filled, circles change size.
+- Method: c6be341 — `make_triangle_dataset.py --outline`, chained runner
+  `scripts/run_outline_triangles.sh` (extract → fit → compare → circle edit
+  grid α∈{±3,±8,±16} → size scoring → generation ±1/2/3), GPU 4. Run
+  `output/steering/triangles_outline/20261028_150709`, edits
+  `output/steering/circles_outline_edit/20261028_150709`.
+- Result: (1) Size NEVER moves: eq-radius ratio 1.000±0.000 for |α|≤8, and
+  the −16 value (0.95 DDIM / 0.94 MW) is mild fading, far from filled's 0.68.
+  Geometry hypothesis dead twice over. (2) The outline SV is NOT an attenuated
+  copy of the filled SV: cos(filled, outline) ≈ 0.52–0.59 with norm ratio
+  ≈ 0.76–0.79 (if the SV were linear in ink difference the norm ratio would
+  be ~0.007). It is a reproducible second direction (DDIM vs MW agree,
+  cos 0.98–0.99). (3) What it does: on circle edits the orthogonal part is
+  inert (solid circles stay solid, no ring-ness); the weak −16 fade matches
+  the ~0.55 projection onto the filled/ink axis. In free generation it is a
+  sharpness/detail-scale axis: +α → crisp, sparser, LARGER, thin-edged
+  elements; −α → defocused, dense, blobby (matches big-thin-ring vs
+  small-thick-ring contrast). Compare table
+  `output/steering/plots/20261028_171550_sv_compare_filled_vs_outline.md`;
+  sheets `circles_outline_edit_sheet.jpg`,
+  `triangles_outline_generate_DDIM_sheet.jpg` in the run dirs.
+- Interpretation: pooled-mean SVs capture global image statistics (ink mass,
+  then spatial-frequency/stroke fineness once ink is equalized) — never
+  object geometry. Uniform per-patch addition can shift WHAT the texture
+  statistics look like, not WHERE/HOW BIG a shape is. For steering vectors
+  fit on object-level contrasts, expect the dominant low-order statistic to
+  be learned.
+- Next: token-resolved (spatial) steering remains the geometry candidate;
+  the outline SV's "fineness" axis could be tested on real images (e.g.
+  brushstroke granularity on paintings).
+
 ## 2026-10-27 — DDIM vs MW activation similarity across layers (3 steps)
 
 - Question: how similar are the activations read from DDIM- vs MW-inverted
