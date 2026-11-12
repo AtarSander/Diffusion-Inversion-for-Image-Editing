@@ -1,0 +1,14 @@
+# CPU metric dependencies resolved with uv0.11.2 for Python3.11.
+cloudpickle==3.1.2
+imageio==2.38.1
+joblib==1.6.0
+lazy-loader==0.6
+networkx==3.6.1
+numpy==2.4.4
+packaging==24.1
+pillow==12.2.0
+scikit-image==0.25.2
+scikit-learn==1.7.2
+scipy==1.17.1
+threadpoolctl==3.7.0
+tifffile==2026.3.3

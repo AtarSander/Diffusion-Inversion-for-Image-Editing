@@ -1,0 +1,31 @@
+{
+  "source_manifest": "../../data/steering/sd15_verified/inputs512/triangles64_outline/sources.jsonl",
+  "model": {
+    "id": "stable-diffusion-v1-5/stable-diffusion-v1-5",
+    "revision": "451f4fe16113bff5a5d2269ed5ad43b0592e9a14",
+    "variant": null,
+    "dtype": "float16",
+    "device": "cuda",
+    "family": "sd15"
+  },
+  "lora": {
+    "checkpoint_path": "/scratch/aszymczy/projects_cache/Diffusion-Inversion-for-Image-Editing/checkpoints/r16/checkpoint_step_130000.pt",
+    "r": 16,
+    "lora_alpha": 8,
+    "target_modules": [
+      "to_q",
+      "to_k",
+      "to_v",
+      "to_out.0"
+    ]
+  },
+  "steps": 50,
+  "size": 512,
+  "inversion_prompt": "",
+  "reader_prompt": "",
+  "null_seed": 123,
+  "reader_prompts_by_label": {
+    "positive": "a large outline triangle on a white background",
+    "negative": "a small outline triangle on a white background"
+  }
+}

@@ -1,0 +1,5 @@
+matplotlib==3.11.2
+fire==0.7.1
+# Preserve the existing CUDA versions; prevent the CUDA index from shadowing PyPI.
+torch @ https://download-r2.pytorch.org/whl/cu128/torch-2.11.0%2Bcu128-cp311-cp311-manylinux_2_28_x86_64.whl#sha256=c9a7ca4c74fae10a58e6175b4b2cea953f9322bb6562bbf339ad6a05f52190ad
+torchvision @ https://download-r2.pytorch.org/whl/cu128/torchvision-0.26.0%2Bcu128-cp311-cp311-manylinux_2_28_x86_64.whl#sha256=8f2629d056570c929b0a1d5473d9cb0320b90bda1764bda353553a72cc6b2069

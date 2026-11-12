@@ -1,0 +1,203 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import torch
+from hydra.utils import to_absolute_path
+from loguru import logger
+from omegaconf import DictConfig
+
+BRANCH_PAIR_MODE = "branch_pair"
+CFG_SINGLE_PASS_MODE = "cfg_single_pass"
+BRANCH_PAIR_MODES = frozenset({BRANCH_PAIR_MODE})
+SINGLE_PREDICTION_MODES = frozenset({CFG_SINGLE_PASS_MODE})
+SINGLE_LORA_MODES = frozenset({"single"}) | SINGLE_PREDICTION_MODES
+LORA_MODES = SINGLE_LORA_MODES | BRANCH_PAIR_MODES
+SINGLE_ADAPTER_NAME = "inversion"
+PAIR_CONDITIONAL_ADAPTER_NAME = "text_branch"
+PAIR_UNCONDITIONAL_ADAPTER_NAME = "null_branch"
+
+
+def _checkpoint_path(lora_cfg: DictConfig) -> Path:
+    if not lora_cfg.checkpoint_path:
+        raise ValueError("lora.checkpoint_path is required when lora.enabled=true.")
+    path = Path(to_absolute_path(str(lora_cfg.checkpoint_path))).resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"LoRA checkpoint does not exist: {path}")
+    return path
+
+
+def _lora_config_kwargs(lora_cfg: DictConfig) -> dict[str, Any]:
+    return {
+        "r": int(lora_cfg.r),
+        "lora_alpha": int(lora_cfg.lora_alpha),
+        "lora_dropout": float(lora_cfg.lora_dropout),
+        "bias": str(lora_cfg.bias),
+        "init_lora_weights": lora_cfg.init_lora_weights,
+        "target_modules": list(lora_cfg.target_modules),
+    }
+
+
+def _load_checkpoint(path: Path) -> Any:
+    logger.info("Loading UNet LoRA checkpoint from {}", path)
+    return torch.load(path, map_location="cpu", weights_only=True)
+
+
+def _require_lora_state_dict(
+    state: Any,
+    *,
+    label: str,
+    checkpoint_path: Path,
+) -> dict[str, torch.Tensor]:
+    if (
+        not isinstance(state, dict)
+        or not state
+        or any(not torch.is_tensor(value) for value in state.values())
+    ):
+        raise ValueError(f"Invalid {label} LoRA state dict in {checkpoint_path}.")
+    return state
+
+
+def _branch_pair_state_dicts(
+    state: Any,
+    checkpoint_path: Path,
+) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+    if not isinstance(state, dict) or state.get("branch_pair") is not True:
+        raise ValueError(f"Not a branch-pair adapter checkpoint: {checkpoint_path}")
+    adapters = state.get("adapters")
+    if not isinstance(adapters, dict):
+        raise ValueError(f"Branch-pair checkpoint is missing adapters: {checkpoint_path}")
+    if "conditional" not in adapters or "unconditional" not in adapters:
+        raise ValueError(
+            "Branch-pair checkpoint must contain conditional and unconditional adapters: "
+            f"{checkpoint_path}"
+        )
+    return (
+        _require_lora_state_dict(
+            adapters["conditional"],
+            label="conditional",
+            checkpoint_path=checkpoint_path,
+        ),
+        _require_lora_state_dict(
+            adapters["unconditional"],
+            label="unconditional",
+            checkpoint_path=checkpoint_path,
+        ),
+    )
+
+
+def _set_active_adapter(pipe, adapter_name: str) -> None:
+    switched = False
+    for module in pipe.unet.modules():
+        if module is pipe.unet:
+            continue
+        if hasattr(module, "set_adapter"):
+            module.set_adapter(adapter_name)
+            switched = True
+    if not switched:
+        raise AttributeError("No LoRA adapter layers expose set_adapter().")
+
+
+def configure_unet_lora(pipe, lora_cfg: DictConfig) -> bool:
+    if not bool(lora_cfg.enabled):
+        return False
+
+    from peft import LoraConfig, set_peft_model_state_dict
+
+    mode = _normalize_lora_mode(lora_cfg.mode, warn_deprecated=True)
+    if mode not in LORA_MODES:
+        raise ValueError(f"Unsupported lora.mode={mode!r}; use one of {sorted(LORA_MODES)}.")
+
+    checkpoint_path = _checkpoint_path(lora_cfg)
+    checkpoint_state = _load_checkpoint(checkpoint_path)
+    lora_config = LoraConfig(**_lora_config_kwargs(lora_cfg))
+
+    if mode in BRANCH_PAIR_MODES:
+        logger.info(
+            "Adding UNet branch-pair LoRA adapters conditional='{}' unconditional='{}'",
+            PAIR_CONDITIONAL_ADAPTER_NAME,
+            PAIR_UNCONDITIONAL_ADAPTER_NAME,
+        )
+        pipe.unet.add_adapter(lora_config, adapter_name=PAIR_CONDITIONAL_ADAPTER_NAME)
+        pipe.unet.add_adapter(lora_config, adapter_name=PAIR_UNCONDITIONAL_ADAPTER_NAME)
+
+        conditional_state, unconditional_state = _branch_pair_state_dicts(
+            checkpoint_state,
+            checkpoint_path,
+        )
+        set_peft_model_state_dict(
+            pipe.unet,
+            conditional_state,
+            adapter_name=PAIR_CONDITIONAL_ADAPTER_NAME,
+        )
+        set_peft_model_state_dict(
+            pipe.unet,
+            unconditional_state,
+            adapter_name=PAIR_UNCONDITIONAL_ADAPTER_NAME,
+        )
+
+    else:
+        logger.info("Adding UNet LoRA adapter '{}'", SINGLE_ADAPTER_NAME)
+        pipe.unet.add_adapter(lora_config, adapter_name=SINGLE_ADAPTER_NAME)
+        state_dict = _require_lora_state_dict(
+            checkpoint_state,
+            label="single-adapter",
+            checkpoint_path=checkpoint_path,
+        )
+        set_peft_model_state_dict(pipe.unet, state_dict, adapter_name=SINGLE_ADAPTER_NAME)
+
+    if mode in BRANCH_PAIR_MODES:
+        _set_active_adapter(pipe, PAIR_CONDITIONAL_ADAPTER_NAME)
+    elif lora_cfg.scale is not None:
+        pipe.set_adapters(
+            [SINGLE_ADAPTER_NAME],
+            adapter_weights=[float(lora_cfg.scale)],
+        )
+
+    set_unet_lora_enabled(pipe, True)
+
+    return True
+
+
+def get_lora_branch_adapter_names(
+    lora_cfg: DictConfig,
+) -> tuple[str, str] | None:
+    if not bool(lora_cfg.enabled):
+        return None
+    mode = _normalize_lora_mode(lora_cfg.mode)
+    if mode not in BRANCH_PAIR_MODES:
+        return None
+    return (
+        PAIR_UNCONDITIONAL_ADAPTER_NAME,
+        PAIR_CONDITIONAL_ADAPTER_NAME,
+    )
+
+
+def uses_single_conditional_prediction(lora_cfg: DictConfig) -> bool:
+    return bool(lora_cfg.enabled) and _normalize_lora_mode(
+        lora_cfg.mode
+    ) in SINGLE_PREDICTION_MODES
+
+
+def _normalize_lora_mode(value: Any, *, warn_deprecated: bool = False) -> str:
+    mode = str(value).strip().lower()
+    if mode == "cfg_distill":
+        if warn_deprecated:
+            logger.warning("lora.mode=cfg_distill is deprecated; use cfg_single_pass.")
+        return CFG_SINGLE_PASS_MODE
+    return mode
+
+
+def set_unet_lora_enabled(pipe, enabled: bool) -> bool:
+    toggled = False
+    for module in pipe.unet.modules():
+        if module is pipe.unet:
+            continue
+        if hasattr(module, "enable_adapters"):
+            module.enable_adapters(enabled)
+            toggled = True
+
+    if not toggled:
+        raise AttributeError("No LoRA adapter layers expose enable_adapters().")
+    return toggled
