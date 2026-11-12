@@ -1,0 +1,49 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+
+% Sources: reports/eval/{bbbc021,edges2shoes}/four_seed_mean/mean_metrics.json
+% Seeds: 42, 43, 44, 45. Bold is determined from unrounded means.
+\begin{document}
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \setlength{\tabcolsep}{5pt}
+  \caption{Inversion-based translation with SD1.5 in FP32, using 50 steps
+  and guidance scale 1. Results are means over four seeds on fixed image
+  sets. Bold denotes the best result within each dataset. All methods use
+  the original text-conditioned SD1.5 backbone, not the task-trained
+  backbones of the OVG paper.}
+  \label{tab:ovg-transfer-four-seed}
+  \begin{tabular}{lrrrrr}
+    \toprule
+    Method & PSNR $\uparrow$ & MS-SSIM $\uparrow$ & LPIPS $\downarrow$
+           & HaarPSI $\uparrow$ & FID $\downarrow$ \\
+    \midrule
+    \multicolumn{6}{l}{\textit{BBBC021: $\times 16$ super-resolution, 576 images}} \\
+    \addlinespace[2pt]
+    Upstream DDIM & \textbf{15.94} & \textbf{0.34} & 0.68 & 0.11 & 383.91 \\
+    Matched DDIM  & 15.04 & 0.32 & 0.65 & 0.15 & 411.94 \\
+    Our LoRA r16  & 14.54 & 0.30 & \textbf{0.61} & \textbf{0.17} & \textbf{378.61} \\
+    OVG           & 10.92 & 0.32 & 0.61 & 0.14 & 430.34 \\
+    \midrule
+    \multicolumn{6}{l}{\textit{Edges2Shoes: edge-to-photo translation, 200 validation pairs}} \\
+    \addlinespace[2pt]
+    Upstream DDIM & \textbf{8.31} & 0.36 & 0.68 & 0.20 & \textbf{280.39} \\
+    Matched DDIM  & 8.16 & \textbf{0.39} & 0.60 & 0.21 & 306.62 \\
+    Our LoRA r16  & 8.13 & 0.38 & 0.57 & 0.22 & 301.34 \\
+    OVG           & 7.30 & 0.36 & \textbf{0.44} & \textbf{0.35} & 324.71 \\
+    \bottomrule
+  \end{tabular}
+
+  \smallskip
+  \begin{minipage}{0.95\linewidth}
+    \footnotesize
+    Matched DDIM uses the same inversion timestep convention as our LoRA.
+    The rank-16 adapter was trained with the standard loss and uniform
+    timestep sampling, and is enabled only during inversion.
+  \end{minipage}
+\end{table}
+
+\end{document}
