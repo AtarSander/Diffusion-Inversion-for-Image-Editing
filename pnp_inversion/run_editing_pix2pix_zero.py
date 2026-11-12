@@ -189,6 +189,7 @@ def edit_image_directinversion_pix2pix_zero(image_path,
                 prompt_tar,
                 guidance_scale=7.5,
                 image_size=[512,512],
+                inversion_steps=NUM_DDIM_STEPS,
                 pix2pix_guidance_amount=XA_GUIDANCE,
                 pix2pix_attention_loss_reduction="legacy_sum",
                 pix2pix_attention_loss_scale=1.0,
@@ -200,6 +201,7 @@ def edit_image_directinversion_pix2pix_zero(image_path,
             prompt_str, 
             guidance_scale=1,
             num_inversion_steps=NUM_DDIM_STEPS,
+            inversion_steps=inversion_steps,
             img=image_gt
         )
     
@@ -210,6 +212,7 @@ def edit_image_directinversion_pix2pix_zero(image_path,
     
     rec_pil, edit_pil = edit_pipe(prompt_str,
                 num_inference_steps=NUM_DDIM_STEPS,
+                denoising_steps=inversion_steps,
                 x_in=inversion_latent,
                 edit_dir=(mean_emb_tar.mean(0)-mean_emb_src.mean(0)).unsqueeze(0),
                 guidance_amount=pix2pix_guidance_amount,
@@ -401,8 +404,8 @@ if __name__ == "__main__":
     parser.add_argument('--inversion_steps', type=int, default=NUM_DDIM_STEPS)
     args = parser.parse_args()
     validate_lora_inversion_depth(args.lora_inversion_mode, args.inversion_steps, NUM_DDIM_STEPS)
-    if args.inversion_steps != NUM_DDIM_STEPS and any(not method.startswith("lora+") for method in args.edit_method_list):
-        parser.error("Partial inversion currently supports only LoRA edit methods")
+    if args.inversion_steps != NUM_DDIM_STEPS and any(not (method.startswith("lora+") or method.startswith("directinversion+")) for method in args.edit_method_list):
+        parser.error("Partial inversion supports LoRA and Direct Inversion methods")
     if args.pix2pix_attention_loss_scale <= 0:
         raise ValueError("--pix2pix_attention_loss_scale must be positive")
     if args.pix2pix_attention_grad_clip_norm is not None and args.pix2pix_attention_grad_clip_norm <= 0:
@@ -478,6 +481,7 @@ if __name__ == "__main__":
                         prompt_src=original_prompt,
                         prompt_tar=editing_prompt,
                         guidance_scale=7.5,
+                        inversion_steps=args.inversion_steps,
                         pix2pix_guidance_amount=args.pix2pix_guidance_amount,
                         pix2pix_attention_loss_reduction=args.pix2pix_attention_loss_reduction,
                         pix2pix_attention_loss_scale=args.pix2pix_attention_loss_scale,

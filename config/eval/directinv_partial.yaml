@@ -1,0 +1,8 @@
+# @package _global_
+defaults:
+  - sd15_baseline
+  - _self_
+
+inversion: directinversion
+inversion_steps: 45
+output_path: data/evaluation/sd15_directinv_partial/steps${inversion_steps}

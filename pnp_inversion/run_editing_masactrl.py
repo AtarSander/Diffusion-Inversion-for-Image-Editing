@@ -160,6 +160,7 @@ class MasaCtrlEditor:
                 image_path, prompt_src, prompt_tar, guidance_scale,
                 step=step, layper=layper,
                 inversion_prompt_mode=inversion_prompt_mode,
+                inversion_steps=inversion_steps,
             )
         elif edit_method=="lora+masactrl":
             return self.edit_image_lora_MasaCtrl(
@@ -261,17 +262,18 @@ class MasaCtrlEditor:
             direct_inversion.init_prompt([prompt_src])
             with self.autocast():
                 _, x_stars = direct_inversion.ddim_with_guidance_scale_inversion(
-                    image_gt, inversion_guidance_scale,
+                    image_gt, inversion_guidance_scale, inversion_steps=inversion_steps,
                 )
             direct_inversion.init_prompt(prompts)
             with self.autocast():
                 noise_loss_list = direct_inversion.offset_calculate(
                     x_stars, num_inner_steps=10, epsilon=1e-5,
-                    guidance_scale=guidance_scale,
+                    guidance_scale=guidance_scale, inversion_steps=inversion_steps,
                 )
         elif inversion_prompt_mode == "standard":
             _, _, x_stars, noise_loss_list = direct_inversion.invert(
                 image_gt=image_gt, prompt=prompts, guidance_scale=guidance_scale,
+                inversion_steps=inversion_steps,
             )
         else:
             raise ValueError(
@@ -450,8 +452,8 @@ if __name__ == "__main__":
     parser.add_argument('--inversion_steps', type=int, default=50)
     args = parser.parse_args()
     validate_lora_inversion_depth(args.lora_inversion_mode, args.inversion_steps, 50)
-    if args.inversion_steps != 50 and any(not method.startswith("lora+") for method in args.edit_method_list):
-        parser.error("Partial inversion currently supports only LoRA edit methods")
+    if args.inversion_steps != 50 and any(not (method.startswith("lora+") or method.startswith("directinversion+")) for method in args.edit_method_list):
+        parser.error("Partial inversion supports LoRA and Direct Inversion methods")
     
     rerun_exist_images=args.rerun_exist_images
     data_path=args.data_path

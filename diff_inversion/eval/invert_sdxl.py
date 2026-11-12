@@ -104,6 +104,7 @@ def invert_sample(
     lora_cfg,
     lora_loaded: bool,
     overwrite: bool,
+    save_intermediates: bool = True,
 ) -> None:
     inverted_noise_path = sample_dir / "inverted_noise.pt"
     inversion_latents_dir = sample_dir / "inversion_latents"
@@ -151,8 +152,8 @@ def invert_sample(
             )
 
         latents = final_latent
-        inversion_trajectory = [latents.detach().cpu()]
-        inversion_pred_noises = []
+        inversion_trajectory = [latents.detach().cpu()] if save_intermediates else None
+        inversion_pred_noises = [] if save_intermediates else None
         inversion_timesteps = [
             int(inverse_scheduler.timesteps[0].item())
             if hasattr(inverse_scheduler.timesteps[0], "item")
@@ -182,8 +183,10 @@ def invert_sample(
                 sample=latents,
                 return_dict=True,
             ).prev_sample
-            inversion_trajectory.append(latents.detach().cpu())
-            inversion_pred_noises.append(noise_pred.detach().cpu())
+            if inversion_trajectory is not None:
+                inversion_trajectory.append(latents.detach().cpu())
+            if inversion_pred_noises is not None:
+                inversion_pred_noises.append(noise_pred.detach().cpu())
             inversion_timesteps.append(
                 int(timestep.item()) if hasattr(timestep, "item") else int(timestep)
             )
@@ -192,16 +195,18 @@ def invert_sample(
             set_unet_lora_enabled(pipe, True)
         pipe.scheduler = original_scheduler
 
-    inversion_latents_dir.mkdir(parents=True, exist_ok=True)
-    inversion_pred_noises_dir.mkdir(parents=True, exist_ok=True)
-
     torch.save(latents.detach().cpu(), inverted_noise_path)
-    for idx, latent in enumerate(inversion_trajectory):
-        torch.save(latent, inversion_latents_dir / f"x_inv_{idx:03d}.pt")
-    for idx, noise in enumerate(inversion_pred_noises):
-        torch.save(noise, inversion_pred_noises_dir / f"noise_inv_{idx:03d}.pt")
-    with inversion_timesteps_path.open("w", encoding="utf-8") as f:
-        json.dump(inversion_timesteps, f, indent=2)
+    if save_intermediates:
+        if inversion_trajectory is None or inversion_pred_noises is None:
+            raise AssertionError("Intermediate buffers were not initialized")
+        inversion_latents_dir.mkdir(parents=True, exist_ok=True)
+        inversion_pred_noises_dir.mkdir(parents=True, exist_ok=True)
+        for idx, latent in enumerate(inversion_trajectory):
+            torch.save(latent, inversion_latents_dir / f"x_inv_{idx:03d}.pt")
+        for idx, noise in enumerate(inversion_pred_noises):
+            torch.save(noise, inversion_pred_noises_dir / f"noise_inv_{idx:03d}.pt")
+        with inversion_timesteps_path.open("w", encoding="utf-8") as f:
+            json.dump(inversion_timesteps, f, indent=2)
 
     meta_path = sample_dir / "meta.json"
     if meta_path.exists():
@@ -209,8 +214,9 @@ def invert_sample(
         meta.update(
             {
                 "inverted_noise": inverted_noise_path.name,
-                "inversion_trajectory_length": len(inversion_trajectory),
-                "inversion_pred_noises_length": len(inversion_pred_noises),
+                "inversion_trajectory_length": len(inversion_timesteps),
+                "inversion_pred_noises_length": len(inversion_timesteps) - 1,
+                "inversion_intermediates_saved": bool(save_intermediates),
                 "inversion_lora_enabled": bool(lora_loaded),
                 "inversion_lora_active_steps": active_lora_steps,
             }
@@ -237,6 +243,9 @@ def main(cfg: DictConfig) -> None:
     pipe = make_pipe(run_cfg.model, device)
     lora_loaded = configure_unet_lora(pipe, cfg.lora)
     negative_prompt = str(run_cfg.negative_prompt)
+    save_intermediates = bool(
+        OmegaConf.select(cfg, "save_intermediates", default=True)
+    )
     for sample_dir in tqdm(samples, desc="Running DDIM inversion"):
         invert_sample(
             pipe=pipe,
@@ -246,6 +255,7 @@ def main(cfg: DictConfig) -> None:
             lora_cfg=cfg.lora,
             lora_loaded=lora_loaded,
             overwrite=bool(cfg.overwrite),
+            save_intermediates=save_intermediates,
         )
 
 

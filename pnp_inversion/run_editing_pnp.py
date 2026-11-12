@@ -632,17 +632,19 @@ def edit_image_directinversion_PnP(
     guidance_scale=7.5,
     image_shape=[512,512],
     pnp_reference_prompt_mode="empty",
+    inversion_steps=NUM_DDIM_STEPS,
 ):
     torch.cuda.empty_cache()
     image_gt = load_512(image_path)
     inverted_x, rgb_reconstruction, _ = model.extract_latents(data_path=image_path,
                                          num_steps=NUM_DDIM_STEPS,
-                                         inversion_prompt=prompt_src)
+                                         inversion_prompt=prompt_src, inversion_steps=inversion_steps)
 
     edited_image=pnp.run_pnp(
         image_path, inverted_x, prompt_tar, guidance_scale,
         source_prompt=prompt_src,
         reference_prompt_mode=pnp_reference_prompt_mode,
+        inversion_steps=inversion_steps,
     )
     
     image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
@@ -777,8 +779,8 @@ if __name__ == "__main__":
     parser.add_argument('--inversion_steps', type=int, default=NUM_DDIM_STEPS)
     args = parser.parse_args()
     validate_lora_inversion_depth(args.lora_inversion_mode, args.inversion_steps, NUM_DDIM_STEPS)
-    if args.inversion_steps != NUM_DDIM_STEPS and any(not method.startswith("lora+") for method in args.edit_method_list):
-        parser.error("Partial inversion currently supports only LoRA edit methods")
+    if args.inversion_steps != NUM_DDIM_STEPS and any(not (method.startswith("lora+") or method.startswith("directinversion+")) for method in args.edit_method_list):
+        parser.error("Partial inversion supports LoRA and Direct Inversion methods")
     
     rerun_exist_images=args.rerun_exist_images
     data_path=args.data_path
@@ -845,6 +847,7 @@ if __name__ == "__main__":
                         prompt_src=original_prompt,
                         prompt_tar=editing_prompt,
                         guidance_scale=7.5,
+                        inversion_steps=args.inversion_steps,
                         pnp_reference_prompt_mode=args.pnp_reference_prompt_mode,
                     )
                 elif edit_method=="lora+pnp":

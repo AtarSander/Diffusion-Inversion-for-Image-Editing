@@ -70,6 +70,8 @@ def main(cfg: DictConfig) -> None:
         method,
         "--inversion_guidance_scale",
         str(cfg.inversion_guidance_scale),
+        "--inversion_steps",
+        str(cfg.get("inversion_steps", 50)),
     ]
     if backend == "pnp":
         cmd.extend(

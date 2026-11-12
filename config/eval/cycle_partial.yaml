@@ -1,0 +1,22 @@
+# @package _global_
+defaults:
+  - /lora: r8
+  - lora_edit
+  - _self_
+
+# Fixed checkpoint for the entire depth ablation. Selected by lowest average
+# rank across seven PIE-Bench metrics and four editors in completed tables.
+lora:
+  checkpoint_path: checkpoints/sd15_inversion_lora_r8_conditional_cycle_cfg1_bs120_e1/checkpoint_final.pt
+  mode: single
+
+inversion_steps: 47
+output_path: data/evaluation/sd15_cycle_r8_lambda1_partial/steps${inversion_steps}
+cache_root: ${oc.env:JOB_CACHE_ROOT}/editing
+edit_method_list: []
+
+hydra:
+  run:
+    dir: ${output_path}/logs/hydra/${edit_method_list.0}
+  job:
+    chdir: false

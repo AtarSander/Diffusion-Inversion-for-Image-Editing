@@ -1,0 +1,5 @@
+url: https://efrosgans.eecs.berkeley.edu/pix2pix/datasets/edges2shoes.tar.gz
+raw_dir: data/raw/edges2shoes
+manifest_dir: data/processed/edges2shoes
+split: val
+expected_images: 200

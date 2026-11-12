@@ -199,3 +199,4 @@ cython_debug/
 
 outputs
 slurm_runs
+/external/ovg/

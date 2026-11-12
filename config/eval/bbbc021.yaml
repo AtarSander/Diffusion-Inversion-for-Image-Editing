@@ -1,0 +1,90 @@
+# @package _global_
+defaults:
+  - /lora: r16
+  - _self_
+
+upstream_root: external/ovg
+seed: 42
+sample_seed: 42
+num_workers: 0
+output_dir: reports/eval/bbbc021/sd15_r${lora.r}_x${data.scale_factor}_n${benchmark.num_samples}_seed${seed}
+run_dir: ${output_dir}
+adapter_checkpoint: checkpoints/sd15_inversion_lora_r16_uniform_e1/checkpoint_final.pt
+
+# This transfer experiment uses our original SD1.5 backbone and existing adapter.
+# The paper's microscopy class-conditioned backbone is a separate experiment.
+model_checkpoint:
+  checkpoint_path: runwayml/stable-diffusion-v1-5
+  is_text_to_image: true
+  use_ema: false
+  use_lora: false
+conditioning:
+  source_prompt: low resolution fluorescence microscopy image of cells
+  target_prompt: high resolution fluorescence microscopy image of cells
+
+data:
+  dataset: bbbc021
+  csv_path: data/processed/bbbc021/test.csv
+  image_root: data/raw/BBBC021
+  num_classes: 2
+  hr_size: 256
+  scale_factor: 16
+  mode: super_resolution
+  paired_mode: true
+  deterministic_downsample: true
+  added_noise_post_upsampling: 0.0
+  class_indices: null
+  blur_kernel_size: 1
+  blur_sigma: 0.0
+  noise_std: 0.0
+  interpolation_mode: nearest
+  use_blur: false
+  use_downsample: true
+
+inference:
+  num_inference_steps: 50
+  guidance_scale: 1.0
+  eta: 0.0
+  inversion_schedule_name: scaled_linear
+
+benchmark:
+  # 14.97% of the 3,848 labelled fields; fixed seed shared across methods.
+  num_samples: 576
+  vis_samples: 10
+  batch_size: 1
+  mixed_precision: 'no'
+  use_amp: false
+  export_intermediates: true
+  export_output_dir: ${output_dir}/images
+  export_save_intermediate_latents: false
+  export_save_predicted_noises: false
+  methods:
+    - name: standard_inversion
+      enabled: true
+    - name: matched_ddim
+      enabled: true
+    - name: lora_inversion
+      enabled: true
+    - name: ours
+      enabled: true
+      params:
+        use_cgd: true
+        cgd_eta: 1000.0
+        use_scp: true
+        scp_eta: 0.0001
+
+metrics:
+  enabled: true
+  run_offline_in_benchmark: false
+  live_binned: false
+
+logging:
+  report_to: null
+  project_name: bbbc021-inversion
+  run_name: null
+
+hydra:
+  run:
+    dir: ${output_dir}/hydra
+  job:
+    chdir: false

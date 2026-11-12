@@ -457,13 +457,13 @@ class DirectInversion:
             
         return noise_loss_list
     
-    def invert(self, image_gt, prompt, guidance_scale, num_inner_steps=10, early_stop_epsilon=1e-5):
+    def invert(self, image_gt, prompt, guidance_scale, num_inner_steps=10, early_stop_epsilon=1e-5, inversion_steps=None):
         self.init_prompt(prompt)
         register_attention_control(self.model, None)
         
-        image_rec, ddim_latents = self.ddim_inversion(image_gt)
+        image_rec, ddim_latents = self.ddim_inversion(image_gt, inversion_steps=inversion_steps)
         
-        noise_loss_list = self.offset_calculate(ddim_latents, num_inner_steps, early_stop_epsilon,guidance_scale)
+        noise_loss_list = self.offset_calculate(ddim_latents, num_inner_steps, early_stop_epsilon, guidance_scale, inversion_steps=inversion_steps)
         return image_gt, image_rec, ddim_latents, noise_loss_list
     
     def invert_without_attn_controller(self, image_gt, prompt, guidance_scale, num_inner_steps=10, early_stop_epsilon=1e-5):

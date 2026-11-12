@@ -1,0 +1,13 @@
+# Local transfer-evaluation protocol, NOT the unpublished OVG preparation.
+source_page: https://bbbc.broadinstitute.org/BBBC021
+source_base: https://data.broadinstitute.org/bbbc/BBBC021/
+raw_dir: data/raw/BBBC021
+manifest_dir: data/processed/bbbc021
+expected_archives: 55
+expected_fields: 13200
+channels_rgb: [Actin, Tubulin, DAPI]
+percentiles: [0.1, 99.9]
+resolution: 256
+resize: bilinear
+# All MOA-labelled fields; no model has been trained on this evaluation pool.
+evaluation: all_moa_labelled

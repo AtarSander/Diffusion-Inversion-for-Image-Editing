@@ -2,6 +2,9 @@
 
 input_dir: data/processed/sdxl_trajectories
 overwrite: false
+# Per-step inverse latents and predictions are useful for diagnostics but create
+# 101 extra files per sample. Disable this for aggregate inversion-quality runs.
+save_intermediates: true
 
 lora:
   enabled: false

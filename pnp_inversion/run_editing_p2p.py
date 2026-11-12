@@ -101,8 +101,8 @@ if __name__ == "__main__":
     parser.add_argument('--inversion_steps', type=int, default=50)
     args = parser.parse_args()
     validate_lora_inversion_depth(args.lora_inversion_mode, args.inversion_steps, 50)
-    if args.inversion_steps != 50 and any(not method.startswith("lora+") for method in args.edit_method_list):
-        parser.error("Partial inversion currently supports only LoRA edit methods")
+    if args.inversion_steps != 50 and any(not (method.startswith("lora+") or method.startswith("directinversion+")) for method in args.edit_method_list):
+        parser.error("Partial inversion supports LoRA and Direct Inversion methods")
     
     rerun_exist_images=args.rerun_exist_images
     data_path=args.data_path

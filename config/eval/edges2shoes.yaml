@@ -1,0 +1,29 @@
+# @package _global_
+defaults:
+  - bbbc021
+  - _self_
+
+output_dir: reports/eval/edges2shoes/sd15_r${lora.r}_n${benchmark.num_samples}_seed${seed}
+conditioning:
+  source_prompt: a black and white outline drawing of a shoe
+  target_prompt: a product photograph of a shoe on a white background
+data:
+  dataset: edges2shoes
+  csv_path: data/processed/edges2shoes/val.csv
+  image_root: data/raw/edges2shoes
+  mode: translation
+benchmark:
+  num_samples: 200
+  methods:
+    - {name: standard_inversion, enabled: true}
+    - {name: matched_ddim, enabled: true}
+    - {name: lora_inversion, enabled: true}
+    - name: ours
+      enabled: true
+      params:
+        use_cgd: true
+        cgd_eta: 1000000000.0
+        use_scp: true
+        scp_eta: 0.0000708
+logging:
+  project_name: edges2shoes-inversion

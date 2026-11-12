@@ -187,7 +187,7 @@ class P2PEditor:
         elif edit_method=="directinversion+p2p":
             return self.edit_image_directinversion(image_path=image_path, prompt_src=prompt_src, prompt_tar=prompt_tar, guidance_scale=guidance_scale, 
                                         cross_replace_steps=cross_replace_steps, self_replace_steps=self_replace_steps, 
-                                        blend_word=blend_word, eq_params=eq_params, is_replace_controller=is_replace_controller)
+                                        blend_word=blend_word, eq_params=eq_params, is_replace_controller=is_replace_controller, inversion_steps=inversion_steps)
         elif edit_method in ["directinversion+p2p_guidance_0_1", "directinversion+p2p_guidance_0_5","directinversion+p2p_guidance_0_25", \
             "directinversion+p2p_guidance_0_75", "directinversion+p2p_guidance_1_1", "directinversion+p2p_guidance_1_5", "directinversion+p2p_guidance_1_25", \
                 "directinversion+p2p_guidance_1_75", "directinversion+p2p_guidance_25_1", "directinversion+p2p_guidance_25_5", "directinversion+p2p_guidance_25_25", \
@@ -648,6 +648,7 @@ class P2PEditor:
                 image_gt=image_gt,
                 prompt=prompts,
                 guidance_scale=guidance_scale,
+                inversion_steps=inversion_steps,
             )
         x_t = x_stars[-1]
 
