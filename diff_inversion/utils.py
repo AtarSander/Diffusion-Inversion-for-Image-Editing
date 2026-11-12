@@ -35,6 +35,12 @@ def _from_pretrained_kwargs(cfg: DictConfig) -> dict:
     use_safetensors = OmegaConf.select(cfg, "use_safetensors", default=None)
     if use_safetensors is not None:
         kwargs["use_safetensors"] = bool(use_safetensors)
+    if bool(OmegaConf.select(cfg, "disable_safety_checker", default=False)):
+        kwargs.update(
+            safety_checker=None,
+            feature_extractor=None,
+            requires_safety_checker=False,
+        )
     return kwargs
 
 

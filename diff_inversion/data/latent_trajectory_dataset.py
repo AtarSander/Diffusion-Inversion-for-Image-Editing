@@ -1,6 +1,6 @@
 import json
 from bisect import bisect_right
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from math import ceil
 from pathlib import Path
 from typing import Any
@@ -20,6 +20,7 @@ class LatentTrajectoryDataset(Dataset):
         target_uncond_eps_file_name: str = "target_eps_uncond.pt",
         load_cfg_branch_targets: bool = False,
         require_training_cache: bool = True,
+        source_names: Sequence[str] | None = None,
     ):
         if isinstance(root_dir, (str, Path)):
             self.root_dirs = [Path(root_dir)]
@@ -27,6 +28,17 @@ class LatentTrajectoryDataset(Dataset):
             self.root_dirs = [Path(path) for path in root_dir]
         if not self.root_dirs:
             raise ValueError("LatentTrajectoryDataset requires at least one root directory.")
+        if source_names is None:
+            self.source_names = [root.name for root in self.root_dirs]
+        else:
+            self.source_names = [str(source_name) for source_name in source_names]
+            if len(self.source_names) != len(self.root_dirs):
+                raise ValueError(
+                    "source_names must have exactly one name for every trajectory root: "
+                    f"got {len(self.source_names)} names for {len(self.root_dirs)} roots."
+                )
+        if len(set(self.source_names)) != len(self.source_names):
+            raise ValueError("source_names must be unique across trajectory roots.")
         self.latents_file_name = latents_file_name
         self.conditioning_file_name = conditioning_file_name
         self.targets_dir_name = targets_dir_name
@@ -37,7 +49,7 @@ class LatentTrajectoryDataset(Dataset):
         self.samples: list[dict[str, Any]] = []
         self.cumulative_lengths: list[int] = []
 
-        for root_dir in self.root_dirs:
+        for root_dir, source_name in zip(self.root_dirs, self.source_names):
             for sample_dir in sorted(root_dir.glob("sample_*")):
                 latents_dir = sample_dir / "latents"
                 timesteps_path = sample_dir / "timesteps.json"
@@ -78,6 +90,8 @@ class LatentTrajectoryDataset(Dataset):
                             "target_uncond_eps_path": target_uncond_eps_path,
                             "guidance_scale": meta.get("guidance_scale"),
                             "sample_idx": meta.get("sample_idx"),
+                            "source_root": str(root_dir),
+                            "source_name": source_name,
                         }
                     )
                     continue
@@ -97,6 +111,8 @@ class LatentTrajectoryDataset(Dataset):
                             "target_uncond_eps_path": target_uncond_eps_path,
                             "guidance_scale": meta.get("guidance_scale"),
                             "sample_idx": meta.get("sample_idx"),
+                            "source_root": str(root_dir),
+                            "source_name": source_name,
                         }
                     )
 
@@ -144,6 +160,50 @@ class LatentTrajectoryDataset(Dataset):
             offset += transition_count
         return weights, tail_transition_count, other_transition_count
 
+    def source_mixture_sampling_weights(
+        self,
+        source_weights: Mapping[str, float],
+    ) -> tuple[torch.Tensor, dict[str, int], dict[str, float]]:
+        """Build per-transition weights with configured probability mass per source.
+
+        Every transition in a source has equal probability conditional on selecting that
+        source. This keeps the draw distribution independent of directory size.
+        """
+        if not self.samples:
+            raise ValueError("Cannot build sampling weights for an empty trajectory dataset.")
+        transition_counts: dict[str, int] = {}
+        for sample in self.samples:
+            source_name = str(sample["source_name"])
+            transition_counts[source_name] = transition_counts.get(source_name, 0) + int(
+                sample["num_transitions"]
+            )
+
+        expected_sources = set(transition_counts)
+        configured_sources = {str(name) for name in source_weights}
+        if configured_sources != expected_sources:
+            raise ValueError(
+                "sampling.source_weights must specify exactly the dataset sources; "
+                f"expected {sorted(expected_sources)}, got {sorted(configured_sources)}."
+            )
+        normalized_weights = {name: float(source_weights[name]) for name in expected_sources}
+        if any(weight <= 0.0 for weight in normalized_weights.values()):
+            raise ValueError("sampling.source_weights must contain strictly positive values.")
+        total_weight = sum(normalized_weights.values())
+        normalized_weights = {
+            name: weight / total_weight for name, weight in normalized_weights.items()
+        }
+
+        weights = torch.empty(len(self), dtype=torch.double)
+        offset = 0
+        for sample in self.samples:
+            transition_count = int(sample["num_transitions"])
+            source_name = str(sample["source_name"])
+            weights[offset : offset + transition_count] = (
+                normalized_weights[source_name] / transition_counts[source_name]
+            )
+            offset += transition_count
+        return weights, transition_counts, normalized_weights
+
     def __getitem__(self, idx: int) -> dict[str, Any]:
         sample, step_idx = self._locate(idx)
 
@@ -187,6 +247,8 @@ class LatentTrajectoryDataset(Dataset):
             "dataset_idx": int(idx),
             "sample_idx": sample["sample_idx"],
             "sample_dir": str(sample["sample_dir"]),
+            "source_root": str(sample["source_root"]),
+            "source_name": str(sample["source_name"]),
             "step_idx": int(step_idx),
             # Sampling is stored noise -> image, while inversion runs image -> noise.
             "inversion_step": num_transitions - 1 - int(step_idx),

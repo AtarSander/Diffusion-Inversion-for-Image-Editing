@@ -21,5 +21,12 @@ def build_subprocess_environment(cache_root: Path) -> dict[str, str]:
         directory = cache_root / relative_path
         directory.mkdir(parents=True, exist_ok=True)
         env[variable] = str(directory)
+    # Explicitly override inherited hub and temporary paths as well.
+    hub_cache = cache_root / "huggingface" / "hub"
+    temp_dir = cache_root / "tmp"
+    hub_cache.mkdir(parents=True, exist_ok=True)
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    env["HF_HUB_CACHE"] = str(hub_cache)
+    env["TMPDIR"] = str(temp_dir)
     env["TOKENIZERS_PARALLELISM"] = "false"
     return env

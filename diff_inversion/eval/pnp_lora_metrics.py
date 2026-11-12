@@ -25,6 +25,22 @@ def _as_str_list(values) -> list[str]:
     return [str(value) for value in values or []]
 
 
+def _load_source_manifest(path: Path) -> dict[str, str]:
+    labels: dict[str, str] = {}
+    with path.open(encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            image_path, label = record.get("image_path"), record.get("label")
+            if not isinstance(image_path, str) or not isinstance(label, str):
+                raise ValueError(f"Invalid source manifest record at {path}:{line_number}")
+            if image_path in labels:
+                raise ValueError(f"Duplicate source manifest image_path: {image_path}")
+            labels[image_path] = label
+    return labels
+
+
 def _write_summary(result_path: Path, summary_path: Path) -> None:
     with result_path.open(newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
@@ -85,30 +101,48 @@ def main(cfg: DictConfig) -> None:
     with mapping_path.open(encoding="utf-8") as f:
         mapping = json.load(f)
     source_group = str(cfg.get("source_group", "all")).strip().lower()
-    source_group_dirs = {
-        "real": "2_natural",
-        "generated": "1_artificial",
-        "unknown": "0_random_140",
-    }
-    if source_group not in {"all", "real", "generated", "unknown"}:
-        raise ValueError(
-            f"Unsupported source_group={source_group!r}; expected all, real, generated, or unknown"
-        )
-
+    source_manifest_cfg = cfg.get("source_manifest")
     mapping_for_metrics = mapping
     mapping_path_for_metrics = mapping_path
-    if source_group != "all":
-        source_dir = source_group_dirs[source_group]
-        mapping_for_metrics = {
-            key: item
-            for key, item in mapping.items()
-            if (
-                str(item["image_path"]).split("/")[0] == source_dir
-                if source_group == "unknown"
-                else len(str(item["image_path"]).split("/")) > 1
-                and str(item["image_path"]).split("/")[1] == source_dir
+    if source_manifest_cfg:
+        source_manifest = _load_source_manifest(_resolve_path(source_manifest_cfg))
+        mapping_paths = {str(item["image_path"]) for item in mapping.values()}
+        if set(source_manifest) != mapping_paths:
+            raise ValueError("Frozen source_manifest image paths must exactly match PIE-Bench mapping.")
+        allowed_groups = {"all", *source_manifest.values()}
+        if source_group not in allowed_groups:
+            raise ValueError(
+                f"Unsupported source_group={source_group!r}; expected one of {sorted(allowed_groups)}."
             )
+        if source_group != "all":
+            mapping_for_metrics = {
+                key: item
+                for key, item in mapping.items()
+                if source_manifest[str(item["image_path"])] == source_group
+            }
+    else:
+        source_group_dirs = {
+            "real": "2_natural",
+            "generated": "1_artificial",
+            "unknown": "0_random_140",
         }
+        if source_group not in {"all", *source_group_dirs}:
+            raise ValueError(
+                f"Unsupported source_group={source_group!r}; expected all, real, generated, or unknown"
+            )
+        if source_group != "all":
+            source_dir = source_group_dirs[source_group]
+            mapping_for_metrics = {
+                key: item
+                for key, item in mapping.items()
+                if (
+                    str(item["image_path"]).split("/")[0] == source_dir
+                    if source_group == "unknown"
+                    else len(str(item["image_path"]).split("/")) > 1
+                    and str(item["image_path"]).split("/")[1] == source_dir
+                )
+            }
+    if source_group != "all":
         mapping_path_for_metrics = cache_root / f"mapping_{source_group}.json"
         mapping_path_for_metrics.write_text(
             json.dumps(mapping_for_metrics, indent=2, sort_keys=True) + "\n",
@@ -159,6 +193,8 @@ def main(cfg: DictConfig) -> None:
         "HF_HOME": _resolve_path(cfg.get("hf_home", cache_root / "huggingface")),
         "MPLCONFIGDIR": _resolve_path(cfg.get("matplotlib_cache", cache_root / "matplotlib")),
         "TORCH_HOME": _resolve_path(cfg.get("torch_home", cache_root / "torch")),
+        "HF_HUB_CACHE": cache_root / "huggingface" / "hub",
+        "TMPDIR": cache_root / "tmp",
     }
     env = os.environ.copy()
     for directory_var, directory in cache_directories.items():

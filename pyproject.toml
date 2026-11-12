@@ -30,6 +30,7 @@ dependencies = [
     "mkdocs",
     "peft>=0.18.1",
     "pillow>=12.1.1",
+    "pyarrow>=18.0.0",
     "pip",
     "python-dotenv",
     "ruff",

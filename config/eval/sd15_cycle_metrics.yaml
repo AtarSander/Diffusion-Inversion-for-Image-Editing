@@ -1,0 +1,32 @@
+# @package _global_
+
+defaults:
+  - /model: sd15
+  - /data: sd15_trajectories
+  - /lora: r16
+  - _self_
+
+# Evaluate the exact single-transition cycle used by training_target=conditional_cycle:
+# LoRA inverse DDIM step followed by a frozen-base DDIM generation step.
+checkpoint_path: null
+output_path: reports/sd15_cycle_metrics.json
+device: cuda
+max_batches: 128
+
+model:
+  # The cycle computation is sensitive to numerical precision. Match the FP32
+  # SD1.5 trajectory/training setup by default.
+  torch_dtype: float32
+  variant: null
+
+lora:
+  enabled: true
+  checkpoint_path: ${checkpoint_path}
+  adapter_name: inversion
+  scale: 1.0
+
+hydra:
+  run:
+    dir: .
+  job:
+    chdir: false

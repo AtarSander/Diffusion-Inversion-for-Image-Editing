@@ -6,11 +6,12 @@ import numpy as np
 import PIL
 import torch
 from diffusers.utils import pt_to_pil
-from dreamsim import dreamsim
 from tqdm import tqdm
 
 
 def dreamsim_init(device: torch.device) -> Tuple[torch.nn.Module, Callable]:
+    from dreamsim import dreamsim
+
     model, preprocess = dreamsim(pretrained=True, device=device, cache_dir="./res/dreamsim")
     return model, preprocess
 

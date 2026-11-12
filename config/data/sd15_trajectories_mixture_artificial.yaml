@@ -1,0 +1,17 @@
+# Train on both sources; validation remains uniform and ReCap-only for the controlled run.
+root_dirs:
+  - data/processed/sd15_trajectories_stacked_fp32/all
+  - data/processed/sd15_trajectories_diffusiondb_artificial_fp32/all
+source_names: [recap_coco, diffusiondb_artificial]
+val_root_dirs:
+  - data/processed/sd15_trajectories_stacked_fp32/all
+val_source_names: [recap_coco]
+latents_file_name: trajectory.pt
+conditioning_file_name: conditioning.pt
+targets_dir_name: targets
+target_eps_file_name: target_eps.pt
+target_uncond_eps_file_name: target_eps_uncond.pt
+require_training_cache: true
+batch_size: 128
+num_workers: 4
+pin_memory: true

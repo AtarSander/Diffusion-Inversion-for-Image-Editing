@@ -1,0 +1,31 @@
+# @package _global_
+
+defaults:
+  - /model: sdxl
+  - /data: sdxl_trajectories
+  - /lora: r16
+  - _self_
+
+# One-transition cycle used by conditional-cycle training: LoRA inverse DDIM,
+# then a frozen-base DDIM generation transition at the same timestep.
+checkpoint_path: null
+output_path: reports/sdxl_cycle_metrics.json
+device: cuda
+max_batches: 128
+
+data:
+  batch_size: 1
+  num_workers: 2
+  pin_memory: true
+
+lora:
+  enabled: true
+  checkpoint_path: ${checkpoint_path}
+  adapter_name: inversion
+  scale: 1.0
+
+hydra:
+  run:
+    dir: .
+  job:
+    chdir: false

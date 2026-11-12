@@ -131,6 +131,8 @@ def main(cfg: DictConfig) -> None:
     logger.info("Reconstruction config:\n{}", OmegaConf.to_yaml(cfg))
     input_dir = _resolve_path(cfg.input_dir)
     run_cfg = _load_run_config(input_dir)
+    if cfg.model_id_override:
+        run_cfg.model.model_id = str(cfg.model_id_override)
     samples = _sample_dirs(input_dir)
     if not samples:
         raise FileNotFoundError(f"No sample directories found in {input_dir}")

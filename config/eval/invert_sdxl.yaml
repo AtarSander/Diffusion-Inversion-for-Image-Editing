@@ -1,7 +1,9 @@
 # @package _global_
 
+model_id_override: null
 input_dir: data/processed/sdxl_trajectories
 overwrite: false
+save_inversion_artifacts: true
 
 lora:
   enabled: false

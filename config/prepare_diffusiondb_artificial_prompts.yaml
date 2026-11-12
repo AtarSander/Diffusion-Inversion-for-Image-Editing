@@ -1,0 +1,78 @@
+defaults:
+  - data: diffusiondb_artificial
+  - _self_
+
+tokenizer_model_id: openai/clip-vit-large-patch14
+
+selection:
+  selection_seed: 42
+  count_per_stratum: 1522
+  review_count_per_stratum: 50
+  min_whitespace_words: 4
+  max_clip_tokens: 75
+  nsfw_threshold: 0.1
+  non_latin_letter_fraction_threshold: 0.5
+  repeated_token_min_tokens: 8
+  repeated_token_fraction: 0.6
+  url_markers: ["http://", "https://", "www."]
+  discord_markers: ["discord.gg/", "discord.com/invite/", "<@"]
+  boilerplate_exact: ["test", "test prompt", "prompt", "n/a", "none"]
+  photographic_terms:
+    - photo
+    - photograph
+    - photography
+    - photographic
+    - photorealistic
+    - photorealism
+    - hyperrealism
+    - dslr
+    - film still
+    - camera
+    - lens
+    - photoshoot
+    - 35mm
+    - 3 5 mm
+    - aperture
+    - depth of field
+    - bokeh
+    - f-stop
+    - focal length
+  # Precedence follows this mapping order, not match count.
+  style_keywords:
+    illustration_vector:
+      - illustration
+      - vector art
+      - clip art
+      - flat design
+      - iconography
+    cartoon_comic_anime:
+      - cartoon
+      - comic
+      - manga
+      - anime
+      - cel-shaded artwork
+      - cel shaded artwork
+    painting_digital_art:
+      - painting
+      - watercolor
+      - oil painting
+      - gouache
+      - digital art
+      - concept art
+    render_3d:
+      - 3d render
+      - cgi
+      - blender
+      - octane render
+      - isometric render
+      - low-poly art
+      - low poly art
+    graphic_design:
+      - poster
+      - logo
+      - graphic design
+      - infographic
+      - diagram
+      - ui design
+      - typography
+      - pixel art

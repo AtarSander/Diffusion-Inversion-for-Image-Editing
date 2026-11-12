@@ -1,0 +1,4 @@
+# PIE-Bench prompts are used only as an out-of-distribution prompt source.
+# The generated images and trajectories remain SDXL samples, not PIE-Bench images.
+prompts_jsonl: data/processed/pie_bench_ood/prompts.jsonl
+mapping_file: data/raw/PIE-Bench_v1/mapping_file.json

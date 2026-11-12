@@ -8,3 +8,4 @@ defaults:
 edit_method_list:
   - lora+pnp
   - lora+directinversion+pnp
+

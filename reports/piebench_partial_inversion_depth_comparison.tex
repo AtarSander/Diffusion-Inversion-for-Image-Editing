@@ -1,0 +1,162 @@
+\documentclass[10pt]{article}
+\usepackage[a4paper,landscape,margin=16mm]{geometry}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\title{PIE-Bench Moonwalker Inversion-Depth Comparison}
+\date{}
+\begin{document}
+\maketitle
+\noindent All rows use the 700-image PIE-Bench set. Unedited-region metrics use 556 images; the other metrics use 700. The partial-depth runs use the same rank-16 SD1.5 Moonwalker checkpoint and 50-step DDIM schedule, stopping inversion after the stated fraction and denoising from that point. DDIM and DirectInv are reproduced baselines; P2P uses the FP32 reproduction. Values are not original-paper numbers. Within each editor, bold marks the best displayed value for each metric; underlining marks values strictly better than the reproduced DirectInv baseline for that metric.
+\par\medskip
+\begin{table}[htbp]
+\centering
+\scriptsize
+\caption{P2P: inversion depth versus reproduced full-depth baselines. All values are means.}
+\label{tab:partial-depth-p2p}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{llrrrrrrr}
+\toprule
+Inversion & Depth & Structure ($\times10^3$) $\downarrow$ & PSNR (dB) $\uparrow$ & LPIPS ($\times10^3$) $\downarrow$ & MSE ($\times10^4$) $\downarrow$ & SSIM ($\times10^2$) $\uparrow$ & CLIP target $\uparrow$ & CLIP edited $\uparrow$ \\
+\midrule
+DDIM & 100\% & 70.54 & 17.87 & 208.84 & 219.35 & 71.64 & \underline{25.28} & \underline{22.56} \\
+DirectInv & 100\% & 11.01 & 27.27 & 54.01 & 32.60 & 85.32 & 25.20 & 22.14 \\
+\midrule
+Moonwalker & 10\% & \underline{2.28} & \underline{30.60} & \underline{31.48} & \underline{17.53} & \underline{87.64} & 22.97 & 20.09 \\
+Moonwalker & 20\% & \underline{2.63} & \underline{30.30} & \underline{33.84} & \underline{18.39} & \underline{87.37} & 23.20 & 20.29 \\
+Moonwalker & 30\% & \underline{3.40} & \underline{29.73} & \underline{39.12} & \underline{20.24} & \underline{86.85} & 23.47 & 20.48 \\
+Moonwalker & 40\% & \underline{5.01} & \underline{28.75} & \underline{49.08} & \underline{24.08} & \underline{85.92} & 23.76 & 20.78 \\
+Moonwalker & 50\% & \underline{8.19} & \underline{27.30} & 64.44 & \underline{31.64} & 84.45 & 24.07 & 21.02 \\
+Moonwalker & 60\% & 13.58 & 25.57 & 85.42 & 44.49 & 82.49 & 24.31 & 21.29 \\
+Moonwalker & 70\% & 21.87 & 23.68 & 111.27 & 64.92 & 80.13 & 24.61 & 21.58 \\
+Moonwalker & 80\% & 33.16 & 21.76 & 141.06 & 97.47 & 77.61 & 24.78 & 21.91 \\
+Moonwalker & 90\% & 48.56 & 19.80 & 173.33 & 145.44 & 74.84 & 25.09 & \underline{22.20} \\
+Moonwalker & 100\% & 70.40 & 17.82 & 210.98 & 220.66 & 71.37 & \underline{\textbf{25.36}} & \underline{\textbf{22.57}} \\
+\midrule
+Moonwalker + DirectInv & 10\% & \underline{\textbf{2.22}} & \underline{\textbf{30.66}} & \underline{\textbf{31.01}} & \underline{\textbf{17.35}} & \underline{\textbf{87.71}} & 22.95 & 20.07 \\
+Moonwalker + DirectInv & 20\% & \underline{2.38} & \underline{30.56} & \underline{31.51} & \underline{17.65} & \underline{87.62} & 23.14 & 20.23 \\
+Moonwalker + DirectInv & 30\% & \underline{2.60} & \underline{30.43} & \underline{32.24} & \underline{18.03} & \underline{87.52} & 23.32 & 20.42 \\
+Moonwalker + DirectInv & 40\% & \underline{2.90} & \underline{30.26} & \underline{33.21} & \underline{18.51} & \underline{87.40} & 23.53 & 20.57 \\
+Moonwalker + DirectInv & 50\% & \underline{3.31} & \underline{30.03} & \underline{34.55} & \underline{19.15} & \underline{87.25} & 23.78 & 20.79 \\
+Moonwalker + DirectInv & 60\% & \underline{3.90} & \underline{29.72} & \underline{36.75} & \underline{20.16} & \underline{87.04} & 23.99 & 20.99 \\
+Moonwalker + DirectInv & 70\% & \underline{4.76} & \underline{29.28} & \underline{40.34} & \underline{21.66} & \underline{86.73} & 24.28 & 21.32 \\
+Moonwalker + DirectInv & 80\% & \underline{6.25} & \underline{28.63} & \underline{46.23} & \underline{24.32} & \underline{86.21} & 24.64 & 21.60 \\
+Moonwalker + DirectInv & 90\% & \underline{8.85} & \underline{27.62} & 56.07 & \underline{30.56} & 85.22 & 24.89 & 21.89 \\
+Moonwalker + DirectInv & 100\% & 14.30 & 25.95 & 73.20 & 44.76 & 83.48 & \underline{25.31} & \underline{22.39} \\
+\bottomrule
+\end{tabular}}
+\end{table}
+\clearpage
+\begin{table}[htbp]
+\centering
+\scriptsize
+\caption{PnP: inversion depth versus reproduced full-depth baselines. All values are means.}
+\label{tab:partial-depth-pnp}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{llrrrrrrr}
+\toprule
+Inversion & Depth & Structure ($\times10^3$) $\downarrow$ & PSNR (dB) $\uparrow$ & LPIPS ($\times10^3$) $\downarrow$ & MSE ($\times10^4$) $\downarrow$ & SSIM ($\times10^2$) $\uparrow$ & CLIP target $\uparrow$ & CLIP edited $\uparrow$ \\
+\midrule
+DDIM & 100\% & 27.33 & 22.32 & 112.73 & 82.94 & 79.58 & 25.58 & 22.57 \\
+DirectInv & 100\% & 23.35 & 22.46 & 105.49 & 79.93 & 80.22 & 25.64 & 22.67 \\
+\midrule
+Moonwalker & 10\% & \underline{\textbf{2.25}} & \underline{30.61} & \underline{31.14} & \underline{\textbf{17.47}} & \underline{87.67} & 22.96 & 20.06 \\
+Moonwalker & 20\% & \underline{2.42} & \underline{30.46} & \underline{32.11} & \underline{17.90} & \underline{87.54} & 23.09 & 20.16 \\
+Moonwalker & 30\% & \underline{2.75} & \underline{30.20} & \underline{34.16} & \underline{18.64} & \underline{87.31} & 23.26 & 20.33 \\
+Moonwalker & 40\% & \underline{3.30} & \underline{29.83} & \underline{37.21} & \underline{19.69} & \underline{87.01} & 23.52 & 20.53 \\
+Moonwalker & 50\% & \underline{4.32} & \underline{29.21} & \underline{42.85} & \underline{21.69} & \underline{86.50} & 23.76 & 20.75 \\
+Moonwalker & 60\% & \underline{5.92} & \underline{28.41} & \underline{50.89} & \underline{24.90} & \underline{85.79} & 24.05 & 21.07 \\
+Moonwalker & 70\% & \underline{8.54} & \underline{27.29} & \underline{62.44} & \underline{30.36} & \underline{84.71} & 24.44 & 21.51 \\
+Moonwalker & 80\% & \underline{12.14} & \underline{26.00} & \underline{74.81} & \underline{38.17} & \underline{83.47} & 24.97 & 21.91 \\
+Moonwalker & 90\% & \underline{17.88} & \underline{24.31} & \underline{93.37} & \underline{53.39} & \underline{81.58} & 25.41 & 22.40 \\
+Moonwalker & 100\% & 27.18 & 22.32 & 114.16 & 82.44 & 79.46 & \underline{25.65} & \underline{22.78} \\
+\midrule
+Moonwalker + DirectInv & 10\% & \underline{\textbf{2.25}} & \underline{\textbf{30.62}} & \underline{\textbf{31.13}} & \underline{\textbf{17.47}} & \underline{\textbf{87.68}} & 22.96 & 20.06 \\
+Moonwalker + DirectInv & 20\% & \underline{2.42} & \underline{30.47} & \underline{32.02} & \underline{17.89} & \underline{87.54} & 23.09 & 20.15 \\
+Moonwalker + DirectInv & 30\% & \underline{2.73} & \underline{30.22} & \underline{33.87} & \underline{18.59} & \underline{87.33} & 23.27 & 20.33 \\
+Moonwalker + DirectInv & 40\% & \underline{3.20} & \underline{29.89} & \underline{36.40} & \underline{19.50} & \underline{87.07} & 23.53 & 20.54 \\
+Moonwalker + DirectInv & 50\% & \underline{4.07} & \underline{29.35} & \underline{41.35} & \underline{21.16} & \underline{86.64} & 23.77 & 20.75 \\
+Moonwalker + DirectInv & 60\% & \underline{5.33} & \underline{28.71} & \underline{47.77} & \underline{23.45} & \underline{86.08} & 24.12 & 21.08 \\
+Moonwalker + DirectInv & 70\% & \underline{7.50} & \underline{27.71} & \underline{57.61} & \underline{27.83} & \underline{85.18} & 24.51 & 21.48 \\
+Moonwalker + DirectInv & 80\% & \underline{10.57} & \underline{26.50} & \underline{68.30} & \underline{34.29} & \underline{84.11} & 25.00 & 21.89 \\
+Moonwalker + DirectInv & 90\% & \underline{15.75} & \underline{24.79} & \underline{85.58} & \underline{47.92} & \underline{82.37} & 25.48 & 22.40 \\
+Moonwalker + DirectInv & 100\% & 24.28 & 22.40 & 110.24 & 81.56 & 79.88 & \underline{\textbf{25.80}} & \underline{\textbf{22.86}} \\
+\bottomrule
+\end{tabular}}
+\end{table}
+\clearpage
+\begin{table}[htbp]
+\centering
+\scriptsize
+\caption{MasaCtrl: inversion depth versus reproduced full-depth baselines. All values are means.}
+\label{tab:partial-depth-masactrl}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{llrrrrrrr}
+\toprule
+Inversion & Depth & Structure ($\times10^3$) $\downarrow$ & PSNR (dB) $\uparrow$ & LPIPS ($\times10^3$) $\downarrow$ & MSE ($\times10^4$) $\downarrow$ & SSIM ($\times10^2$) $\uparrow$ & CLIP target $\uparrow$ & CLIP edited $\uparrow$ \\
+\midrule
+DDIM & 100\% & 27.09 & 22.19 & 105.34 & 86.35 & 80.32 & 24.23 & 21.20 \\
+DirectInv & 100\% & 23.70 & 22.67 & 87.85 & 80.85 & 81.85 & 24.60 & 21.46 \\
+\midrule
+Moonwalker & 10\% & \underline{\textbf{2.28}} & \underline{\textbf{30.60}} & \underline{\textbf{31.41}} & \underline{\textbf{17.51}} & \underline{\textbf{87.65}} & 22.99 & 20.10 \\
+Moonwalker & 20\% & \underline{2.35} & \underline{30.50} & \underline{31.66} & \underline{17.73} & \underline{87.61} & 22.99 & 20.10 \\
+Moonwalker & 30\% & \underline{2.56} & \underline{30.30} & \underline{32.85} & \underline{18.26} & \underline{87.47} & 23.05 & 20.17 \\
+Moonwalker & 40\% & \underline{3.08} & \underline{29.86} & \underline{35.56} & \underline{19.49} & \underline{87.18} & 23.18 & 20.27 \\
+Moonwalker & 50\% & \underline{4.28} & \underline{29.05} & \underline{41.60} & \underline{22.54} & \underline{86.54} & 23.22 & 20.34 \\
+Moonwalker & 60\% & \underline{7.07} & \underline{27.70} & \underline{54.55} & \underline{29.25} & \underline{85.25} & 23.16 & 20.41 \\
+Moonwalker & 70\% & \underline{12.88} & \underline{25.86} & \underline{77.72} & \underline{42.47} & \underline{83.04} & 22.85 & 20.32 \\
+Moonwalker & 80\% & \underline{22.10} & \underline{23.83} & 110.05 & \underline{64.05} & 80.24 & 22.16 & 19.91 \\
+Moonwalker & 90\% & 34.70 & 21.78 & 147.29 & 97.29 & 76.91 & 21.09 & 19.42 \\
+Moonwalker & 100\% & 26.49 & 22.29 & 105.30 & 87.57 & 80.37 & 24.22 & 21.18 \\
+\midrule
+Moonwalker + DirectInv & 10\% & \underline{\textbf{2.28}} & \underline{\textbf{30.60}} & \underline{31.42} & \underline{\textbf{17.51}} & \underline{\textbf{87.65}} & 22.99 & 20.09 \\
+Moonwalker + DirectInv & 20\% & \underline{2.34} & \underline{30.50} & \underline{31.56} & \underline{17.73} & \underline{87.61} & 22.98 & 20.11 \\
+Moonwalker + DirectInv & 30\% & \underline{2.53} & \underline{30.33} & \underline{32.30} & \underline{18.21} & \underline{87.51} & 23.08 & 20.19 \\
+Moonwalker + DirectInv & 40\% & \underline{2.90} & \underline{30.01} & \underline{33.81} & \underline{19.15} & \underline{87.32} & 23.28 & 20.33 \\
+Moonwalker + DirectInv & 50\% & \underline{3.66} & \underline{29.41} & \underline{36.48} & \underline{21.17} & \underline{86.98} & 23.43 & 20.48 \\
+Moonwalker + DirectInv & 60\% & \underline{5.17} & \underline{28.46} & \underline{41.17} & \underline{24.86} & \underline{86.44} & 23.70 & 20.76 \\
+Moonwalker + DirectInv & 70\% & \underline{7.93} & \underline{27.18} & \underline{48.95} & \underline{31.72} & \underline{85.57} & 23.97 & 20.99 \\
+Moonwalker + DirectInv & 80\% & \underline{12.59} & \underline{25.61} & \underline{60.70} & \underline{44.03} & \underline{84.39} & 24.23 & 21.26 \\
+Moonwalker + DirectInv & 90\% & \underline{19.81} & \underline{23.84} & \underline{77.81} & \underline{65.64} & \underline{82.68} & 24.35 & 21.33 \\
+Moonwalker + DirectInv & 100\% & 28.50 & 21.89 & 98.89 & 99.89 & 80.47 & \underline{\textbf{24.62}} & \underline{\textbf{21.49}} \\
+\bottomrule
+\end{tabular}}
+\end{table}
+\clearpage
+\begin{table}[htbp]
+\centering
+\scriptsize
+\caption{Pix2Pix-Zero: inversion depth versus reproduced full-depth baselines. All values are means.}
+\label{tab:partial-depth-pix2pix-zero}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{llrrrrrrr}
+\toprule
+Inversion & Depth & Structure ($\times10^3$) $\downarrow$ & PSNR (dB) $\uparrow$ & LPIPS ($\times10^3$) $\downarrow$ & MSE ($\times10^4$) $\downarrow$ & SSIM ($\times10^2$) $\uparrow$ & CLIP target $\uparrow$ & CLIP edited $\uparrow$ \\
+\midrule
+DDIM & 100\% & 61.25 & 20.47 & 172.26 & 143.71 & 75.39 & 22.93 & 20.74 \\
+DirectInv & 100\% & 49.09 & 21.57 & 138.39 & 129.77 & 77.73 & 23.47 & 21.08 \\
+\midrule
+Moonwalker & 10\% & \underline{2.64} & \underline{30.59} & \underline{33.93} & \underline{\textbf{17.47}} & \underline{\textbf{87.59}} & 22.92 & 20.03 \\
+Moonwalker & 20\% & \underline{3.63} & \underline{30.27} & \underline{37.36} & \underline{18.51} & \underline{87.26} & 23.07 & 20.17 \\
+Moonwalker & 30\% & \underline{4.46} & \underline{29.91} & \underline{41.09} & \underline{19.60} & \underline{86.91} & 23.17 & 20.24 \\
+Moonwalker & 40\% & \underline{6.62} & \underline{29.22} & \underline{47.84} & \underline{22.79} & \underline{86.20} & 23.37 & 20.34 \\
+Moonwalker & 50\% & \underline{9.85} & \underline{28.17} & \underline{58.14} & \underline{28.40} & \underline{85.18} & \underline{23.62} & 20.65 \\
+Moonwalker & 60\% & \underline{16.15} & \underline{26.92} & \underline{74.17} & \underline{37.36} & \underline{83.74} & \underline{23.55} & 20.67 \\
+Moonwalker & 70\% & \underline{25.09} & \underline{25.22} & \underline{96.37} & \underline{54.61} & \underline{81.76} & \underline{23.60} & 20.85 \\
+Moonwalker & 80\% & \underline{35.88} & \underline{23.33} & \underline{123.47} & \underline{80.81} & \underline{79.27} & \underline{23.49} & 20.90 \\
+Moonwalker & 90\% & 49.79 & \underline{21.65} & 151.59 & \underline{113.23} & 76.96 & 23.26 & 20.92 \\
+Moonwalker & 100\% & 52.39 & 21.26 & 146.89 & 142.57 & 76.90 & 23.35 & 21.05 \\
+\midrule
+Moonwalker + DirectInv & 10\% & \underline{\textbf{2.55}} & \underline{\textbf{30.61}} & \underline{\textbf{33.60}} & \underline{17.59} & \underline{87.57} & 22.92 & 20.04 \\
+Moonwalker + DirectInv & 20\% & \underline{3.16} & \underline{30.35} & \underline{36.46} & \underline{18.45} & \underline{87.30} & 23.07 & 20.17 \\
+Moonwalker + DirectInv & 30\% & \underline{3.94} & \underline{30.05} & \underline{39.63} & \underline{19.70} & \underline{86.97} & 23.18 & 20.25 \\
+Moonwalker + DirectInv & 40\% & \underline{5.81} & \underline{29.51} & \underline{44.55} & \underline{22.48} & \underline{86.42} & 23.41 & 20.42 \\
+Moonwalker + DirectInv & 50\% & \underline{8.26} & \underline{28.62} & \underline{52.75} & \underline{27.19} & \underline{85.60} & \underline{23.71} & 20.76 \\
+Moonwalker + DirectInv & 60\% & \underline{13.51} & \underline{27.53} & \underline{63.63} & \underline{35.05} & \underline{84.56} & \underline{23.82} & 20.86 \\
+Moonwalker + DirectInv & 70\% & \underline{20.48} & \underline{26.00} & \underline{79.97} & \underline{49.21} & \underline{83.05} & \underline{23.82} & 21.03 \\
+Moonwalker + DirectInv & 80\% & \underline{30.16} & \underline{24.32} & \underline{100.05} & \underline{72.90} & \underline{81.02} & \underline{\textbf{23.84}} & \underline{\textbf{21.14}} \\
+Moonwalker + DirectInv & 90\% & \underline{40.59} & \underline{22.64} & \underline{122.76} & \underline{100.05} & \underline{79.12} & 23.46 & 21.07 \\
+Moonwalker + DirectInv & 100\% & 51.62 & 21.23 & 147.11 & 140.85 & 77.04 & \underline{23.49} & 21.02 \\
+\bottomrule
+\end{tabular}}
+\end{table}
+\end{document}

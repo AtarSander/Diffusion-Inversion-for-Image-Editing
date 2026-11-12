@@ -104,6 +104,7 @@ def invert_sample(
     lora_cfg,
     lora_loaded: bool,
     overwrite: bool,
+    save_inversion_artifacts: bool,
 ) -> None:
     inverted_noise_path = sample_dir / "inverted_noise.pt"
     inversion_latents_dir = sample_dir / "inversion_latents"
@@ -192,16 +193,16 @@ def invert_sample(
             set_unet_lora_enabled(pipe, True)
         pipe.scheduler = original_scheduler
 
-    inversion_latents_dir.mkdir(parents=True, exist_ok=True)
-    inversion_pred_noises_dir.mkdir(parents=True, exist_ok=True)
-
     torch.save(latents.detach().cpu(), inverted_noise_path)
-    for idx, latent in enumerate(inversion_trajectory):
-        torch.save(latent, inversion_latents_dir / f"x_inv_{idx:03d}.pt")
-    for idx, noise in enumerate(inversion_pred_noises):
-        torch.save(noise, inversion_pred_noises_dir / f"noise_inv_{idx:03d}.pt")
-    with inversion_timesteps_path.open("w", encoding="utf-8") as f:
-        json.dump(inversion_timesteps, f, indent=2)
+    if save_inversion_artifacts:
+        inversion_latents_dir.mkdir(parents=True, exist_ok=True)
+        inversion_pred_noises_dir.mkdir(parents=True, exist_ok=True)
+        for idx, latent in enumerate(inversion_trajectory):
+            torch.save(latent, inversion_latents_dir / f"x_inv_{idx:03d}.pt")
+        for idx, noise in enumerate(inversion_pred_noises):
+            torch.save(noise, inversion_pred_noises_dir / f"noise_inv_{idx:03d}.pt")
+        with inversion_timesteps_path.open("w", encoding="utf-8") as f:
+            json.dump(inversion_timesteps, f, indent=2)
 
     meta_path = sample_dir / "meta.json"
     if meta_path.exists():
@@ -226,6 +227,8 @@ def main(cfg: DictConfig) -> None:
     logger.info("Inversion config:\n{}", OmegaConf.to_yaml(cfg))
     input_dir = _resolve_path(cfg.input_dir)
     run_cfg = _load_run_config(input_dir)
+    if cfg.model_id_override:
+        run_cfg.model.model_id = str(cfg.model_id_override)
     samples = _sample_dirs(input_dir)
     if not samples:
         raise FileNotFoundError(f"No sample directories found in {input_dir}")
@@ -246,6 +249,7 @@ def main(cfg: DictConfig) -> None:
             lora_cfg=cfg.lora,
             lora_loaded=lora_loaded,
             overwrite=bool(cfg.overwrite),
+            save_inversion_artifacts=bool(cfg.save_inversion_artifacts),
         )
 
 

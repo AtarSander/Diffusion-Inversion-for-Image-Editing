@@ -360,6 +360,10 @@ def save_sample(
         "trajectory_length": len(trajectory),
         "pred_noises_length": len(pred_noises),
     }
+    # Keep prompt-source provenance beside tensors so dataset metadata stays tensor-free.
+    for field in ("source_dataset", "style_stratum", "style_matched_labels", "source_row_id", "selection_seed", "pie_bench_id", "editing_type_id"):
+        if field in record:
+            meta[field] = record[field]
     if latents_format is not None:
         meta["latents_format"] = latents_format
     if training_cache_meta is not None:

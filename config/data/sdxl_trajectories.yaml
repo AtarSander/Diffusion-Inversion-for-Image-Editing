@@ -4,6 +4,7 @@ latents_file_name: trajectory.pt
 conditioning_file_name: conditioning.pt
 targets_dir_name: targets
 target_eps_file_name: target_eps.pt
+target_uncond_eps_file_name: target_eps_uncond.pt
 require_training_cache: true
 batch_size: 2
 num_workers: 4

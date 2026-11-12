@@ -1,0 +1,8 @@
+# Each draw selects source probability mass before selecting a uniform transition.
+mode: source_mixture
+source_weights:
+  recap_coco: 0.80
+  diffusiondb_artificial: 0.20
+num_samples: 1522050
+replacement: true
+seed: 42
