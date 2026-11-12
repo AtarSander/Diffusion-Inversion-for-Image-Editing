@@ -1,0 +1,8 @@
+# @package _global_
+
+data_path: data/raw/PIE-Bench_v1
+mode: template
+# Label the template manually without looking at model outputs, then freeze it.
+template_path: data/processed/pie_bench_source_groups/template.jsonl
+labeled_path: data/processed/pie_bench_source_groups/labeled.jsonl
+frozen_path: data/processed/pie_bench_source_groups/frozen.jsonl

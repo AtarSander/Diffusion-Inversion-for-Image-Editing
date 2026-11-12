@@ -1,0 +1,8 @@
+# @package _global_
+
+defaults:
+  - data: pie_bench_ood
+  - _self_
+
+output_path: data/processed/pie_bench_ood/prompts.jsonl
+summary_path: data/processed/pie_bench_ood/summary.json

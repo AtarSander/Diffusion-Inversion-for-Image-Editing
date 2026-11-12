@@ -1,0 +1,13 @@
+defaults:
+  - train_sd15_diffusiondb_artificial_mixture
+  - override /data: sd15_trajectories_mixture_artificial_smoke
+  - override /sampling: uniform
+  - _self_
+
+run_name: sd15-inversion-lora-r16-recap80-diffusiondb20-fp32-smoke
+checkpoint_dir: checkpoints/smoke/sd15_inversion_lora_r16_recap80_diffusiondb20_fp32
+max_train_steps: 2
+save_every_steps: 2
+eval_every_steps: 2
+log_every_steps: 1
+max_val_batches: 1

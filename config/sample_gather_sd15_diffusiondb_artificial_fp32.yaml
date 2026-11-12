@@ -1,0 +1,13 @@
+defaults:
+  - sample_gather_sd15
+  - override /data: diffusiondb_artificial
+  - _self_
+
+# Keep this source separate from ReCap trajectories; no train/val/test split is created here.
+output_dir: data/processed/sd15_trajectories_diffusiondb_artificial_fp32/all
+num_samples: 7610
+start_index: 0
+seed: 42
+
+data:
+  prompts_jsonl: data/processed/diffusiondb_artificial/prompts_7610.jsonl

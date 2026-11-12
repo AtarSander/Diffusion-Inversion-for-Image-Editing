@@ -1,0 +1,8 @@
+# Prompt-only DiffusionDB metadata. Download metadata.parquet only; never image archives.
+metadata_parquet: data/raw/diffusiondb/metadata.parquet
+prepared_prompts_jsonl: data/processed/diffusiondb_artificial/prompts_7610.jsonl
+prompts_jsonl: ${prepared_prompts_jsonl}
+manual_review_jsonl: data/processed/diffusiondb_artificial/manual_review_250.jsonl
+summary_json: data/processed/diffusiondb_artificial/summary.json
+review_acknowledgement_json: data/processed/diffusiondb_artificial/review_acknowledgement.json
+smoke_acknowledgement_json: data/processed/diffusiondb_artificial/smoke_acknowledgement.json

@@ -1,0 +1,30 @@
+\documentclass{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\newcommand{\ours}{Ours}
+\begin{document}
+
+\begin{table*}[t]
+    \centering
+    \small
+    \caption{In-distribution inversion quality on the ReCap-COCO held-out set. Correlation and KL divergence assess the normality of recovered noise, while MAE, LPIPS, PSNR, and SSIM assess reconstruction. Lower is better for correlation, KL divergence, MAE, and LPIPS; higher is better for PSNR and SSIM. Bold denotes the best result.}
+    \label{tab:sdxl-recap-coco-heldout-inversion-quality}
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{lrrrrrr}
+        \toprule
+        Method & Corr. \(\downarrow\) & KL Div. \(\times10^2\) \(\downarrow\) & MAE \(\downarrow\) & LPIPS \(\downarrow\) & PSNR \(\uparrow\) & SSIM \(\uparrow\) \\
+        \midrule
+        DDIM Inv.       & 0.17 & 0.71 & 0.03 & 0.10 & 28.22 & 0.81 \\
+        Forward \(2\%\) & 0.15 & 0.54 & 0.03 & 0.10 & 27.69 & 0.79 \\
+        Forward \(4\%\) & 0.11 & 0.24 & 0.04 & 0.14 & 25.84 & 0.70 \\
+        \midrule
+        \ours{} \(r=8\)  & 0.10 & 0.08 & 0.02 & 0.06 & 30.06 & 0.87 \\
+        \ours{} \(r=16\) & 0.10 & 0.07 & 0.02 & 0.06 & 30.22 & 0.87 \\
+        \ours{} \(r=16\), cycle loss & 0.10 & 0.07 & 0.02 & 0.07 & 29.71 & 0.86 \\
+        \ours{} \(r=32\) & \textbf{0.10} & \textbf{0.05} & \textbf{0.02} & \textbf{0.06} & \textbf{30.40} & \textbf{0.87} \\
+        \bottomrule
+    \end{tabular}}
+\end{table*}
+
+\end{document}

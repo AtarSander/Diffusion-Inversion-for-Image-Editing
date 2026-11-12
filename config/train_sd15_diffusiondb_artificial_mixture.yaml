@@ -1,0 +1,17 @@
+defaults:
+  - train_sd15
+  - override /data: sd15_trajectories_mixture_artificial
+  - override /sampling: source_mixture
+  - _self_
+
+# Controlled r16 comparison: same FP32 baseline hyperparameters and 11,892 updates.
+run_name: sd15-inversion-lora-r16-recap80-diffusiondb20-fp32-mb64-accum2
+checkpoint_dir: checkpoints/sd15_inversion_lora_r16_recap80_diffusiondb20_fp32_mb64_accum2
+model:
+  disable_safety_checker: true
+
+data:
+  batch_size: 64
+gradient_accumulation_steps: 2
+
+save_every_steps: 1000

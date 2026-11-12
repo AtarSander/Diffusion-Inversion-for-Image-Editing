@@ -1,0 +1,11 @@
+defaults:
+  - sample_gather
+  - override /data: pie_bench_ood
+  - _self_
+
+# Matched to the existing SDXL ReCap held-out generation: SDXL base FP16,
+# 50 DDIM steps, CFG 1.0, empty negative prompt, and 1024x1024 outputs.
+output_dir: data/processed/sdxl_trajectories_pie_bench_ood/all
+num_samples: 700
+start_index: 0
+seed: 1234

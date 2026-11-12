@@ -38,6 +38,8 @@ class LatentTrajectoryDataset(Dataset):
             not isinstance(name, str) or not name.strip() for name in self.source_names
         ):
             raise ValueError("source_names must contain one non-empty name per root directory.")
+        if len(set(self.source_names)) != len(self.source_names):
+            raise ValueError("source_names must be unique across trajectory roots.")
         self.latents_file_name = latents_file_name
         self.conditioning_file_name = conditioning_file_name
         self.targets_dir_name = targets_dir_name

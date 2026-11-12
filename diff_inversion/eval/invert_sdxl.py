@@ -232,6 +232,8 @@ def main(cfg: DictConfig) -> None:
     logger.info("Inversion config:\n{}", OmegaConf.to_yaml(cfg))
     input_dir = _resolve_path(cfg.input_dir)
     run_cfg = _load_run_config(input_dir)
+    if cfg.model_id_override:
+        run_cfg.model.model_id = str(cfg.model_id_override)
     samples = _sample_dirs(input_dir)
     if not samples:
         raise FileNotFoundError(f"No sample directories found in {input_dir}")
@@ -245,6 +247,7 @@ def main(cfg: DictConfig) -> None:
     negative_prompt = str(run_cfg.negative_prompt)
     save_intermediates = bool(
         OmegaConf.select(cfg, "save_intermediates", default=True)
+        and OmegaConf.select(cfg, "save_inversion_artifacts", default=True)
     )
     for sample_dir in tqdm(samples, desc="Running DDIM inversion"):
         invert_sample(

@@ -1,10 +1,13 @@
 # @package _global_
 
+model_id_override: null
 input_dir: data/processed/sdxl_trajectories
 overwrite: false
 # Per-step inverse latents and predictions are useful for diagnostics but create
 # 101 extra files per sample. Disable this for aggregate inversion-quality runs.
 save_intermediates: true
+# Compatibility control used by Athena aggregate runs; either false disables storage.
+save_inversion_artifacts: true
 
 lora:
   enabled: false

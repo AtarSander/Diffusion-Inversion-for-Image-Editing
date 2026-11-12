@@ -1,8 +1,9 @@
 import json
 import re
+import signal
 import warnings
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import hydra
 import torch
@@ -161,6 +162,7 @@ class SDXLInversionTrainer:
         max_train_steps: int,
         initial_global_step: int = 0,
         save_training_state: bool = False,
+        should_stop: Callable[[], bool] | None = None,
     ):
         self.global_step = int(initial_global_step)
         micro_step = 0
@@ -209,6 +211,14 @@ class SDXLInversionTrainer:
                 self.optimizer.zero_grad(set_to_none=True)
                 self.global_step += 1
                 progress.update(1)
+                if should_stop is not None and should_stop():
+                    logger.warning("Graceful stop requested at global_step={}; saving resumable state.", self.global_step)
+                    progress.close()
+                    self.save_checkpoint("checkpoint_final.pt")
+                    if save_training_state:
+                        self.save_training_state("training_state_final.pt")
+                    self.tracker.finish()
+                    return
 
                 if self._should_run(self.log_every_steps):
                     train_metrics = self._average_metric_rows(recent_metrics, prefix="train")
@@ -1581,6 +1591,15 @@ def main(cfg: DictConfig) -> None:
     # W&B reads WANDB_API_KEY from the repository environment file.
     load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
 
+    shutdown_requested = False
+
+    def _request_graceful_shutdown(signum: int, _frame: Any) -> None:
+        nonlocal shutdown_requested
+        shutdown_requested = True
+        logger.warning("Received signal {}; will checkpoint after the current optimizer update.", signum)
+
+    signal.signal(signal.SIGUSR1, _request_graceful_shutdown)
+
     logger.info("Training {}", cfg.model.model_id)
     model_cfg = cfg.model
     lora_cfg = cfg.lora
@@ -1738,6 +1757,7 @@ def main(cfg: DictConfig) -> None:
         max_train_steps=cfg.max_train_steps,
         initial_global_step=initial_global_step,
         save_training_state=bool(cfg.save_training_state),
+        should_stop=lambda: shutdown_requested,
     )
 
 

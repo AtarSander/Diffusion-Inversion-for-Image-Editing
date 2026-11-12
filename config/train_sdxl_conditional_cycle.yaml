@@ -1,0 +1,4 @@
+defaults:
+  - train_sdxl
+  - training_target: conditional_cycle
+  - _self_

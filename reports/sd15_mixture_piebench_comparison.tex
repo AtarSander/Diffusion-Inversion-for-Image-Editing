@@ -1,0 +1,49 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+
+\usepackage{graphicx}
+\usepackage{pdflscape}
+
+\title{SD1.5 Baselines and Mixed ReCap-COCO/DiffusionDB LoRA PIE-Bench Results}
+\date{}
+
+\begin{document}
+\maketitle
+
+
+\begin{landscape}
+\begin{table}[p]
+  \centering
+  \scriptsize
+  \caption{Our full-FP32 SD1.5 Direct Inversion reproductions compared with the rank-16 LoRA trained on an 80\% ReCap-COCO and 20\% DiffusionDB-artificial trajectory mixture. \texttt{LoRA} replaces inversion; \texttt{LoRA + DirectInv} uses LoRA inversion followed by Direct Inversion editing. Values are PIE-Bench means over 700 images, rounded to two decimals. Structure distance and LPIPS are scaled by $10^3$, MSE by $10^4$, and SSIM by $10^2$. Bold marks the best value within an editor block; underlining marks a mixture-LoRA value that improves on the Direct Inversion reproduction.}
+  \label{tab:sd15-mixture-paper-comparison}
+  \resizebox{\linewidth}{!}{%
+  \begin{tabular}{lllrrrrrrr}
+    \toprule
+    Editor & Inversion & Source & Structure ($\times 10^3$) $\downarrow$ & PSNR (dB) $\uparrow$ & LPIPS ($\times 10^3$) $\downarrow$ & MSE ($\times 10^4$) $\downarrow$ & SSIM ($\times 10^2$) $\uparrow$ & CLIP whole $\uparrow$ & CLIP edited $\uparrow$ \\
+    \midrule
+    P2P & Direct Inversion & SD1.5 reproduction & \textbf{11.01} & \textbf{27.27} & \textbf{54.01} & \textbf{32.60} & \textbf{85.32} & 25.20 & 22.14 \\
+    P2P & LoRA & Mixture r16 & 70.38 & 17.82 & 210.82 & 220.69 & 71.36 & \underline{\textbf{25.40}} & \underline{\textbf{22.62}} \\
+    P2P & LoRA + DirectInv & Mixture r16 & 14.29 & 25.96 & 73.21 & 43.92 & 83.43 & \underline{25.26} & \underline{22.31} \\
+    \midrule
+    MasaCtrl & Direct Inversion & SD1.5 reproduction & \textbf{23.70} & \textbf{22.67} & \textbf{87.85} & \textbf{80.85} & \textbf{81.85} & 24.60 & 21.46 \\
+    MasaCtrl & LoRA & Mixture r16 & 49.29 & 19.92 & 180.08 & 142.58 & 73.89 & 20.61 & 19.18 \\
+    MasaCtrl & LoRA + DirectInv & Mixture r16 & 28.46 & 21.90 & 98.86 & 98.75 & 80.50 & \underline{\textbf{24.62}} & \underline{\textbf{21.51}} \\
+    \midrule
+    Pix2Pix-Zero & Direct Inversion & SD1.5 reproduction & \textbf{49.09} & \textbf{21.57} & \textbf{138.39} & \textbf{129.77} & \textbf{77.73} & \textbf{23.47} & \textbf{21.08} \\
+    Pix2Pix-Zero & LoRA & Mixture r16 & 63.12 & 20.28 & 180.40 & 153.79 & 74.61 & 22.93 & 20.73 \\
+    Pix2Pix-Zero & LoRA + DirectInv & Mixture r16 & 51.50 & 21.29 & 146.32 & 137.22 & 77.00 & 23.41 & 20.98 \\
+    \midrule
+    PnP & Direct Inversion & SD1.5 reproduction & \textbf{23.35} & \textbf{22.46} & \textbf{105.49} & \textbf{79.93} & \textbf{80.22} & 25.64 & 22.67 \\
+    PnP & LoRA & Mixture r16 & 26.93 & 22.31 & 113.28 & 82.54 & 79.56 & \underline{25.70} & \underline{22.79} \\
+    PnP & LoRA + DirectInv & Mixture r16 & 24.37 & 22.36 & 110.31 & 81.89 & 79.88 & \underline{\textbf{25.80}} & \underline{\textbf{22.84}} \\
+    \bottomrule
+  \end{tabular}%
+  }
+\end{table}
+\end{landscape}
+
+
+
+\end{document}
