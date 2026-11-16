@@ -16,10 +16,10 @@ import matplotlib.pyplot as plt  # noqa: E402
 AUDIO_ROOT = Path(__file__).resolve().parents[1]
 FS = 14
 
-# "paper" is the published main figure: AudioLDM2 at 200 NFE with unguided inversion and Stable
-# Audio with the sigma = 0 lift, trajectory adapter only. "lift" is the appendix variant of the
-# same runs comparing the trajectory, real, and cycle adapters (Stable Audio: all trained on
-# the last sampling step too).
+# "paper" with zoom is the published two-column figure: AudioLDM2 at 200 NFE with unguided
+# inversion and Stable Audio with the sigma = 0 lift, trajectory adapter only. "lift" compares
+# the trajectory, real, and cycle adapters on the same runs (Stable Audio: all trained on the
+# last sampling step too) and is not part of the paper.
 FIGURES = {
     "paper": {
         "AudioLDM2": {
@@ -30,6 +30,7 @@ FIGURES = {
                 "DDPM Inv.": "DDPM Inv.",
                 "SDEdit": "SDEdit",
             },
+            "zoom": (4.10, 4.75),
         },
         "Stable Audio Open": {
             "csv": AUDIO_ROOT / "output/matched_nfe/20261012_154351/matched_nfe_runs_full.csv",
@@ -39,6 +40,7 @@ FIGURES = {
                 "DDPM-inv": "DDPM Inv.",
                 "SDEdit": "SDEdit",
             },
+            "zoom": (3.50, 4.15),
         },
     },
     "lift": {
@@ -83,7 +85,8 @@ STYLE = {
 
 METRICS = {"clap": "CLAP-T", "muq": "MuQ-T"}
 # Arms redrawn in the zoom panels: the adapters and the inversion they modify.
-ZOOM_LABELS = ("DDIM Inv.", "Moonwalker (traj.)", "Moonwalker (real)", "Moonwalker (cycle)")
+ZOOM_LABELS = ("DDIM Inv.", "Moonwalker $\\mathbf{(ours)}$", "Moonwalker (traj.)",
+               "Moonwalker (real)", "Moonwalker (cycle)")
 
 
 def draw_zoom(ax: plt.Axes, axz: plt.Axes, fronts: dict, metric: str,
@@ -196,15 +199,11 @@ def main(figure: str = "paper", zoom: bool = False,
     stamped = out_dir / f"{ts}_music_editing_fronts_{figure}{'_zoom' if zoom else ''}.pdf"
     fig.savefig(stamped, bbox_inches="tight")
     fig.savefig(stamped.with_suffix(".png"), dpi=200, bbox_inches="tight")
-    # The paper keeps two stable copies: the main figure and the appendix adapter-variant one.
-    names = {("paper", False): "music_editing_fronts.pdf",
-             ("lift", True): "music_editing_fronts_adapters.pdf"}
-    name = names.get((figure, zoom))
-    if name is None:
+    if (figure, zoom) != ("paper", True):
         print(f"wrote {stamped}")
         return
 
-    stable = Path(paper_figures) / name
+    stable = Path(paper_figures) / "music_editing_fronts.pdf"
     stable.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(stamped, stable)
     print(f"wrote {stamped}\ncopied to {stable}")
