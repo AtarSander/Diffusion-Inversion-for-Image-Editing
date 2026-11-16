@@ -31,6 +31,8 @@ FIGURES = {
                 "DDPM Inv.": "DDPM Inv.",
                 "SDEdit": "SDEdit",
             },
+            # Strong-edit end of the fronts, where the last three operating points sit.
+            "zoom": (5.00, 5.75),
         },
         "Stable Audio Open": {
             "csv": AUDIO_ROOT / "output/matched_nfe/20261012_154351/matched_nfe_runs_full.csv",
@@ -118,6 +120,8 @@ def draw_zoom(ax: plt.Axes, axz: plt.Axes, fronts: dict, metric: str,
     axz.set_xlim(x0, x1)
     axz.set_ylim(y0, y1)
     axz.grid(True, linestyle="--", alpha=0.2)
+    axz.xaxis.set_major_locator(matplotlib.ticker.MaxNLocator(4))
+    axz.yaxis.set_major_locator(matplotlib.ticker.MaxNLocator(4))
     axz.yaxis.set_major_formatter(matplotlib.ticker.FormatStrFormatter("%.3f"))
     axz.xaxis.set_major_formatter(matplotlib.ticker.FormatStrFormatter("%.2f"))
     axz.tick_params(labelsize=FS - 2)
