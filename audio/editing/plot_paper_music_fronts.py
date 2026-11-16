@@ -16,7 +16,8 @@ import matplotlib.pyplot as plt  # noqa: E402
 AUDIO_ROOT = Path(__file__).resolve().parents[1]
 FS = 14
 
-# "paper" with zoom is the published two-column figure: AudioLDM2 at 200 NFE with unguided
+# "paper" with zoom (Stable Audio only, strong-edit end) is the published appendix figure:
+# AudioLDM2 at 200 NFE with unguided
 # inversion and Stable Audio with the sigma = 0 lift, trajectory adapter only. "lift" compares
 # the trajectory, real, and cycle adapters on the same runs (Stable Audio: all trained on the
 # last sampling step too) and is not part of the paper.
@@ -30,7 +31,6 @@ FIGURES = {
                 "DDPM Inv.": "DDPM Inv.",
                 "SDEdit": "SDEdit",
             },
-            "zoom": (4.10, 4.75),
         },
         "Stable Audio Open": {
             "csv": AUDIO_ROOT / "output/matched_nfe/20261012_154351/matched_nfe_runs_full.csv",
@@ -40,7 +40,8 @@ FIGURES = {
                 "DDPM-inv": "DDPM Inv.",
                 "SDEdit": "SDEdit",
             },
-            "zoom": (3.50, 4.15),
+            # Strong-edit end of the fronts, where the last three operating points sit.
+            "zoom": (4.95, 5.65),
         },
     },
     "lift": {
@@ -137,12 +138,16 @@ def main(figure: str = "paper", zoom: bool = False,
         out_root: Directory for the timestamped copy of the figure.
         paper_figures: Paper figures directory receiving the stable-named copy.
     """
-    per_model = 2 if zoom else 1
-    fig, axes = plt.subplots(2, 2 * per_model, figsize=(5.5 * 2 * per_model, 5.625))
-    for col, (model, spec) in enumerate(FIGURES[figure].items()):
+    specs = FIGURES[figure]
+    # A model gets a zoom panel only when its spec defines a window.
+    ncols = sum(1 + (zoom and "zoom" in spec) for spec in specs.values())
+    fig, axes = plt.subplots(2, ncols, figsize=(5.5 * ncols, 5.625))
+    col = 0
+    for model, spec in specs.items():
         df = pd.read_csv(spec["csv"])
+        has_zoom = zoom and "zoom" in spec
         for row, (metric, metric_name) in enumerate(METRICS.items()):
-            ax = axes[row, col * per_model]
+            ax = axes[row, col]
             front_x = []
             fronts = {}
             for arm, label in spec["labels"].items():
@@ -176,14 +181,15 @@ def main(figure: str = "paper", zoom: bool = False,
                 ax.set_xlabel("LPAPS to source $\\downarrow$", fontsize=FS)
             else:
                 ax.tick_params(labelbottom=True)
-            if zoom:
-                axz = axes[row, col * per_model + 1]
+            if has_zoom:
+                axz = axes[row, col + 1]
                 draw_zoom(ax, axz, fronts, metric, spec["zoom"])
                 if row == 1:
                     axz.set_xlabel("LPAPS to source $\\downarrow$", fontsize=FS)
-        axes[0, col * per_model].set_title(model, fontsize=FS + 2)
-        if zoom:
-            axes[0, col * per_model + 1].set_title(f"{model} (zoom)", fontsize=FS + 2)
+        axes[0, col].set_title(model, fontsize=FS + 2)
+        if has_zoom:
+            axes[0, col + 1].set_title(f"{model} (zoom)", fontsize=FS + 2)
+        col += 1 + has_zoom
     # Union over the panels: an arm may exist for one model only.
     legend = {}
     for ax in axes[0]:
