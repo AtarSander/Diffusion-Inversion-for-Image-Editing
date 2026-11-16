@@ -16,26 +16,26 @@ import matplotlib.pyplot as plt  # noqa: E402
 AUDIO_ROOT = Path(__file__).resolve().parents[1]
 FS = 14
 
-# "paper" is the published figure: AudioLDM2 at 400 NFE with guided inversion, Stable Audio
-# before the sigma = 0 lift. "lift" is AudioLDM2 at 200 NFE with unguided inversion and Stable
-# Audio with the lift, comparing the trajectory and real adapters (Stable Audio: both trained on
+# "paper" is the published main figure: AudioLDM2 at 200 NFE with unguided inversion and Stable
+# Audio with the sigma = 0 lift, trajectory adapter only. "lift" is the appendix variant of the
+# same runs comparing the trajectory, real, and cycle adapters (Stable Audio: all trained on
 # the last sampling step too).
 FIGURES = {
     "paper": {
         "AudioLDM2": {
-            "csv": AUDIO_ROOT / "output/matched_nfe_audioldm2/20260925_213426_full_nfe400/matched_nfe_runs.csv",
+            "csv": AUDIO_ROOT / "output/matched_nfe_audioldm2/20261012_161241_full_nfe200/matched_nfe_runs.csv",
             "labels": {
-                "DDIM Inv.": "DDIM Inv.",
-                "DDIM Inv. + LoRA (Gen)": "Moonwalker $\\mathbf{(ours)}$",
+                "DDIM Inv. [cfg_src 1]": "DDIM Inv.",
+                "DDIM Inv. + LoRA (Gen) [cfg_src 1]": "Moonwalker $\\mathbf{(ours)}$",
                 "DDPM Inv.": "DDPM Inv.",
                 "SDEdit": "SDEdit",
             },
         },
         "Stable Audio Open": {
-            "csv": AUDIO_ROOT / "output/matched_nfe/20260926_023532/matched_nfe_runs_full.csv",
+            "csv": AUDIO_ROOT / "output/matched_nfe/20261012_154351/matched_nfe_runs_full.csv",
             "labels": {
                 "ODEInv (no LoRA)": "DDIM Inv.",
-                "ODEInv w/ LoRA bw": "Moonwalker $\\mathbf{(ours)}$",
+                "ODEInv w/ LoRA saocos_finalpair_r8_a4_lr5e-5": "Moonwalker $\\mathbf{(ours)}$",
                 "DDPM-inv": "DDPM Inv.",
                 "SDEdit": "SDEdit",
             },
@@ -196,11 +196,15 @@ def main(figure: str = "paper", zoom: bool = False,
     stamped = out_dir / f"{ts}_music_editing_fronts_{figure}{'_zoom' if zoom else ''}.pdf"
     fig.savefig(stamped, bbox_inches="tight")
     fig.savefig(stamped.with_suffix(".png"), dpi=200, bbox_inches="tight")
-    if figure != "paper" or zoom:
+    # The paper keeps two stable copies: the main figure and the appendix adapter-variant one.
+    names = {("paper", False): "music_editing_fronts.pdf",
+             ("lift", True): "music_editing_fronts_adapters.pdf"}
+    name = names.get((figure, zoom))
+    if name is None:
         print(f"wrote {stamped}")
         return
 
-    stable = Path(paper_figures) / "music_editing_fronts.pdf"
+    stable = Path(paper_figures) / name
     stable.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(stamped, stable)
     print(f"wrote {stamped}\ncopied to {stable}")
